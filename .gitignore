@@ -1,0 +1,13 @@
+*.o
+*.a
+*.so
+*.dll
+*.z80
+*.sna
+
+build/
+.cache/
+
+*~
+CMakeCache.txt
+knightlore.ctl
