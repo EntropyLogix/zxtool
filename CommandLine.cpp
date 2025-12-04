@@ -28,38 +28,53 @@ bool CommandLine::parse(int argc, char* argv[], Options& options) {
         throw std::runtime_error("Invalid arguments. Command and input file are required.");
     }
     std::string mode_str = argv[1];
-    if (mode_str == "assemble") options.mode = Options::ToolMode::Assemble;
+    if (mode_str == "asm") options.mode = Options::ToolMode::Assemble;
+    else if (mode_str == "disasm") options.mode = Options::ToolMode::Disassemble;
     else if (mode_str == "run") options.mode = Options::ToolMode::Run;
-    else throw std::runtime_error("Unknown command: '" + mode_str + "'. Use 'assemble' or 'run'.");
+    else if (mode_str == "debug") options.mode = Options::ToolMode::Debug;
+    else throw std::runtime_error("Unknown command: '" + mode_str + "'. Use 'asm', 'disasm', 'run', or 'debug'.");
 
     // Parse remaining arguments to find options and the input file
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg.rfind("--", 0) == 0) { // It's an option
-            if (arg == "--bin" && i + 1 < argc) options.outputBinFile = argv[++i];
-            else if (arg == "--hex" && i + 1 < argc) options.outputHexFile = argv[++i];
-            else if (arg == "--mem" && i + 2 < argc) {
-                options.memDumpAddrStr = argv[++i];
-                options.memDumpSize = std::stoul(argv[++i], nullptr, 0);
-            } else if (arg == "--disasm" && i + 2 < argc) {
-                options.disasmAddrStr = argv[++i];
-                options.disasmLines = std::stoul(argv[++i], nullptr, 10);
-            } else if (arg == "--org" && i + 1 < argc) options.orgStr = argv[++i];
-            else if (arg == "--map" && i + 1 < argc) {
-                if (options.mode == Options::ToolMode::Assemble) {
-                    options.outputMapFile = argv[++i];
-                } else { // ToolMode::Run
-                    options.mapFiles.push_back(argv[++i]);
-                }
-            }
-            else if (arg == "--ctl" && i + 1 < argc) options.ctlFiles.push_back(argv[++i]);
-            else if (arg == "--reg") {
-                options.regDumpAction = true;
-                if (i + 1 < argc && argv[i + 1][0] != '-') options.regDumpFormat = argv[++i];
-            } else if (arg == "--ticks" && i + 1 < argc) options.runTicks = std::stoll(argv[++i], nullptr, 10);
-            else if (arg == "--steps" && i + 1 < argc) options.runSteps = std::stoll(argv[++i], nullptr, 10);
-             else if (arg == "--verbose") {
+        if (arg[0] == '-') { // It's an option
+            // General options
+            if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
+                options.outputFile = argv[++i];
+            } else if ((arg == "-f" || arg == "--format") && i + 1 < argc) {
+                options.outputFormat = argv[++i];
+            } else if ((arg == "-m" || arg == "--map") && i + 1 < argc) {
+                options.mapFile = argv[++i];
+            } else if (arg == "--org" && i + 1 < argc) {
+                options.orgStr = argv[++i];
+            } else if ((arg == "-v" || arg == "--verbose")) {
                 options.verbose = true;
+            }
+            // 'asm' specific
+            else if ((arg == "-l" || arg == "--listing") && i + 1 < argc) {
+                options.listingFile = argv[++i];
+            }
+            // 'disasm' specific
+            else if (arg == "--entry" && i + 1 < argc) {
+                options.entryPointStr = argv[++i];
+            } else if (arg == "--raw") {
+                options.rawDisassembly = true;
+            }
+            // 'run' specific
+            else if (arg == "--steps" && i + 1 < argc) {
+                options.runSteps = std::stoll(argv[++i], nullptr, 10);
+            } else if (arg == "--ticks" && i + 1 < argc) {
+                options.runTicks = std::stoll(argv[++i], nullptr, 10);
+            } else if (arg == "--timeout" && i + 1 < argc) {
+                options.timeout = std::stoll(argv[++i], nullptr, 10);
+            } else if (arg == "--dump-regs") {
+                options.dumpRegs = true;
+            } else if (arg == "--dump-mem" && i + 1 < argc) {
+                options.dumpMemStr = argv[++i];
+            }
+            // 'debug' specific
+            else if (arg == "--script" && i + 1 < argc) {
+                options.scriptFile = argv[++i];
             }
             else {
                 throw std::runtime_error("Unknown or incomplete argument '" + arg + "'.");
@@ -74,6 +89,14 @@ bool CommandLine::parse(int argc, char* argv[], Options& options) {
     if (options.inputFile.empty()) {
         throw std::runtime_error("No input file specified.");
     }
+
+    // Post-parsing validation
+    if (options.mode == Options::ToolMode::Assemble) {
+        if (options.outputFile.empty()) {
+            options.outputFile = "out.bin";
+        }
+    }
+
     } catch (const std::exception& e) {
         std::cerr << "\nError: " << e.what() << std::endl;
         return false;
@@ -87,24 +110,31 @@ void CommandLine::print_usage() const {
               << "Usage: zxtool <command> <input_file> [options]\n"
               << "       zxtool --help | --version\n\n"
               << "Commands:\n"
-              << "  assemble           Assemble a Z80 source file.\n"
-              << "  run                Run a Z80 binary/snapshot file.\n\n"
-              << "General Options:\n"
-              << "  --help, -h         Show this help message.\n"
-              << "  --version, -v      Show version information.\n\n"
-              << "Assemble Options (used with 'assemble' command):\n"
-              << "  --bin <file>       Save result as a raw binary file.\n"
-              << "  --hex <file>       Save result as an Intel HEX file.\n"
-              << "  --map <file>       Save the symbol table to a map file.\n"
-              << "  --verbose          Show detailed assembly output (symbols, disassembly).\n\n"
-              << "RUN Options (used with 'run' command for loading files):\n"
-              << "  --org <addr>       Specifies the loading address for .bin files (default: 0x0000).\n"
-              << "  --map <file>       Load a .map symbol file (can be used multiple times).\n"
-              << "  --ctl <file>       Load a .ctl symbol file (can be used multiple times).\n\n"
-              << "Execution & Analysis Options (used with 'assemble' or 'run'):\n"
-              << "  --steps <steps>    Run emulation for a number of instructions.\n"
-              << "  --ticks <ticks>    Run emulation for a number of T-states.\n"
-              << "  --disasm <addr> <lines>  Disassemble code at a specific address.\n"
-              << "  --mem <addr> <bytes>     Dump memory content at a specific address.\n"
-              << "  --reg [format]     Dump CPU registers.\n";
+              << "  asm                Build a Z80 source file.\n"
+              << "  disasm             Statically analyze a binary file.\n"
+              << "  run                Run code in headless mode (for tests/CI).\n"
+              << "  debug              Start an interactive debugging session (REPL).\n\n"
+              << "1. asm - Build Options:\n"
+              << "  -o, --output <file>  Output file (default: out.bin).\n"
+              << "  -f, --format <fmt>   Output format: bin, sna, tap, hex.\n"
+              << "  -m, --map <file>     Generate a symbol map file.\n"
+              << "  -l, --listing <file> Generate a source listing file.\n"
+              << "  -v, --verbose        Show detailed assembly process.\n\n"
+              << "2. disasm - Static Analysis Options:\n"
+              << "  -o, --output <file>  Output file (default: stdout).\n"
+              << "  --org <addr>         Start address for raw binary (default: 0x0000).\n"
+              << "  --entry <addr>       Entry point for code flow tracing.\n"
+              << "  --map <file>         Load a symbol file for named labels.\n"
+              << "  --raw                Disassemble linearly without flow tracing.\n\n"
+              << "3. run - Headless Execution Options:\n"
+              << "  --steps <n>          Stop after N instructions.\n"
+              << "  --ticks <n>          Stop after N T-states.\n"
+              << "  --timeout <s>        Stop after S seconds.\n"
+              << "  --org <addr>         Load address for raw .bin files.\n"
+              << "  --dump-regs          Dump registers on exit.\n"
+              << "  --dump-mem <a:l>     Dump memory on exit (e.g., 0x8000:64).\n\n"
+              << "4. debug - Interactive Debugging Options:\n"
+              << "  --org <addr>         Load address for raw .bin files.\n"
+              << "  --script <file>      Execute debugger commands from file on start.\n"
+              << "  --map <file>         Load a symbol file (for .bin files).\n";
 }

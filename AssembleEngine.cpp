@@ -84,14 +84,12 @@ AssembleEngine::AssembleEngine(Z80DefaultBus& bus, Z80<Z80DefaultBus>& cpu, Z80D
     : m_bus(bus), m_cpu(cpu), m_label_handler(label_handler), m_analyzer(analyzer), m_assembler(assembler), m_options(options) {}
 
 int AssembleEngine::execute() {
-    std::cout << "--- Assemble Mode ---\n";
-
-    std::cout << "Assembling source code from: " << m_options.getInputFile() << std::endl;
-    if (!m_assembler.compile(m_options.getInputFile(), 0x0000)) {
+    std::cout << ">>> Assemble Mode: " << m_options.inputFile << std::endl;
+    
+    if (!m_assembler.compile(m_options.inputFile, 0x0000)) {
          throw std::runtime_error("Assembly failed with errors.");
     }
-
-    std::cout << "\n--- Assembly Successful ---\n";
+    
     const auto& symbols = m_assembler.get_symbols();
     const auto& blocks = m_assembler.get_blocks();
 
@@ -100,37 +98,45 @@ int AssembleEngine::execute() {
     }
 
     if (m_options.verbose) {
-        std::cout << "\n--- Calculated Symbols ---\n";
+        std::cout << "\n[Calculated Symbols]\n";
         for (const auto& symbol : symbols) {
             std::cout << std::setw(20) << std::left << symbol.first << " = " << format_hex(symbol.second.value, 4) << std::endl;
         }
 
-        std::cout << "\n--- Disassembly of Generated Code ---\n";
+        std::cout << "\n[Generated Code Disassembly]\n";
         for (const auto& block : blocks) {
             uint16_t pc = block.start_address;
-            auto listing = m_analyzer.disassemble(pc, block.size, nullptr);
-            for (const auto& line : listing) {
-                std::cout << line << std::endl;
+            uint16_t end_addr = block.start_address + block.size;
+            while (pc < end_addr) {
+                auto listing = m_analyzer.disassemble(pc, 1, nullptr);
+                if (!listing.empty()) {
+                    std::cout << listing[0] << std::endl;
+                }
             }
         }
     }
 
-    if (!m_options.outputBinFile.empty()) {
-        write_bin_file(m_options.outputBinFile, m_bus, blocks);
-        std::cout << "Binary code written to " << m_options.outputBinFile << std::endl;
+    std::cout << "\n>>> Assembly successful.\n";
+
+    size_t total_bytes = 0;
+    for (const auto& block : blocks) {
+        total_bytes += block.size;
     }
-    if (!m_options.outputHexFile.empty()) {
-        write_hex_file(m_options.outputHexFile, m_bus, blocks);
-        std::cout << "Intel HEX code written to " << m_options.outputHexFile << std::endl;
+    std::cout << "Generated " << total_bytes << " bytes in " << blocks.size() << " code block(s).\n";
+
+    if (!m_options.outputFile.empty()) { // Use outputFile for binary/hex output
+        // Determine output format based on options.outputFormat or file extension
+        // For now, assuming it's binary if not specified otherwise
+        write_bin_file(m_options.outputFile, m_bus, blocks); // This needs to be smarter based on format
+        std::cout << "Output file written to: " << m_options.outputFile << std::endl;
     }
-    if (!m_options.outputMapFile.empty()) {
-        write_map_file(m_options.outputMapFile, symbols);
-        std::cout << "Symbols written to " << m_options.outputMapFile << std::endl;
+    if (!m_options.mapFile.empty()) { // Use mapFile for map output
+        write_map_file(m_options.mapFile, symbols);
+        std::cout << "Symbol map written to: " << m_options.mapFile << std::endl;
     }
 
     if (!blocks.empty()) {
         m_cpu.set_PC(blocks[0].start_address);
     }
-
     return 0;
 }

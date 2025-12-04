@@ -5,24 +5,24 @@
 #include <vector>
 
 struct Options {
-    enum class ToolMode {Assemble, Run, Unknown };
+    enum class ToolMode { Assemble, Disassemble, Run, Debug, Unknown };
 
     ToolMode mode = ToolMode::Unknown;
-    std::string inputFile, outputBinFile, outputHexFile, outputMapFile;
-    std::string memDumpAddrStr, disasmAddrStr, orgStr = "0x0000";
-    size_t memDumpSize = 0, disasmLines = 0;
+    std::string inputFile; // Input file for the command
+    std::string outputFile; // General output file for 'asm' or 'disasm'
+    std::string outputFormat;
+    std::string mapFile; // Map file for 'asm' or loading for 'disasm'/'run'/'debug'
+    std::string listingFile;
+    std::string orgStr = "0x0000";
+    std::string entryPointStr;
+    std::string dumpMemStr;
+    std::string scriptFile;
     long long runTicks = 0, runSteps = 0;
+    long long timeout = 0;
     std::vector<std::string> mapFiles, ctlFiles;
-    bool regDumpAction = false;
-    std::string regDumpFormat;
     bool verbose = false;
-
-    // Convenience getters to match previous usage
-    ToolMode getMode() const { return mode; }
-    const std::string& getInputFile() const { return inputFile; }
-    const std::string& getOutputBinFile() const { return outputBinFile; }
-    const std::string& getOutputHexFile() const { return outputHexFile; }
-    const std::string& getOutputMapFile() const { return outputMapFile; }
+    bool rawDisassembly = false;
+    bool dumpRegs = false;
 };
 
 #endif // __OPTIONS_H__

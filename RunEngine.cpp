@@ -114,7 +114,7 @@ int RunEngine::execute() {
         std::cout << "Loaded labels from " << ctl_file << std::endl;
     }
 
-    std::string inputFile = m_options.getInputFile();
+    std::string inputFile = m_options.inputFile;
     std::string ext = get_file_extension(inputFile);
     std::cout << "Loading file: " << inputFile << " (type: " << (ext.empty() ? "bin" : ext) << ")" << std::endl;
     bool loaded = false;

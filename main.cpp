@@ -1,5 +1,6 @@
 #include "Z80Analyze.h"
 #include "Z80Assemble.h"
+#include <algorithm>
 
 #include "CommandLine.h"
 #include "Options.h"
@@ -16,14 +17,42 @@ public:
         if (!commandLine.parse(argc, argv, options))
             return 1;
         try {
-            if (options.getMode() == Options::ToolMode::Assemble) { 
+            // Smart input for run/debug: if input is .asm, assemble it first.
+            std::string ext;
+            size_t dot_pos = options.inputFile.rfind('.');
+            if (dot_pos != std::string::npos) {
+                ext = options.inputFile.substr(dot_pos + 1);
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            }
+
+            if (ext == "asm" && (options.mode == Options::ToolMode::Run || options.mode == Options::ToolMode::Debug)) {
+                std::cout << "--- Auto-assembling " << options.inputFile << " in memory ---\n";
                 AssembleEngine assembleEngine(m_bus, m_cpu, m_label_handler, m_analyzer, m_assembler, options);
-                assembleEngine.execute();
+                if (assembleEngine.execute() != 0) {
+                    throw std::runtime_error("Assembly failed, cannot proceed to run/debug.");
+                }
             }
-            else {
+
+            switch (options.mode) {
+            case Options::ToolMode::Assemble: {
+                AssembleEngine assembleEngine(m_bus, m_cpu, m_label_handler, m_analyzer, m_assembler, options);
+                return assembleEngine.execute();
+            }
+            case Options::ToolMode::Run: {
                 RunEngine runEngine(m_bus, m_cpu, m_label_handler, m_analyzer, options);
-                runEngine.execute();
+                return runEngine.execute();
             }
+            case Options::ToolMode::Disassemble:
+                std::cout << "Disassemble mode is not yet implemented.\n";
+                break;
+            case Options::ToolMode::Debug:
+                std::cout << "Debug mode is not yet implemented.\n";
+                break;
+            case Options::ToolMode::Unknown:
+                // Should be caught by parser, but as a safeguard:
+                throw std::runtime_error("Unknown tool mode.");
+            }
+
         } catch (const std::exception& e) {
             std::cerr << "\nError: " << e.what() << std::endl;
             return 1;
