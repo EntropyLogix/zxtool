@@ -1,5 +1,5 @@
 // zxtool
-// verson: 0.0.1
+// version: 0.0.1
 //
 // This file contains a unified command-line utility for assembling, analyzing,
 // and running Z80 code.
@@ -24,27 +24,31 @@
 // --- Helper Functions ---
 
 void print_usage() {
-    std::cerr << "A unified tool for Z80 assembly and analysis.\n"
-              << "Usage: zxtool <command> <input_file> [options]"
-              << "COMMANDS:\n"
-              << "  asm Assemble a Z80 source file.\n"
-              << "  run Run a Z80 binary/snapshot file.\n"
-              << "ASM OPTIONS:\n"
-              << "    --bin <file>              Save result as a raw binary file.\n"
-              << "    --hex <file>              Save result as an Intel HEX file.\n"
-              << "    --map <file>              Save the symbol table to a map file.\n"
-              << "    --verbose                 Show detailed assembly output (symbols, disassembly).\n"
-              << "RUN OPTIONS:\n"
+    std::cerr << "zxtool v0.0.1 - A unified tool for Z80 assembly and analysis.\n\n"
+              << "Usage: zxtool <command> <input_file> [options]\n"
+              << "       zxtool --help | --version\n\n"
+              << "Commands:\n"
+              << "  asm                Assemble a Z80 source file.\n"
+              << "  run                Run a Z80 binary/snapshot file.\n\n"
+              << "General Options:\n"
+              << "  --help, -h         Show this help message.\n"
+              << "  --version, -v      Show version information.\n\n"
+              << "ASM Options (used with 'asm' command):\n"
+              << "  --bin <file>       Save result as a raw binary file.\n"
+              << "  --hex <file>       Save result as an Intel HEX file.\n"
+              << "  --map <file>       Save the symbol table to a map file.\n"
+              << "  --verbose          Show detailed assembly output (symbols, disassembly).\n\n"
+              << "RUN Options (used with 'run' command):\n"
               << "  Loading:\n"
-              << "    --org <addr>              Specifies the loading address for .bin files (default: 0x0000).\n"
-              << "    --map <file>              Load a .map symbol file (can be used multiple times).\n"
-              << "    --ctl <file>              Load a .ctl symbol file (can be used multiple times).\n"
-              << "  Execution:\n"
-              << "    --steps <steps>           Run emulation for a number of instructions.\n"
-              << "    --ticks <ticks>           Run emulation for a number of T-states.\n"
-              << "    --disasm <addr> <lines>   Disassemble code.\n"
-              << "    --mem <addr> <bytes>      Dump memory.\n"
-              << "    --reg [format]            Dump CPU registers.\n";
+              << "    --org <addr>     Specifies the loading address for .bin files (default: 0x0000).\n"
+              << "    --map <file>     Load a .map symbol file (can be used multiple times).\n"
+              << "    --ctl <file>     Load a .ctl symbol file (can be used multiple times).\n"
+              << "  Execution & Analysis:\n"
+              << "    --steps <steps>  Run emulation for a number of instructions.\n"
+              << "    --ticks <ticks>  Run emulation for a number of T-states.\n"
+              << "    --disasm <addr> <lines>  Disassemble code.\n"
+              << "    --mem <addr> <bytes>     Dump memory.\n"
+              << "    --reg [format]   Dump CPU registers.\n";
 }
 
 std::string get_file_extension(const std::string& filename) {
@@ -356,12 +360,23 @@ private:
 };
 
 int main(int argc, char* argv[]) {
-    if (argc < 3) {
+    if (argc < 2) {
         print_usage();
         return 1;
     }
 
+    std::string first_arg = argv[1];
+    if (first_arg == "--help" || first_arg == "-h") {
+        print_usage();
+        return 0;
+    }
+    if (first_arg == "--version" || first_arg == "-v") {
+        std::cout << "zxtool version 0.0.1" << std::endl;
+        return 0;
+    }
+
     try {
+        // CommandLineOptions expects at least 3 args, but we've handled help/version
         CommandLineOptions options(argc, argv);
 
         // --- Core Objects ---        
@@ -400,10 +415,14 @@ int main(int argc, char* argv[]) {
                 std::cout << "\n--- Disassembly of Generated Code ---\n";
                 for (const auto& block : blocks) {
                     uint16_t pc = block.start_address;
-                    uint16_t end_addr = pc + block.size;
-                    auto listing = analyzer.disassemble(pc, block.size, nullptr);
-                    for (const auto& line : listing) {
-                        std::cout << line << std::endl;
+                    uint16_t end_addr = block.start_address + block.size;
+                    while (pc < end_addr) {
+                        uint16_t current_pc = pc;
+                        auto listing = analyzer.disassemble(pc, 1, nullptr); // Disassemble one line, pc is advanced by the function
+                        if (!listing.empty()) {
+                            // The result is a vector, we print the first (and only) element.
+                            std::cout << listing[0] << std::endl;
+                        }
                     }
                 }
             }
