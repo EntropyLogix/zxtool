@@ -21,7 +21,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(replxx)
 FetchContent_MakeAvailable(Z80)
 
-add_executable(zxtool zxtool.cpp)
+add_executable(zxtool main.cpp CommandLine.cpp Files.cpp Options.h AssembleEngine.cpp RunEngine.cpp)
 target_include_directories(zxtool PRIVATE 
   ${replxx_SOURCE_DIR}/include # For replxx
   ${z80_SOURCE_DIR}            # For Z80 headers
