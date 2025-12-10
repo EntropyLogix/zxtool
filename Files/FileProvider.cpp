@@ -1,7 +1,7 @@
-#include "Files.h"
+#include "FileProvider.h"
 #include <fstream>
 
-bool Files::read_file(const std::string& identifier, std::vector<uint8_t>& data) {
+bool FileProvider::read_file(const std::string& identifier, std::vector<uint8_t>& data) {
     std::filesystem::path file_path;
     if (m_current_path_stack.empty())
         file_path = std::filesystem::canonical(identifier);
@@ -21,7 +21,7 @@ bool Files::read_file(const std::string& identifier, std::vector<uint8_t>& data)
     return true;
 }
 
-size_t Files::file_size(const std::string& identifier) {
+size_t FileProvider::file_size(const std::string& identifier) {
     try {
         return std::filesystem::file_size(identifier);
     } catch (const std::filesystem::filesystem_error&) {
@@ -29,6 +29,6 @@ size_t Files::file_size(const std::string& identifier) {
     return 0;
 }
 
-bool Files::exists(const std::string& identifier) {
+bool FileProvider::exists(const std::string& identifier) {
     return std::filesystem::exists(identifier);
 }

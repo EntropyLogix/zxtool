@@ -6,9 +6,10 @@
 
 struct Options {
     enum class ToolMode { Assemble, Disassemble, Run, Debug, Unknown };
+    enum class DisasmMode { Heuristic, Raw, Execute };
 
     ToolMode mode = ToolMode::Unknown;
-    std::string inputFile; // Input file for the command
+    std::vector<std::string> inputFiles;
     std::string outputFile; // General output file for 'asm' or 'disasm'
     std::string outputFormat;
     std::string mapFile; // Map file for 'asm' or loading for 'disasm'/'run'/'debug'
@@ -21,8 +22,11 @@ struct Options {
     long long timeout = 0;
     std::vector<std::string> mapFiles, ctlFiles;
     bool verbose = false;
-    bool rawDisassembly = false;
+    bool generateMap = false;
+    bool generateListing = false;
     bool dumpRegs = false;
+    bool autoLabels = false;
+    DisasmMode disasmMode = DisasmMode::Execute;
 };
 
 #endif // __OPTIONS_H__
