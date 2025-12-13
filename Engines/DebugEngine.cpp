@@ -18,123 +18,307 @@
     #include <unistd.h>
 #endif
 #include "../Utils/Strings.h"
+#include "../Utils/Terminal.h"
 
-DebugEngine::DebugEngine(VirtualMachine& vm, const Options& options)
-    : m_vm(vm), m_options(options)
-{
+DebugEngine::DebugEngine(VirtualMachine& vm, const Options& options) : m_vm(vm), m_options(options) {
 }
+class MemoryView {
+public:
+    MemoryView(VirtualMachine& vm, uint16_t start_addr, int rows, bool has_focus)  : m_vm(vm), m_start_addr(start_addr), m_rows(rows), m_has_focus(has_focus) {
+    }
+    std::vector<std::string> render() {
+        std::vector<std::string> lines;
+        std::string sep = Terminal::GRAY + std::string(80, '-') + Terminal::RESET;
+        lines.push_back(sep);
 
-// ANSI Colors for Dashboard
-namespace Color {
-    std::string RESET   = "\033[0m";
-    std::string BOLD    = "\033[1m";
-    std::string DIM     = "\033[2m";
-    std::string RED     = "\033[31m";
-    std::string GREEN   = "\033[32m";
-    std::string YELLOW  = "\033[33m";
-    std::string BLUE    = "\033[34m";
-    std::string MAGENTA = "\033[35m";
-    std::string CYAN    = "\033[36m";
-    std::string WHITE   = "\033[37m";
-    std::string GRAY    = "\033[90m";
-    
-    std::string HI_RED     = "\033[91m";
-    std::string HI_GREEN   = "\033[92m";
-    std::string HI_YELLOW  = "\033[93m";
-    std::string HI_BLUE    = "\033[94m";
-    std::string HI_MAGENTA = "\033[95m";
-    std::string HI_CYAN    = "\033[96m";
-    std::string HI_WHITE   = "\033[97m";
-    std::string BG_DARK_GRAY = "\033[100m";
-}
-
-// Helper functions for clean hex output (no 0x prefix)
-static std::string hex8(uint8_t v) {
-    std::stringstream ss;
-    ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << (int)v;
-    return ss.str();
-}
-static std::string hex16(uint16_t v) {
-    std::stringstream ss;
-    ss << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << (int)v;
-    return ss.str();
-}
-
-static std::string format_flags(uint8_t f, uint8_t prev_f) {
-    std::stringstream ss;
-    const char* syms = "SZ5H3PNC";
-    for (int i = 7; i >= 0; --i) {
-        bool bit = (f >> i) & 1;
-        bool prev_bit = (prev_f >> i) & 1;
-        char c = bit ? syms[7-i] : '-';
+        std::stringstream header;
+        if (m_has_focus) header << Terminal::YELLOW << "[MEMORY] " << Terminal::RESET;
+        else header << Terminal::GREEN << "[MEMORY] " << Terminal::RESET;
+        header << Terminal::CYAN << " View: " << Terminal::HI_WHITE << Strings::hex16(m_start_addr) << Terminal::RESET;
+        lines.push_back(header.str());
         
-        if (bit != prev_bit) {
-            ss << Color::HI_YELLOW << Color::BOLD << c << Color::RESET;
-        } else if (bit) {
-            ss << Color::HI_WHITE << c << Color::RESET;
-        } else {
-            ss << Color::GRAY << c << Color::RESET;
+        lines.push_back(sep);
+
+        auto& mem = m_vm.get_memory();
+        for (size_t i = 0; i < m_rows * 16; i += 16) {
+            std::stringstream ss;
+            uint16_t addr = m_start_addr + i;
+            ss << Terminal::CYAN << Strings::hex16(addr) << Terminal::RESET << ": ";
+            for (size_t j = 0; j < 16; ++j) {
+                uint8_t b = mem.read(addr + j);
+                if (b == 0)
+                    ss << Terminal::GRAY << "00" << Terminal::RESET;
+                else
+                    ss << Strings::hex8(b);
+                if (j == 7)
+                    ss << "  ";
+                else if (j == 15)
+                    ss << "  ";
+                else
+                    ss << " ";
+            }
+            ss << Terminal::GRAY << "|" << Terminal::RESET << " ";
+            for (size_t j = 0; j < 16; ++j) {
+                uint8_t val = mem.read(addr + j);
+                if (std::isprint(val))
+                    ss << Terminal::HI_YELLOW << (char)val << Terminal::RESET;
+                else
+                    ss << Terminal::GRAY << "." << Terminal::RESET;
+            }
+            lines.push_back(ss.str());
         }
+        return lines;
     }
-    return ss.str();
-}
-
-static void print_byte_smart(uint8_t b) {
-    if (b == 0) std::cout << Color::GRAY << "00" << Color::RESET;
-    else std::cout << Color::HI_WHITE << hex8(b) << Color::RESET;
-}
-
-struct Terminal {
-    static void clear() {
-        std::cout << "\033[H\033[2J\033[3J";
-    }
-    
-    static std::string yellow(const std::string& s) { return "\033[1;33m" + s + "\033[0m"; }
+private:
+    VirtualMachine& m_vm;
+    uint16_t m_start_addr;
+    int m_rows;
+    bool m_has_focus;
 };
-
-static size_t visible_length(const std::string& s) {
-    size_t len = 0;
-    bool in_esc = false;
-    for (char c : s) {
-        if (c == '\033') in_esc = true;
-        else if (in_esc && c == 'm') in_esc = false;
-        else if (!in_esc) len++;
+class RegisterView {
+public:
+    RegisterView(VirtualMachine& vm, const Z80<Memory>::State& prev, bool has_focus, uint64_t tstates) 
+        : m_vm(vm), m_prev(prev), m_has_focus(has_focus), m_tstates(tstates) {
     }
-    return len;
-}
+    std::vector<std::string> render() {
+        std::vector<std::string> lines;
+        std::stringstream header;
+        if (m_has_focus) header << Terminal::YELLOW << "[REGS]" << Terminal::RESET;
+        else header << Terminal::GREEN << "[REGS]" << Terminal::RESET;
+        header << Terminal::CYAN << " T: " << Terminal::RESET << Terminal::HI_WHITE << m_tstates << Terminal::RESET 
+               << Terminal::GRAY << " (+" << 4 << ")" << Terminal::RESET;
+        lines.push_back(header.str());
 
-static void get_terminal_size(int& width, int& height) {
-#ifdef _WIN32
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) {
-        width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-        height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-    } else {
-        // Fallback jeśli się nie uda
-        width = 80;
-        height = 24;
+        auto& cpu = m_vm.get_cpu();
+        auto fmt_reg16 = [&](const std::string& l, uint16_t v, uint16_t pv) -> std::string {
+            std::stringstream ss;
+            ss << Terminal::CYAN << std::setw(3) << std::left << l << Terminal::RESET << ": " 
+               << (v != pv ? Terminal::HI_YELLOW : Terminal::GRAY) << Strings::hex16(v) << Terminal::RESET;
+            return ss.str();
+        };
+        auto fmt_reg8 = [&](const std::string& l, uint8_t v, uint8_t pv) -> std::string {
+            std::stringstream ss;
+            ss << Terminal::CYAN << std::setw(3) << std::left << l << Terminal::RESET << ": " 
+               << (v != pv ? Terminal::HI_YELLOW : Terminal::GRAY) << Strings::hex8(v) << Terminal::RESET;
+            return ss.str();
+        };
+        std::stringstream ss;
+        ss << "  " << fmt_reg16("AF", cpu.get_AF(), m_prev.m_AF.w) << "   " << fmt_reg16("AF'", cpu.get_AFp(), m_prev.m_AFp.w) << "   " << fmt_reg8("I", cpu.get_I(), m_prev.m_I);
+        lines.push_back(ss.str());
+        ss.str(""); ss << "  " << fmt_reg16("BC", cpu.get_BC(), m_prev.m_BC.w) << "   " << fmt_reg16("BC'", cpu.get_BCp(), m_prev.m_BCp.w) << "   " << fmt_reg8("R", cpu.get_R(), m_prev.m_R);
+        lines.push_back(ss.str());
+        ss.str(""); ss << "  " << fmt_reg16("DE", cpu.get_DE(), m_prev.m_DE.w) << "   " << fmt_reg16("DE'", cpu.get_DEp(), m_prev.m_DEp.w) << "   "
+           << Terminal::CYAN << std::setw(3) << std::left << "IM" << Terminal::RESET << ": " 
+           << (cpu.get_IRQ_mode() != m_prev.m_IRQ_mode ? Terminal::HI_YELLOW : Terminal::GRAY) << (int)cpu.get_IRQ_mode() << Terminal::RESET;
+        lines.push_back(ss.str());
+        ss.str(""); ss << "  " << fmt_reg16("HL", cpu.get_HL(), m_prev.m_HL.w) << "   " << fmt_reg16("HL'", cpu.get_HLp(), m_prev.m_HLp.w) << "   "
+           << Terminal::CYAN << std::setw(3) << std::left << "IFF" << Terminal::RESET << ": " 
+           << (cpu.get_IFF1() ? (Terminal::HI_GREEN + "ON ") : (Terminal::GRAY + "OFF")) << Terminal::RESET;
+        lines.push_back(ss.str());
+        ss.str(""); ss << "  " << fmt_reg16("IX", cpu.get_IX(), m_prev.m_IX.w) << "   " << fmt_reg16("IY", cpu.get_IY(), m_prev.m_IY.w) << "   "
+           << Terminal::CYAN << std::setw(3) << std::left << "F" << Terminal::RESET << ": " << format_flags(cpu.get_AF() & 0xFF, m_prev.m_AF.w & 0xFF);
+        lines.push_back(ss.str());
+        return lines;
     }
-#else
-    struct winsize w;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0) {
-        width = w.ws_col;
-        height = w.ws_row;
-    } else {
-        // Fallback
-        width = 80;
-        height = 24;
+private:
+    std::string format_flags(uint8_t f, uint8_t prev_f) {
+        std::stringstream ss;
+        const char* syms = "SZ5H3PNC";
+        for (int i = 7; i >= 0; --i) {
+            bool bit = (f >> i) & 1;
+            bool prev_bit = (prev_f >> i) & 1;
+            char c = bit ? syms[7-i] : '-';
+            if (bit != prev_bit)
+                ss << Terminal::HI_YELLOW << Terminal::BOLD << c << Terminal::RESET;
+            else if (bit)
+                ss << Terminal::HI_WHITE << c << Terminal::RESET;
+            else
+                ss << Terminal::GRAY << c << Terminal::RESET;
+        }
+        return ss.str();
     }
-#endif
-}
+    VirtualMachine& m_vm;
+    const Z80<Memory>::State& m_prev;
+    bool m_has_focus;
+    uint64_t m_tstates;
+};
+class StackView {
+public:
+    StackView(VirtualMachine& vm, uint16_t view_addr, bool has_focus) : m_vm(vm), m_view_addr(view_addr), m_has_focus(has_focus) {
+    }
+    std::vector<std::string> render() {
+        std::vector<std::string> lines;
+        std::stringstream header;
+        if (m_has_focus) header << Terminal::YELLOW << "[STACK]" << Terminal::RESET;
+        else header << Terminal::GREEN << "[STACK]" << Terminal::RESET;
+        header << Terminal::CYAN << " (SP=" << Terminal::HI_WHITE << Strings::hex16(m_vm.get_cpu().get_SP()) << Terminal::CYAN << ")" << Terminal::RESET;
+        lines.push_back(header.str());
 
-namespace {
-    class DebugSession {
+        for (int i=0; i<5; ++i) {
+            uint16_t addr = m_view_addr + i*2;
+            uint8_t l = m_vm.get_memory().read(addr);
+            uint8_t h = m_vm.get_memory().read(addr + 1);
+            uint16_t val = l | (h << 8);
+            std::stringstream ss;
+            ss << "  " << Terminal::GRAY << Strings::hex16(addr) << Terminal::RESET << ": " << Terminal::HI_WHITE << Strings::hex16(val) << Terminal::RESET;
+            auto code_lines = m_vm.get_analyzer().parse_code(val, 1);
+            if (!code_lines.empty() && !code_lines[0].label.empty())
+                ss << Terminal::HI_YELLOW << " (" << code_lines[0].label << ")" << Terminal::RESET;
+            lines.push_back(ss.str());
+        }
+        return lines;
+    }
+private:
+    VirtualMachine& m_vm;
+    uint16_t m_view_addr;
+    bool m_has_focus;
+};
+class CodeView {
+public:
+    CodeView(VirtualMachine& vm, uint16_t start_addr, int rows, uint16_t pc, int width, bool has_focus, const std::deque<uint16_t>& history) 
+        : m_vm(vm), m_start_addr(start_addr), m_rows(rows), m_pc(pc), m_width(width), m_has_focus(has_focus), m_history(history) {
+    }
+    std::vector<std::string> render() {
+        std::vector<std::string> lines_out;
+        
+        std::stringstream header;
+        if (m_has_focus) header << Terminal::YELLOW << "[CODE]" << Terminal::RESET;
+        else header << Terminal::GREEN << "[CODE]" << Terminal::RESET;
+        lines_out.push_back(header.str());
+
+        if (!m_history.empty() && m_start_addr == m_pc) {
+            uint16_t hist_addr = m_history.back();
+            auto hist_lines = m_vm.get_analyzer().parse_code(hist_addr, 1);
+            if (!hist_lines.empty()) {
+                const auto& line = hist_lines[0];
+                std::stringstream ss;
+                ss << "  " << Terminal::GRAY << Strings::hex16((uint16_t)line.address) << ": ";
+                
+                for(size_t i=0; i<std::min((size_t)4, line.bytes.size()); ++i) {
+                    ss << Strings::hex8(line.bytes[i]) << " ";
+                }
+                for(size_t i=line.bytes.size(); i<4; ++i) ss << "   ";
+                ss << " ";
+
+                ss << std::left << std::setw(5) << line.mnemonic << " ";
+                
+                if (!line.operands.empty()) {
+                    using Operand = typename std::decay_t<decltype(line)>::Operand;
+                    for (size_t i = 0; i < line.operands.size(); ++i) {
+                        if (i > 0) ss << ", ";
+                        const auto& op = line.operands[i];
+                        switch (op.type) {
+                            case Operand::REG8: case Operand::REG16: case Operand::CONDITION: ss << op.s_val; break;
+                            case Operand::IMM8: ss << "$" << Strings::hex8(op.num_val); break;
+                            case Operand::IMM16: ss << "$" << Strings::hex16(op.num_val); break;
+                            case Operand::MEM_IMM16: ss << "($" << Strings::hex16(op.num_val) << ")"; break;
+                            case Operand::MEM_REG16: ss << "(" << op.s_val << ")"; break;
+                            case Operand::MEM_INDEXED: ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
+                            case Operand::STRING: ss << "\"" << op.s_val << "\""; break;
+                            default: break;
+                        }
+                    }
+                }
+                ss << Terminal::RESET;
+                lines_out.push_back(ss.str());
+            }
+        }
+
+        uint16_t temp_pc_iter = m_start_addr;
+        auto lines = m_vm.get_analyzer().parse_code(temp_pc_iter, m_rows);   
+        for (const auto& line : lines) {
+            std::stringstream ss;
+            bool is_pc = ((uint16_t)line.address == m_pc);
+            std::string bg = is_pc ? Terminal::BG_DARK_GRAY : "";
+            std::string rst = is_pc ? (Terminal::RESET + bg) : Terminal::RESET;
+            if (is_pc)
+                ss << bg << Terminal::HI_GREEN << Terminal::BOLD << "> " << rst;
+            else
+                ss << "  ";
+            if (is_pc)
+                ss << Terminal::HI_WHITE << Terminal::BOLD << Strings::hex16((uint16_t)line.address) << rst << ": ";
+            else
+                ss << Terminal::GRAY << Strings::hex16((uint16_t)line.address) << rst << ": ";
+            ss << Terminal::GRAY;
+            for(size_t i=0; i<std::min((size_t)4, line.bytes.size()); ++i)
+                ss << Strings::hex8(line.bytes[i]) << " ";
+            for(size_t i=line.bytes.size(); i<4; ++i)
+                ss << "   ";
+            ss << rst << " ";
+            if (is_pc)
+                ss << Terminal::BOLD << Terminal::WHITE;
+            else
+                ss << Terminal::BLUE;
+            ss << std::left << std::setw(5) << line.mnemonic << rst << " ";
+            if (!line.operands.empty()) {
+                using Operand = typename std::decay_t<decltype(line)>::Operand;
+                for (size_t i = 0; i < line.operands.size(); ++i) {
+                    if (i > 0)
+                        ss << ", ";
+                    const auto& op = line.operands[i];
+                    bool is_num = (op.type == Operand::IMM8 || op.type == Operand::IMM16 || op.type == Operand::MEM_IMM16);
+                    if (is_num)
+                        ss << Terminal::YELLOW;
+                    switch (op.type) {
+                        case Operand::REG8:
+                        case Operand::REG16:
+                        case Operand::CONDITION:
+                            ss << op.s_val;
+                            break;
+                        case Operand::IMM8:
+                            ss << "$" << Strings::hex8(op.num_val);
+                            break;
+                        case Operand::IMM16:
+                            ss << "$" << Strings::hex16(op.num_val);
+                            break;
+                        case Operand::MEM_IMM16:
+                            ss << "($" << Strings::hex16(op.num_val) << ")";
+                            break;
+                        case Operand::MEM_REG16:
+                            ss << "(" << op.s_val << ")";
+                            break;
+                        case Operand::MEM_INDEXED:
+                            ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")";
+                            break;
+                        case Operand::STRING:
+                            ss << "\"" << op.s_val << "\"";
+                            break;
+                        default:
+                            break;
+                    }
+                    if (is_num)
+                        ss << rst;
+                }
+            }
+            if (m_width > 0) {
+                std::string s = ss.str();
+                size_t len = Strings::ansi_len(s);
+                int pad = m_width - (int)len;
+                if (pad > 0)
+                    s += std::string(pad, ' ');
+                s += Terminal::RESET; 
+                lines_out.push_back(s);
+            } else
+                lines_out.push_back(ss.str());
+        }
+        return lines_out;
+    }
+private:
+    VirtualMachine& m_vm;
+    uint16_t m_start_addr;
+    int m_rows;
+    uint16_t m_pc;
+    int m_width;
+    bool m_has_focus;
+    const std::deque<uint16_t>& m_history;
+};
+class DebugSession {
         VirtualMachine& vm;
         replxx::Replxx& repl;
         std::string last_command;
         bool running = true;
         std::stringstream m_output_buffer;
-        enum Focus { FOCUS_MEMORY, FOCUS_REGS, FOCUS_STACK, FOCUS_CODE, FOCUS_WATCH, FOCUS_BREAKPOINTS, FOCUS_MAP };
+        enum Focus { FOCUS_MEMORY, FOCUS_REGS, FOCUS_STACK, FOCUS_CODE, FOCUS_WATCH, FOCUS_BREAKPOINTS };
         Focus m_focus = FOCUS_MEMORY;
         int m_code_rows = 15;
         int m_stack_rows = 4;
@@ -148,7 +332,6 @@ namespace {
         bool m_show_stack = true;
         bool m_show_watch = true;
         bool m_show_breakpoints = true;
-        bool m_show_map = true;
         std::map<std::string, std::string> m_colors;
         
         struct Breakpoint { uint16_t addr; bool enabled; };
@@ -157,24 +340,7 @@ namespace {
         std::deque<uint16_t> m_history;
         uint64_t m_tstates = 0;
         
-        struct RegState {
-            uint16_t af, bc, de, hl;
-            uint16_t afp, bcp, dep, hlp;
-            uint16_t ix, iy, sp, pc;
-            uint8_t i, r, im;
-            bool iff1;
-        };
-        RegState m_prev_regs;
-
-        RegState capture_regs() {
-            auto& cpu = vm.get_cpu();
-            return {
-                cpu.get_AF(), cpu.get_BC(), cpu.get_DE(), cpu.get_HL(),
-                cpu.get_AFp(), cpu.get_BCp(), cpu.get_DEp(), cpu.get_HLp(),
-                cpu.get_IX(), cpu.get_IY(), cpu.get_SP(), cpu.get_PC(),
-                cpu.get_I(), cpu.get_R(), (uint8_t)cpu.get_IRQ_mode(), cpu.get_IFF1()
-            };
-        }
+        Z80<Memory>::State m_prev_regs;
 
         template<typename T>
         void log(const T& msg) {
@@ -185,18 +351,6 @@ namespace {
             m_output_buffer << msg << "\n";
         }
 
-        struct CommandHelp {
-            std::string shortcut;
-            std::string name;
-            std::string args;
-            std::string desc;
-        };
-
-        struct HelpCategory {
-            std::string title;
-            std::vector<CommandHelp> commands;
-        };
-
         void setup_replxx() {
             repl.install_window_change_handler();
             
@@ -205,15 +359,27 @@ namespace {
                 std::vector<replxx::Replxx::Completion> completions;
                 std::vector<std::string> cmds = {
                     "step", "next", "finish", "continue", "break", "watch", "delete", "unwatch",
-                    "help", "quit", "lines", "toggle", "map"
+                    "help", "quit", "lines", "toggle"
                 };
                 
-                std::string prefix = context.substr(context.find_last_of(" ") + 1);
-                contextLen = prefix.length();
-                
-                for (auto const& c : cmds) {
-                    if (c.rfind(prefix, 0) == 0) {
-                        completions.push_back(c);
+                size_t lastSpace = context.find_last_of(" ");
+                if (lastSpace == std::string::npos) {
+                    std::string prefix = context;
+                    contextLen = prefix.length();
+                    for (auto const& c : cmds) {
+                        if (c.find(prefix) == 0) completions.push_back(c);
+                    }
+                } else {
+                    std::string cmd = context.substr(0, context.find(' '));
+                    std::string prefix = context.substr(lastSpace + 1);
+                    contextLen = prefix.length();
+                    
+                    if (cmd == "toggle") {
+                        std::vector<std::string> args = {"mem", "regs", "code", "stack", "watch", "breakpoints"};
+                        for (const auto& a : args) if (a.find(prefix) == 0) completions.push_back(a);
+                    } else if (cmd == "lines") {
+                        std::vector<std::string> args = {"code", "mem", "stack"};
+                        for (const auto& a : args) if (a.find(prefix) == 0) completions.push_back(a);
                     }
                 }
                 return completions;
@@ -222,10 +388,15 @@ namespace {
             // 2. Hints
             repl.set_hint_callback([this](std::string const& input, int& contextLen, replxx::Replxx::Color& color) {
                 if (input.empty()) return std::vector<std::string>();
-                if (input == "lines") return std::vector<std::string>{" <code|mem|stack> <n>"};
-                if (input == "toggle") return std::vector<std::string>{" <mem|regs|code|stack|watch|breakpoints|map>"};
-                if (input == "break" || input == "b") return std::vector<std::string>{" <addr>"};
-                if (input == "watch" || input == "w") return std::vector<std::string>{" <addr>"};
+                
+                std::stringstream ss(input);
+                std::string cmd;
+                ss >> cmd;
+                
+                if (cmd == "lines") return std::vector<std::string>{" <code|mem|stack> <n>"};
+                if (cmd == "toggle") return std::vector<std::string>{" <mem|regs|code|stack|watch|breakpoints>"};
+                if (cmd == "break" || cmd == "b") return std::vector<std::string>{" <addr>"};
+                if (cmd == "watch" || cmd == "w") return std::vector<std::string>{" <addr>"};
                 return std::vector<std::string>();
             });
 
@@ -261,16 +432,15 @@ namespace {
             auto tab_handler = [this](char32_t code) {
                 int attempts = 0;
                 do {
-                    m_focus = (Focus)((m_focus + 1) % 7);
+                    m_focus = (Focus)((m_focus + 1) % 6);
                     attempts++;
-                } while (attempts < 7 && (
+                } while (attempts < 6 && (
                     (m_focus == FOCUS_MEMORY && !m_show_mem) ||
                     (m_focus == FOCUS_REGS && !m_show_regs) ||
                     (m_focus == FOCUS_STACK && !m_show_stack) ||
                     (m_focus == FOCUS_CODE && !m_show_code) ||
                     (m_focus == FOCUS_WATCH && !m_show_watch) ||
-                    (m_focus == FOCUS_BREAKPOINTS && !m_show_breakpoints) ||
-                    (m_focus == FOCUS_MAP && !m_show_map)
+                    (m_focus == FOCUS_BREAKPOINTS && !m_show_breakpoints)
                 ));
                 print_dashboard();
                 repl.invoke(replxx::Replxx::ACTION::REPAINT, code);
@@ -282,135 +452,21 @@ namespace {
         }
 
         void print_help() {
-            std::vector<HelpCategory> categories = {
-                {
-                    "EXECUTION", {
-                        {"s", "step", "[n]",    "Execute instructions (default 1)"},
-                        {"n", "next", "",       "Step over subroutine"},
-                        {"f", "finish", "",     "Step out of subroutine"},
-                        {"c", "continue", "",   "Continue execution"}
-                    }
-                },
-                {
-                    "SYSTEM", {
-                        {"h", "help", "", "Show this message"},
-                        {"lines", "", "<type> <n>", "Set lines (code/mem/stack)"},
-                        {"toggle", "", "<panel>", "Toggle panel visibility"},
-                        {"map", "", "", "Show memory mini-map"},
-                        {"b", "break", "<addr>", "Set breakpoint"},
-                        {"d", "delete", "<addr>", "Delete breakpoint"},
-                        {"w", "watch", "<addr>", "Add watch address"},
-                        {"u", "unwatch", "<addr>", "Remove watch"},
-                        {"q", "quit", "", "Exit debugger"}
-                    }
-                }
-            };
-
             m_output_buffer << "\nAvailable Commands:\n";
-
-            for (const auto& cat : categories) {
-                m_output_buffer << " [" << cat.title << "]\n";
-                for (const auto& cmd : cat.commands) {
-                    std::string left = "   " + cmd.shortcut;
-                    if (!cmd.name.empty()) left += ", " + cmd.name;
-                    if (!cmd.args.empty()) left += " " + cmd.args;
-                    
-                    m_output_buffer << std::left << std::setw(26) << left << cmd.desc << "\n";
-                }
-                m_output_buffer << "\n";
-            }
-        }
-
-        uint16_t read16(uint16_t addr) {
-            uint8_t l = vm.get_memory().read(addr);
-            uint8_t h = vm.get_memory().read(addr + 1);
-            return l | (h << 8);
-        }
-
-        std::string pad_to(const std::string& s, size_t width) {
-            size_t vis = visible_length(s);
-            if (vis >= width) return s;
-            return s + std::string(width - vis, ' ');
-        }
-
-        std::string pad_to_with_bg(const std::string& s, size_t width, const std::string& bg_color) {
-            size_t vis = visible_length(s);
-            if (vis >= width) return s;
-            return s + bg_color + std::string(width - vis, ' ') + Color::RESET;
-        }
-
-        template<typename CPU>
-        std::vector<std::string> get_regs_lines(CPU& cpu, const RegState& prev) {
-            std::vector<std::string> lines;
-            auto p16 = [&](const std::string& l, uint16_t v, uint16_t pv) -> std::string {
-                std::stringstream ss;
-                ss << Color::CYAN << std::setw(3) << std::left << l << Color::RESET << ": " 
-                   << (v != pv ? Color::HI_YELLOW : Color::GRAY) << hex16(v) << Color::RESET;
-                return ss.str();
-            };
-            auto p8 = [&](const std::string& l, uint8_t v, uint8_t pv) -> std::string {
-                std::stringstream ss;
-                ss << Color::CYAN << std::setw(3) << std::left << l << Color::RESET << ": " 
-                   << (v != pv ? Color::HI_YELLOW : Color::GRAY) << hex8(v) << Color::RESET;
-                return ss.str();
-            };
-
-            // Row 1
-            std::stringstream ss;
-            ss << "  " << p16("AF", cpu.get_AF(), prev.af) << "   " << p16("AF'", cpu.get_AFp(), prev.afp) << "   " << p8("I", cpu.get_I(), prev.i);
-            lines.push_back(ss.str());
-            
-            // Row 2
-            ss.str(""); ss << "  " << p16("BC", cpu.get_BC(), prev.bc) << "   " << p16("BC'", cpu.get_BCp(), prev.bcp) << "   " << p8("R", cpu.get_R(), prev.r);
-            lines.push_back(ss.str());
-            
-            // Row 3
-            ss.str(""); ss << "  " << p16("DE", cpu.get_DE(), prev.de) << "   " << p16("DE'", cpu.get_DEp(), prev.dep) << "   "
-               << Color::CYAN << std::setw(3) << std::left << "IM" << Color::RESET << ": " 
-               << (cpu.get_IRQ_mode() != prev.im ? Color::HI_YELLOW : Color::GRAY) << (int)cpu.get_IRQ_mode() << Color::RESET;
-            lines.push_back(ss.str());
-
-            // Row 4
-            ss.str(""); ss << "  " << p16("HL", cpu.get_HL(), prev.hl) << "   " << p16("HL'", cpu.get_HLp(), prev.hlp) << "   "
-               << Color::CYAN << std::setw(3) << std::left << "IFF" << Color::RESET << ": " 
-               << (cpu.get_IFF1() ? (Color::HI_GREEN + "ON ") : (Color::GRAY + "OFF")) << Color::RESET;
-            lines.push_back(ss.str());
-            
-            // Row 5
-            ss.str(""); ss << "  " << p16("IX", cpu.get_IX(), prev.ix) << "   " << p16("IY", cpu.get_IY(), prev.iy) << "   "
-               << Color::CYAN << std::setw(3) << std::left << "F" << Color::RESET << ": " << format_flags(cpu.get_AF() & 0xFF, prev.af & 0xFF);
-            lines.push_back(ss.str());
-            
-            return lines;
-        }
-
-        void print_side_by_side(const std::vector<std::string>& left, const std::vector<std::string>& right, size_t left_width) {
-            size_t rows = std::max(left.size(), right.size());
-            static const std::regex ansi_regex("\x1B\\[[0-9;]*[mK]");
-
-            for (size_t i = 0; i < rows; ++i) {
-                std::string l = (i < left.size()) ? left[i] : "";
-                
-                std::string plain = std::regex_replace(l, ansi_regex, "");
-                size_t len = plain.length();
-                
-                int padding = (int)left_width - (int)len;
-                if (padding < 0) padding = 0;
-
-                bool has_bg = (l.find("[100m") != std::string::npos);
-
-                std::cout << l;
-                if (has_bg) std::cout << Color::BG_DARK_GRAY;
-                std::cout << std::string(padding, ' ');
-                if (has_bg) std::cout << Color::RESET;
-
-                std::cout << Color::GRAY << " | " << Color::RESET;
-
-                if (i < right.size()) {
-                    std::cout << " " << right[i];
-                }
-                std::cout << "\n";
-            }
+            m_output_buffer << " [EXECUTION]\n";
+            m_output_buffer << "   s, step [n]            Execute instructions (default 1)\n";
+            m_output_buffer << "   n, next                Step over subroutine\n";
+            m_output_buffer << "   f, finish              Step out of subroutine\n";
+            m_output_buffer << "   c, continue            Continue execution\n\n";
+            m_output_buffer << " [SYSTEM]\n";
+            m_output_buffer << "   h, help                Show this message\n";
+            m_output_buffer << "   lines <type> <n>       Set lines (code/mem/stack)\n";
+            m_output_buffer << "   toggle <panel>         Toggle panel visibility\n";
+            m_output_buffer << "   b, break <addr>        Set breakpoint\n";
+            m_output_buffer << "   d, delete <addr>       Delete breakpoint\n";
+            m_output_buffer << "   w, watch <addr>        Add watch address\n";
+            m_output_buffer << "   u, unwatch <addr>      Remove watch\n";
+            m_output_buffer << "   q, quit                Exit debugger\n";
         }
 
         bool check_breakpoints(uint16_t pc) {
@@ -420,41 +476,22 @@ namespace {
             return false;
         }
 
+        void print_separator() {
+            std::cout << Terminal::GRAY << std::string(80, '-') << Terminal::RESET << "\n";
+        }
+
         void print_dashboard() {
             Terminal::clear();
             auto& cpu = vm.get_cpu();
             uint16_t pc = cpu.get_PC();
 
-            const int term_w = 80;
-
-            auto print_sep = [term_w]() { std::cout << Color::GRAY << std::string(term_w, '-') << Color::RESET << "\n"; };
+            const int terminal_width = 80;
 
             // [MEMORY]
             if (m_show_mem) {
-                print_sep();
-                if (m_focus == FOCUS_MEMORY) std::cout << Color::YELLOW << "[MEMORY] " << Color::RESET;
-                else std::cout << Color::GREEN << "[MEMORY] " << Color::RESET;
-                std::cout << Color::CYAN << " View: " << Color::HI_WHITE << hex16(m_mem_view_addr) << Color::RESET << "\n";
-                print_sep();
-
-                auto& mem = vm.get_memory();
-                for (size_t i = 0; i < m_mem_rows * 16; i += 16) {
-                    uint16_t addr = m_mem_view_addr + i;
-                    std::cout << Color::CYAN << hex16(addr) << Color::RESET << ": ";
-                    for (size_t j = 0; j < 16; ++j) {
-                        print_byte_smart(mem.read(addr + j));
-                        if (j == 7) std::cout << "  ";
-                        else if (j == 15) std::cout << "  ";
-                        else std::cout << " ";
-                    }
-                    std::cout << Color::GRAY << "|" << Color::RESET << " ";
-                    for (size_t j = 0; j < 16; ++j) {
-                        uint8_t val = mem.read(addr + j);
-                        if (std::isprint(val)) std::cout << Color::HI_YELLOW << (char)val << Color::RESET;
-                        else std::cout << Color::GRAY << "." << Color::RESET;
-                    }
-                    std::cout << "\n";
-                }
+                MemoryView view(vm, m_mem_view_addr, m_mem_rows, m_focus == FOCUS_MEMORY);
+                auto lines = view.render();
+                for(const auto& line : lines) std::cout << line << "\n";
             }
 
             // Reset formatting (clear sticky flags from Memory/Code sections)
@@ -465,192 +502,69 @@ namespace {
             std::vector<std::string> right_lines;
 
             if (m_show_regs) {
-                std::stringstream header;
-                if (m_focus == FOCUS_REGS) header << Color::YELLOW << "[REGS]" << Color::RESET;
-                else header << Color::GREEN << "[REGS]" << Color::RESET;
-                
-                // T-States in header
-                header << Color::CYAN << " T: " << Color::RESET << Color::HI_WHITE << m_tstates << Color::RESET 
-                       << Color::GRAY << " (+" << 4 << ")" << Color::RESET; // Mock delta
-                
-                left_lines.push_back(header.str());
-
-                auto regs_lines = get_regs_lines(cpu, m_prev_regs);
+                RegisterView view(vm, m_prev_regs, m_focus == FOCUS_REGS, m_tstates);
+                auto regs_lines = view.render();
                 left_lines.insert(left_lines.end(), regs_lines.begin(), regs_lines.end());
             }
 
             if (m_show_stack) {
-                std::stringstream header;
-                if (m_focus == FOCUS_STACK) header << Color::YELLOW << "[STACK]" << Color::RESET;
-                else header << Color::GREEN << "[STACK]" << Color::RESET;
-                header << Color::CYAN << " (SP=" << Color::HI_WHITE << hex16(cpu.get_SP()) << Color::CYAN << ")" << Color::RESET;
-                right_lines.push_back(header.str());
-
-                uint16_t sp = m_stack_view_addr;
-                for(int i=0; i<5; ++i) {
-                    uint16_t addr = sp + i*2;
-                    uint16_t val = read16(addr);
-                    std::stringstream ss;
-                    ss << "  " << Color::GRAY << hex16(addr) << Color::RESET << ": " << Color::HI_WHITE << hex16(val) << Color::RESET;
-                    auto code_lines = vm.get_analyzer().parse_code(val, 1);
-                    if (!code_lines.empty() && !code_lines[0].label.empty()) {
-                        ss << Color::HI_YELLOW << " (" << code_lines[0].label << ")" << Color::RESET;
-                    }
-                    right_lines.push_back(ss.str());
-                }
+                StackView view(vm, m_stack_view_addr, m_focus == FOCUS_STACK);
+                auto stack_lines = view.render();
+                right_lines.insert(right_lines.end(), stack_lines.begin(), stack_lines.end());
             }
 
-            print_sep();
+            print_separator();
             print_side_by_side(left_lines, right_lines, 40);
             
             // --- MIDDLE SECTION: SEPARATOR ---
-            print_sep();
+            print_separator();
 
             // --- MIDDLE SECTION: ROW 2 (CODE | WATCH/BP) ---
             left_lines.clear();
             right_lines.clear();
 
             if (m_show_code) {
-                if (m_focus == FOCUS_CODE) left_lines.push_back(Color::YELLOW + "[CODE]" + Color::RESET);
-                else left_lines.push_back(Color::GREEN + "[CODE]" + Color::RESET);
-
-                // History (1 line back)
-                if (!m_history.empty() && m_code_view_addr == pc) {
-                    uint16_t hist_addr = m_history.back();
-                    auto hist_lines = vm.get_analyzer().parse_code(hist_addr, 1);
-                    if (!hist_lines.empty()) {
-                        const auto& line = hist_lines[0];
-                        std::stringstream ss;
-                        ss << "  " << Color::GRAY << hex16((uint16_t)line.address) << ": ";
-                        
-                        for(size_t i=0; i<std::min((size_t)4, line.bytes.size()); ++i) {
-                            ss << hex8(line.bytes[i]) << " ";
-                        }
-                        for(size_t i=line.bytes.size(); i<4; ++i) ss << "   ";
-                        ss << " ";
-
-                        ss << std::left << std::setw(5) << line.mnemonic << " ";
-                        
-                        if (!line.operands.empty()) {
-                            using Operand = typename std::decay_t<decltype(line)>::Operand;
-                            for (size_t i = 0; i < line.operands.size(); ++i) {
-                                if (i > 0) ss << ", ";
-                                const auto& op = line.operands[i];
-                                switch (op.type) {
-                                    case Operand::REG8: case Operand::REG16: case Operand::CONDITION: ss << op.s_val; break;
-                                    case Operand::IMM8: ss << "$" << hex8(op.num_val); break;
-                                    case Operand::IMM16: ss << "$" << hex16(op.num_val); break;
-                                    case Operand::MEM_IMM16: ss << "($" << hex16(op.num_val) << ")"; break;
-                                    case Operand::MEM_REG16: ss << "(" << op.s_val << ")"; break;
-                                    case Operand::MEM_INDEXED: ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
-                                    case Operand::STRING: ss << "\"" << op.s_val << "\""; break;
-                                    default: break;
-                                }
-                            }
-                        }
-                        ss << Color::RESET;
-                        left_lines.push_back(ss.str());
-                    }
-                }
-
-                uint16_t temp_pc_iter = m_code_view_addr;
-                auto lines = vm.get_analyzer().parse_code(temp_pc_iter, m_code_rows);
-                for (const auto& line : lines) {
-                    std::stringstream ss;
-                    bool is_pc = ((uint16_t)line.address == pc);
-                    std::string bg = is_pc ? Color::BG_DARK_GRAY : "";
-                    std::string rst = is_pc ? (Color::RESET + bg) : Color::RESET;
-
-                    // Gutter
-                    if (is_pc) {
-                        ss << bg << Color::HI_GREEN << Color::BOLD << "> " << rst;
-                    } else {
-                        ss << "  ";
-                    }
-                    
-                    // Address
-                    if (is_pc) ss << Color::HI_WHITE << Color::BOLD << hex16((uint16_t)line.address) << rst << ": ";
-                    else ss << Color::GRAY << hex16((uint16_t)line.address) << rst << ": ";
-                    
-                    // Bytes
-                    ss << Color::GRAY;
-                    for(size_t i=0; i<std::min((size_t)4, line.bytes.size()); ++i) {
-                        ss << hex8(line.bytes[i]) << " ";
-                    }
-                    for(size_t i=line.bytes.size(); i<4; ++i) ss << "   ";
-                    ss << rst << " ";
-
-                    // Mnemonic
-                    if (is_pc) ss << Color::BOLD << Color::WHITE;
-                    else ss << Color::BLUE;
-                    ss << std::left << std::setw(5) << line.mnemonic << rst << " ";
-                    
-                    if (!line.operands.empty()) {
-                        using Operand = typename std::decay_t<decltype(line)>::Operand;
-                        for (size_t i = 0; i < line.operands.size(); ++i) {
-                            if (i > 0) ss << ", ";
-                            const auto& op = line.operands[i];
-                            
-                            bool is_num = (op.type == Operand::IMM8 || op.type == Operand::IMM16 || op.type == Operand::MEM_IMM16);
-                            if (is_num) ss << Color::YELLOW;
-
-                            switch (op.type) {
-                                case Operand::REG8: case Operand::REG16: case Operand::CONDITION: ss << op.s_val; break;
-                                case Operand::IMM8: ss << "$" << hex8(op.num_val); break;
-                                case Operand::IMM16: ss << "$" << hex16(op.num_val); break;
-                                case Operand::MEM_IMM16: ss << "($" << hex16(op.num_val) << ")"; break;
-                                case Operand::MEM_REG16: ss << "(" << op.s_val << ")"; break;
-                                case Operand::MEM_INDEXED: ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
-                                case Operand::STRING: ss << "\"" << op.s_val << "\""; break;
-                                default: break;
-                            }
-                            if (is_num) ss << rst;
-                        }
-                    }
-                    
-                    if (m_show_watch || m_show_breakpoints) {
-                        // No manual padding here, handled by print_side_by_side
-                        left_lines.push_back(ss.str());
-                    } else {
-                        // Fixed width mode: pad to term_w
-                        size_t len = visible_length(ss.str());
-                        int pad = term_w - (int)len;
-                        if (pad > 0) ss << std::string(pad, ' ');
-                        ss << Color::RESET; // Reset background after padding
-                        left_lines.push_back(ss.str());
-                    }
-                }
+                int width = (m_show_watch || m_show_breakpoints) ? 0 : terminal_width;
+                CodeView view(vm, m_code_view_addr, m_code_rows, pc, width, m_focus == FOCUS_CODE, m_history);
+                auto code_lines = view.render();
+                left_lines.insert(left_lines.end(), code_lines.begin(), code_lines.end());
             }
 
             if (m_show_watch || m_show_breakpoints) {
                 // [WATCH]
                 if (m_show_watch) {
-                    if (m_focus == FOCUS_WATCH) right_lines.push_back(Color::YELLOW + "[WATCH]" + Color::RESET);
-                    else right_lines.push_back(Color::CYAN + "[WATCH]" + Color::RESET);
+                    if (m_focus == FOCUS_WATCH) right_lines.push_back(Terminal::YELLOW + "[WATCH]" + Terminal::RESET);
+                    else right_lines.push_back(Terminal::GREEN + "[WATCH]" + Terminal::RESET);
                     
                     for (uint16_t addr : m_watches) {
                         uint8_t val = vm.get_memory().read(addr);
                         std::stringstream ss;
-                        ss << "  " << hex16(addr) << ": " << Color::HI_WHITE << hex8(val) << Color::RESET;
-                        if (std::isprint(val)) ss << " (" << Color::HI_YELLOW << (char)val << Color::RESET << ")";
+                        ss << "  " << Strings::hex16(addr) << ": " << Terminal::HI_WHITE << Strings::hex8(val) << Terminal::RESET;
+                        if (std::isprint(val)) ss << " (" << Terminal::HI_YELLOW << (char)val << Terminal::RESET << ")";
                         right_lines.push_back(ss.str());
                     }
-                    if (m_watches.empty()) right_lines.push_back(Color::GRAY + "  (empty)" + Color::RESET);
+                    if (m_watches.empty()) {
+                        right_lines.push_back(Terminal::GRAY + "  No items." + Terminal::RESET);
+                        right_lines.push_back(Terminal::GRAY + "  Use 'w <addr>'" + Terminal::RESET);
+                    }
                     right_lines.push_back("");
                 }
                 
                 // [BREAKPOINTS]
                 if (m_show_breakpoints) {
-                    if (m_focus == FOCUS_BREAKPOINTS) right_lines.push_back(Color::YELLOW + "[BREAKPOINTS]" + Color::RESET);
-                    else right_lines.push_back(Color::CYAN + "[BREAKPOINTS]" + Color::RESET);
+                    if (m_focus == FOCUS_BREAKPOINTS) right_lines.push_back(Terminal::YELLOW + "[BREAKPOINTS]" + Terminal::RESET);
+                    else right_lines.push_back(Terminal::GREEN + "[BREAKPOINTS]" + Terminal::RESET);
                     int i = 1;
                     for (const auto& bp : m_breakpoints) {
                         std::stringstream ss;
-                        ss << "  " << i++ << ". " << hex16(bp.addr);
-                        if (!bp.enabled) ss << Color::GRAY << " [Disabled]" << Color::RESET;
+                        ss << "  " << i++ << ". " << Strings::hex16(bp.addr);
+                        if (!bp.enabled) ss << Terminal::GRAY << " [Disabled]" << Terminal::RESET;
                         right_lines.push_back(ss.str());
                     }
-                    if (m_breakpoints.empty()) right_lines.push_back(Color::GRAY + "  (none)" + Color::RESET);
+                    if (m_breakpoints.empty()) {
+                        right_lines.push_back(Terminal::GRAY + "  No items." + Terminal::RESET);
+                        right_lines.push_back(Terminal::GRAY + "  Use 'b <addr>'" + Terminal::RESET);
+                    }
                 }
 
                 print_side_by_side(left_lines, right_lines, 40);
@@ -665,10 +579,9 @@ namespace {
                 m_output_buffer.clear();
             }
             
-            print_sep();
-            if (m_show_map) print_mini_map();
+            print_separator();
             auto pcmd = [](const std::string& key, const std::string& name) {
-                std::cout << Color::GRAY << "[" << Color::HI_WHITE << Color::BOLD << key << Color::RESET << Color::GRAY << "]" << name << " " << Color::RESET;
+                std::cout << Terminal::GRAY << "[" << Terminal::HI_WHITE << Terminal::BOLD << key << Terminal::RESET << Terminal::GRAY << "]" << name << " " << Terminal::RESET;
             };
             pcmd("s", "tep");
             pcmd("n", "ext");
@@ -677,14 +590,13 @@ namespace {
             pcmd("b", "reak");
             pcmd("w", "atch");
             pcmd("h", "elp");
-            pcmd("m", "ap");
             pcmd("q", "uit");
             std::cout << "\n";
             std::cout << std::flush;
         }
 
         void do_step(int n) {
-            m_prev_regs = capture_regs();
+            m_prev_regs = vm.get_cpu().save_state();
             if (m_history.size() >= 2) m_history.pop_front();
             m_history.push_back(vm.get_cpu().get_PC());
             m_tstates += 4 * n; // Mock T-states
@@ -696,7 +608,7 @@ namespace {
         }
 
         void do_next() {
-            m_prev_regs = capture_regs();
+            m_prev_regs = vm.get_cpu().save_state();
             if (m_history.size() >= 2) m_history.pop_front();
             m_history.push_back(vm.get_cpu().get_PC());
             m_tstates += 4;
@@ -711,7 +623,7 @@ namespace {
 
             if (is_subroutine) {
                 uint16_t next_pc = (lines.size() > 1) ? lines[1].address : pc + 1;
-                log_line("Stepping over... (Target: " + hex16(next_pc) + ")");
+                log_line("Stepping over... (Target: " + Strings::hex16(next_pc) + ")");
                 
                 // Simple run loop
                 while (vm.get_cpu().get_PC() != next_pc) {
@@ -724,7 +636,7 @@ namespace {
         }
 
         void do_finish() {
-            m_prev_regs = capture_regs();
+            m_prev_regs = vm.get_cpu().save_state();
             log_line("Running until return...");
             
             while (true) {
@@ -775,7 +687,7 @@ namespace {
         }
 
         void do_continue() {
-            m_prev_regs = capture_regs();
+            m_prev_regs = vm.get_cpu().save_state();
             log_line("Running... (Press Ctrl+C to stop if supported)");
             print_dashboard();
             // In a real CLI tool, we'd need non-blocking input or signal handling.
@@ -788,127 +700,39 @@ namespace {
             }
         }
 
-        struct BlockInfo {
-            char symbol;
-            std::string color;
-        };
+        void print_side_by_side(const std::vector<std::string>& left, const std::vector<std::string>& right, size_t left_width) {
+            size_t rows = std::max(left.size(), right.size());
+            static const std::regex ansi_regex("\x1B\\[[0-9;]*[mK]");
+
+            for (size_t i = 0; i < rows; ++i) {
+                std::string l = (i < left.size()) ? left[i] : "";
+                
+                std::string plain = std::regex_replace(l, ansi_regex, "");
+                size_t len = plain.length();
+                
+                int padding = (int)left_width - (int)len;
+                if (padding < 0) padding = 0;
+
+                bool has_bg = (l.find("[100m") != std::string::npos);
+
+                std::cout << l;
+                if (has_bg) std::cout << Terminal::BG_DARK_GRAY;
+                std::cout << std::string(padding, ' ');
+                if (has_bg) std::cout << Terminal::RESET;
+
+                std::cout << Terminal::GRAY << " | " << Terminal::RESET;
+
+                if (i < right.size()) {
+                    std::cout << " " << right[i];
+                }
+                std::cout << "\n";
+            }
+        }
 
         uint16_t parse_addr(std::string arg) {
             if (arg.empty()) return 0;
             if (arg[0] == '$') arg = "0x" + arg.substr(1);
             return vm.parse_address(arg);
-        }
-
-        BlockInfo analyze_block(uint16_t start_addr, uint16_t size) {
-            auto& mem = vm.get_memory();
-            uint16_t pc = vm.get_cpu().get_PC();
-            uint16_t sp = vm.get_cpu().get_SP();
-            uint32_t end_addr = (uint32_t)start_addr + size;
-
-            bool is_pc = ((uint32_t)pc >= start_addr && (uint32_t)pc < end_addr);
-            bool is_sp = ((uint32_t)sp >= start_addr && (uint32_t)sp < end_addr);
-            
-            if (is_pc && is_sp) return { '!', Color::RED + Color::BOLD };
-
-            bool all_zeros = true;
-            bool all_ff = true;
-            int non_zero_count = 0;
-
-            for (uint16_t i = 0; i < size; ++i) {
-                uint8_t val = mem.read(start_addr + i);
-                if (val != 0) {
-                    all_zeros = false;
-                    non_zero_count++;
-                }
-                if (val != 0xFF) all_ff = false;
-            }
-
-            char sym = ' ';
-            if (all_zeros) sym = ' ';
-            else if (all_ff) sym = '=';
-            else if (non_zero_count < (size / 4)) sym = '.';
-            else sym = '#';
-
-            std::string color = Color::GRAY;
-            if (sym != ' ') {
-                if (start_addr < 0x4000) color = Color::RED;
-                else if (start_addr >= 0x4000 && start_addr < 0x5800) color = Color::YELLOW;
-                else if (start_addr >= 0x5800 && start_addr < 0x5B00) color = Color::HI_YELLOW;
-                else color = Color::BLUE;
-            }
-
-            if (is_pc) { sym = '@'; color = Color::HI_WHITE + Color::BOLD; }
-            else if (is_sp) { sym = 'S'; color = Color::RED + Color::BOLD; }
-
-            return { sym, color };
-        }
-
-        void print_mini_map() {
-            if (m_focus == FOCUS_MAP) std::cout << Color::YELLOW << "[MAP]" << Color::RESET;
-            else std::cout << Color::GRAY << "[MAP]" << Color::RESET;
-            std::cout << " " << Color::GRAY << "[" << Color::RESET;
-            const int blocks = 64;
-            const int bytes_per_block = 1024;
-            
-            for (int i = 0; i < blocks; ++i) {
-                uint16_t addr = i * bytes_per_block;
-                auto info = analyze_block(addr, bytes_per_block);
-                std::cout << info.color << info.symbol << Color::RESET;
-            }
-            std::cout << Color::GRAY << "]" << Color::RESET << "\n";
-        }
-
-        void do_map(std::stringstream& ss) {
-            std::string arg;
-            if (ss >> arg) {
-                // Detailed Map
-                uint16_t start_addr = 0;
-                try { start_addr = parse_addr(arg); } catch(...) {}
-                
-                m_output_buffer << "Detailed Map (1 char = 1 byte) from " << hex16(start_addr) << ":\n";
-                const int cols = 64;
-                const int rows = 16; // 1024 bytes total
-                auto& mem = vm.get_memory();
-
-                for (int r = 0; r < rows; ++r) {
-                    uint16_t row_addr = start_addr + r * cols;
-                    m_output_buffer << hex16(row_addr) << ": ";
-                    for (int c = 0; c < cols; ++c) {
-                        uint16_t addr = row_addr + c;
-                        uint8_t val = mem.read(addr);
-                        
-                        if (val == 0) m_output_buffer << Color::GRAY << "." << Color::RESET;
-                        else if (val == 0xFF) m_output_buffer << Color::BLUE << "=" << Color::RESET;
-                        else if (std::isprint(val)) m_output_buffer << Color::HI_YELLOW << (char)val << Color::RESET;
-                        else m_output_buffer << Color::BLUE << "#" << Color::RESET;
-                    }
-                    m_output_buffer << "\n";
-                }
-            } else {
-                // Global Map
-                m_output_buffer << "Global Memory Map (1 char = 128 bytes):\n";
-                const int width = 64;
-                const int bytes_per_block = 128;
-                const int rows = 65536 / (width * bytes_per_block); // 8 rows
-
-                for (int r = 0; r < rows; ++r) {
-                    m_output_buffer << hex16(r * width * bytes_per_block) << ": ";
-                    for (int c = 0; c < width; ++c) {
-                        uint16_t addr = (r * width + c) * bytes_per_block;
-                        auto info = analyze_block(addr, bytes_per_block);
-                        m_output_buffer << info.color << info.symbol << Color::RESET;
-                    }
-                    m_output_buffer << "\n";
-                }
-                m_output_buffer << "Legend: " 
-                                << Color::RED << "ROM" << Color::RESET << " "
-                                << Color::YELLOW << "SCR" << Color::RESET << " "
-                                << Color::HI_YELLOW << "ATTR" << Color::RESET << " "
-                                << Color::BLUE << "RAM" << Color::RESET << " | "
-                                << Color::HI_WHITE << Color::BOLD << "@" << Color::RESET << " PC "
-                                << Color::RED << Color::BOLD << "S" << Color::RESET << " SP "
-                                << Color::RED << Color::BOLD << "!" << Color::RESET << " Collision\n";
-            }
         }
 
         void save_config() {
@@ -925,7 +749,6 @@ namespace {
                 f << "show_stack=" << m_show_stack << "\n";
                 f << "show_watch=" << m_show_watch << "\n";
                 f << "show_breakpoints=" << m_show_breakpoints << "\n";
-                f << "show_map=" << m_show_map << "\n";
             }
         }
 
@@ -955,25 +778,25 @@ namespace {
             auto set = [&](std::string& var, const std::string& name) {
                 if (m_colors.count(name)) var = "\033[" + m_colors[name] + "m";
             };
-            set(Color::RESET, "reset");
-            set(Color::RED, "red");
-            set(Color::GREEN, "green");
-            set(Color::YELLOW, "yellow");
-            set(Color::BLUE, "blue");
-            set(Color::MAGENTA, "magenta");
-            set(Color::CYAN, "cyan");
-            set(Color::WHITE, "white");
-            set(Color::GRAY, "gray");
-            set(Color::BOLD, "bold");
-            set(Color::DIM, "dim");
-            set(Color::HI_RED, "hi_red");
-            set(Color::HI_GREEN, "hi_green");
-            set(Color::HI_YELLOW, "hi_yellow");
-            set(Color::HI_BLUE, "hi_blue");
-            set(Color::HI_MAGENTA, "hi_magenta");
-            set(Color::HI_CYAN, "hi_cyan");
-            set(Color::HI_WHITE, "hi_white");
-            set(Color::BG_DARK_GRAY, "bg_dark_gray");
+            set(Terminal::RESET, "reset");
+            set(Terminal::RED, "red");
+            set(Terminal::GREEN, "green");
+            set(Terminal::YELLOW, "yellow");
+            set(Terminal::BLUE, "blue");
+            set(Terminal::MAGENTA, "magenta");
+            set(Terminal::CYAN, "cyan");
+            set(Terminal::WHITE, "white");
+            set(Terminal::GRAY, "gray");
+            set(Terminal::BOLD, "bold");
+            set(Terminal::DIM, "dim");
+            set(Terminal::HI_RED, "hi_red");
+            set(Terminal::HI_GREEN, "hi_green");
+            set(Terminal::HI_YELLOW, "hi_yellow");
+            set(Terminal::HI_BLUE, "hi_blue");
+            set(Terminal::HI_MAGENTA, "hi_magenta");
+            set(Terminal::HI_CYAN, "hi_cyan");
+            set(Terminal::HI_WHITE, "hi_white");
+            set(Terminal::BG_DARK_GRAY, "bg_dark_gray");
         }
 
         void load_config() {
@@ -1016,8 +839,6 @@ namespace {
                                 m_show_watch = (bool)val;
                             } else if (key == "show_breakpoints") {
                                 m_show_breakpoints = (bool)val;
-                            } else if (key == "show_map") {
-                                m_show_map = (bool)val;
                             }
                         } catch (...) {}
                     }
@@ -1035,23 +856,22 @@ namespace {
             setup_replxx();
             repl.history_load("zxtool_history.txt");
             load_config();
-            m_prev_regs = capture_regs();
+            m_prev_regs = vm.get_cpu().save_state();
             m_code_view_addr = vm.get_cpu().get_PC();
             m_mem_view_addr = vm.get_cpu().get_PC();
             m_stack_view_addr = vm.get_cpu().get_SP();
 
             // Ensure focus is on a visible panel
             int attempts = 0;
-            while (attempts < 7 && (
+            while (attempts < 6 && (
                 (m_focus == FOCUS_MEMORY && !m_show_mem) ||
                 (m_focus == FOCUS_REGS && !m_show_regs) ||
                 (m_focus == FOCUS_STACK && !m_show_stack) ||
                 (m_focus == FOCUS_CODE && !m_show_code) ||
                 (m_focus == FOCUS_WATCH && !m_show_watch) ||
-                (m_focus == FOCUS_BREAKPOINTS && !m_show_breakpoints) ||
-                (m_focus == FOCUS_MAP && !m_show_map)
+                (m_focus == FOCUS_BREAKPOINTS && !m_show_breakpoints)
             )) {
-                m_focus = (Focus)((m_focus + 1) % 7);
+                m_focus = (Focus)((m_focus + 1) % 6);
                 attempts++;
             }
 
@@ -1097,11 +917,9 @@ namespace {
                         else if (panel == "stack") m_show_stack = !m_show_stack;
                         else if (panel == "watch" || panel == "w") m_show_watch = !m_show_watch;
                         else if (panel == "breakpoints" || panel == "bp") m_show_breakpoints = !m_show_breakpoints;
-                        else if (panel == "map") m_show_map = !m_show_map;
-                        else log_line("Usage: toggle <mem|regs|code|stack|watch|breakpoints|map>");
-                    } else log_line("Usage: toggle <mem|regs|code|stack|watch|breakpoints|map>");
+                        else log_line("Usage: toggle <mem|regs|code|stack|watch|breakpoints>");
+                    } else log_line("Usage: toggle <mem|regs|code|stack|watch|breakpoints>");
                 }
-                else if (cmd == "map") { do_map(ss); }
                 else if (cmd == "b" || cmd == "break") {
                     std::string arg; if(ss>>arg) { m_breakpoints.push_back({parse_addr(arg), true}); log_line("Breakpoint set."); }
                 }
@@ -1123,7 +941,6 @@ namespace {
             repl.history_save("zxtool_history.txt");
         }
     };
-}
 
 int DebugEngine::run() {
     if (!m_options.entryPointStr.empty()) {
@@ -1144,62 +961,4 @@ int DebugEngine::run() {
     session.start();
     
     return 0;
-}
-
-void DebugEngine::print_registers() {
-    auto& m_cpu = m_vm.get_cpu();
-    std::cout << "PC: " << hex16(m_cpu.get_PC()) << " SP: " << hex16(m_cpu.get_SP()) << "\n";
-    std::cout << "AF: " << hex16(m_cpu.get_AF()) << " BC: " << hex16(m_cpu.get_BC()) << "\n";
-    std::cout << "DE: " << hex16(m_cpu.get_DE()) << " HL: " << hex16(m_cpu.get_HL()) << "\n";
-}
-
-void DebugEngine::print_instruction(uint16_t pc) {
-    auto line = m_vm.get_analyzer().parse_instruction(pc);
-    std::cout << hex16(line.address) << ": " << line.mnemonic;
-    
-    if (!line.operands.empty()) {
-        std::cout << " ";
-        using Operand = typename std::decay_t<decltype(line)>::Operand;
-        for (size_t i = 0; i < line.operands.size(); ++i) {
-            if (i > 0) std::cout << ", ";
-            const auto& op = line.operands[i];
-            switch (op.type) {
-                case Operand::REG8: case Operand::REG16: case Operand::CONDITION:
-                    std::cout << op.s_val; break;
-                case Operand::IMM8:
-                    std::cout << "$" << hex8(op.num_val); break;
-                case Operand::IMM16:
-                    std::cout << "$" << hex16(op.num_val); break;
-                case Operand::MEM_IMM16:
-                    std::cout << "($" << hex16(op.num_val) << ")"; break;
-                case Operand::MEM_REG16:
-                    std::cout << "(" << op.s_val << ")"; break;
-                case Operand::MEM_INDEXED:
-                    std::cout << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
-                default: break;
-            }
-        }
-    }
-    std::cout << std::endl;
-}
-
-void DebugEngine::print_memory(uint16_t addr, uint16_t len) {
-    auto& mem = m_vm.get_memory();
-    std::cout << "--- Memory Dump from " << hex16(addr) << " (" << std::dec << len << " bytes) ---\n";
-    for (size_t i = 0; i < len; i += 16) {
-        std::cout << Color::GRAY << hex16((uint16_t)(addr + i)) << Color::RESET << ": ";
-        for (size_t j = 0; j < 16; ++j) {
-            if (i + j < len) { print_byte_smart(mem.read(addr + i + j)); std::cout << " "; }
-            else std::cout << "   ";
-        }
-        std::cout << Color::GRAY << "| " << Color::RESET;
-        for (size_t j = 0; j < 16; ++j) {
-            if (i + j < len) {
-                uint8_t val = mem.read(addr + i + j);
-                if (std::isprint(val)) std::cout << Color::HI_YELLOW << (char)val << Color::RESET;
-                else std::cout << Color::GRAY << "." << Color::RESET;
-            }
-        }
-        std::cout << "\n";
-    }
 }
