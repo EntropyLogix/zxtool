@@ -1,7 +1,7 @@
 #ifndef __ASSEMBLER_H__
 #define __ASSEMBLER_H__
 
-#include "../Z80Assemble.h"
+#include "Z80Assemble.h"
 #include "Memory.h"
 
 

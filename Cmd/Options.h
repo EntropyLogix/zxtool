@@ -10,9 +10,9 @@ struct Options {
 
     ToolMode mode = ToolMode::Unknown;
     std::vector<std::string> inputFiles;
-    std::string outputFile; // General output file for 'asm' or 'disasm'
+    std::string outputFile;
     std::string outputFormat;
-    std::string mapFile; // Map file for 'asm' or loading for 'disasm'/'run'/'debug'
+    std::string mapFile;
     std::string listingFile;
     std::string orgStr = "0x0000";
     std::string entryPointStr;
@@ -25,6 +25,7 @@ struct Options {
     bool generateMap = false;
     bool generateListing = false;
     bool dumpRegs = false;
+    std::string dumpCodeStr;
     bool autoLabels = false;
     DisasmMode disasmMode = DisasmMode::Execute;
 };

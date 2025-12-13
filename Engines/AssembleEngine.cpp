@@ -1,14 +1,22 @@
-#include "FileSaver.h"
-#include <fstream>
+#include "AssembleEngine.h"
 #include <iostream>
+#include <fstream>
 #include <algorithm>
 #include <cctype>
 
-FileSaver::FileSaver(Tool& tool) : m_tool(tool) {}
+AssembleEngine::AssembleEngine(VirtualMachine& vm, const Options& options)
+    : m_vm(vm), m_options(options) {}
 
-void FileSaver::save(const std::string& outputFile, const std::string& format, const std::vector<MemoryBlock>& blocks) {
+int AssembleEngine::run() {
+    if (!m_options.outputFile.empty()) {
+        save_output_file(m_options.outputFile, m_options.outputFormat, m_vm.get_blocks());
+    }
+    return 0;
+}
+
+void AssembleEngine::save_output_file(const std::string& outputFile, const std::string& format, const std::vector<VirtualMachine::Block>& blocks) {
     if (outputFile.empty()) {
-        return; // No output file specified
+        return;
     }
 
     std::string lower_format = format;
@@ -22,18 +30,17 @@ void FileSaver::save(const std::string& outputFile, const std::string& format, c
     }
 }
 
-void FileSaver::save_bin(const std::string& outputFile, const std::vector<MemoryBlock>& blocks) {
+void AssembleEngine::save_bin(const std::string& outputFile, const std::vector<VirtualMachine::Block>& blocks) {
     if (blocks.empty()) {
         std::cerr << "Warning: No memory blocks to save. File '" << outputFile << "' not created." << std::endl;
         return;
     }
 
-    // For a simple .bin file, we save the first contiguous block of memory.
     const auto& first_block = blocks.front();
     std::cout << "Saving memory block to " << outputFile << " (Address: 0x" << std::hex << first_block.start_address << ", Size: " << std::dec << first_block.size << " bytes)" << std::endl;
 
     std::ofstream file(outputFile, std::ios::binary);
     for (uint16_t i = 0; i < first_block.size; ++i) {
-        file.put(m_tool.get_memory().peek(first_block.start_address + i));
+        file.put(m_vm.get_memory().peek(first_block.start_address + i));
     }
 }

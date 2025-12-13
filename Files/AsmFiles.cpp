@@ -35,19 +35,6 @@ std::vector<typename ToolAssembler::BlockInfo> AsmFiles::assemble(const std::str
             if (!listing.empty()) {
                 std::cout << "\nListing:" << std::endl;
                 for (const auto& line : listing) {
-                    // Diagnostic output
-                    std::cout << "DEBUG: Address=" << Strings::format_hex(line.address, 4);
-                    std::cout << ", Bytes=" << line.bytes.size();
-                    if (!line.bytes.empty()) {
-                        std::cout << ", Data=[";
-                        for (size_t i = 0; i < line.bytes.size(); ++i) {
-                            std::cout << (i > 0 ? " " : "") << Strings::format_hex(line.bytes[i], 2);
-                        }
-                        std::cout << "]";
-                    }
-                    std::cout << ", Content='" << line.source_line.content << "'" << std::endl;
-
-                    // Original listing output
                     std::cout << Strings::format_hex(line.address, 4) << "  ";
                     std::string bytes_str;
                     for (uint8_t byte : line.bytes) {

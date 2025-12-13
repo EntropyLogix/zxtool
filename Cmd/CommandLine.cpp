@@ -2,6 +2,41 @@
 #include "Options.h"
 #include <stdexcept>
 #include <iostream>
+#include <algorithm>
+#include <cctype>
+
+namespace {
+    bool is_valid_number(const std::string& s) {
+        if (s.empty()) return false;
+        std::string upper = s;
+        std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+
+        if (upper.size() > 2 && upper.substr(0, 2) == "0X") {
+             return upper.find_first_not_of("0123456789ABCDEF", 2) == std::string::npos;
+        }
+        if (upper.size() > 1 && upper.back() == 'H') {
+             return upper.find_first_not_of("0123456789ABCDEF", 0) == upper.size() - 1;
+        }
+        return upper.find_first_not_of("0123456789") == std::string::npos;
+    }
+
+    bool is_valid_address_format(const std::string& s) {
+        std::string addr = s;
+        std::string len_str;
+        size_t colon = addr.find(':');
+        if (colon != std::string::npos) {
+            len_str = addr.substr(colon + 1);
+            addr = addr.substr(0, colon);
+        }
+        
+        if (!is_valid_number(addr)) return false;
+        
+        if (colon != std::string::npos) {
+             if (!is_valid_number(len_str)) return false;
+        }
+        return true;
+    }
+}
 
 bool CommandLine::parse(int argc, char* argv[]) {
     if (argc < 2) {
@@ -43,37 +78,109 @@ bool CommandLine::parse(int argc, char* argv[]) {
 
             // Mode-specific options
             if (options.mode == Options::ToolMode::Assemble) {
-                if ((arg == "-o" || arg == "--output") && i + 1 < argc) options.outputFile = argv[++i];
-                else if ((arg == "-f" || arg == "--format") && i + 1 < argc) options.outputFormat = argv[++i];
-                else if (arg == "-m" || arg == "--map") options.generateMap = true;
-                else if (arg == "-l" || arg == "--listing") options.generateListing = true;
-                else throw std::runtime_error("Unknown argument '" + arg + "' for 'asm' mode.");
+                if (arg == "-o" || arg == "--output") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
+                    options.outputFile = argv[++i];
+                } else if (arg == "-f" || arg == "--format") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
+                    options.outputFormat = argv[++i];
+                } else if (arg == "-m" || arg == "--map") {
+                    options.generateMap = true;
+                } else if (arg == "-l" || arg == "--listing") {
+                    options.generateListing = true;
+                } else {
+                    throw std::runtime_error("Unknown argument '" + arg + "' for 'asm' mode.");
+                }
             } else if (options.mode == Options::ToolMode::Disassemble) {
-                if ((arg == "-o" || arg == "--output") && i + 1 < argc) options.outputFile = argv[++i];
-                else if (arg == "-l" || arg == "--labels") options.autoLabels = true;
-                else if ((arg == "-e" || arg == "--entry") && i + 1 < argc) options.entryPointStr = argv[++i];
-                else if ((arg == "-m" || arg == "--mode") && i + 1 < argc) {
+                if (arg == "-o" || arg == "--output") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
+                    options.outputFile = argv[++i];
+                } else if (arg == "-l" || arg == "--labels") {
+                    options.autoLabels = true;
+                } else if (arg == "-e" || arg == "--entry") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
+                    options.entryPointStr = argv[++i];
+                } else if (arg == "-m" || arg == "--mode") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
                     std::string disasm_mode_str = argv[++i];
                     if (disasm_mode_str == "raw") options.disasmMode = Options::DisasmMode::Raw;
                     else if (disasm_mode_str == "heuristic") options.disasmMode = Options::DisasmMode::Heuristic;
                     else if (disasm_mode_str == "execute") options.disasmMode = Options::DisasmMode::Execute;
                     else throw std::runtime_error("Invalid disassembly mode: '" + disasm_mode_str + "'. Use 'raw', 'heuristic', or 'execute'.");
-                } else throw std::runtime_error("Unknown argument '" + arg + "' for 'disasm' mode.");
+                } else {
+                    throw std::runtime_error("Unknown argument '" + arg + "' for 'disasm' mode.");
+                }
             } else if (options.mode == Options::ToolMode::Run) {
-                if ((arg == "-e" || arg == "--entry") && i + 1 < argc) options.entryPointStr = argv[++i];
-                else if ((arg == "-s" || arg == "--steps") && i + 1 < argc) options.runSteps = std::stoll(argv[++i], nullptr, 10);
-                else if ((arg == "-t" || arg == "--ticks") && i + 1 < argc) options.runTicks = std::stoll(argv[++i], nullptr, 10);
-                else if ((arg == "-to" || arg == "--timeout") && i + 1 < argc) options.timeout = std::stoll(argv[++i], nullptr, 10);
-                else if (arg == "-dr" || arg == "--dump-regs") options.dumpRegs = true;
-                else if ((arg == "-dm" || arg == "--dump-mem") && i + 1 < argc) options.dumpMemStr = argv[++i];
-                else throw std::runtime_error("Unknown argument '" + arg + "' for 'run' mode.");
+                if (arg == "-e" || arg == "--entry") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
+                    std::string val = argv[++i];
+                    if (!is_valid_address_format(val)) throw std::runtime_error("Invalid address format for " + arg + ": " + val);
+                    options.entryPointStr = val;
+                } else if (arg == "-s" || arg == "--steps") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
+                    options.runSteps = std::stoll(argv[++i], nullptr, 10);
+                } else if (arg == "-t" || arg == "--ticks") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
+                    options.runTicks = std::stoll(argv[++i], nullptr, 10);
+                } else if (arg == "-to" || arg == "--timeout") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
+                    options.timeout = std::stoll(argv[++i], nullptr, 10);
+                } else if (arg == "-dr" || arg == "--dump-regs") {
+                    options.dumpRegs = true;
+                } else if (arg == "-dc" || arg == "--dump-code") {
+                    if (i + 1 < argc) {
+                        std::string next_arg = argv[i + 1];
+                        if (next_arg[0] != '-' && is_valid_address_format(next_arg)) {
+                            if (next_arg.find(':') != std::string::npos) {
+                                options.dumpCodeStr = argv[++i];
+                            } else {
+                                throw std::runtime_error("Missing length for " + arg + ". Format: address:length");
+                            }
+                        } else {
+                            if (std::isdigit(next_arg[0]) && next_arg.find(':') != std::string::npos) {
+                                throw std::runtime_error("Invalid value for " + arg + ": " + next_arg);
+                            }
+                            options.dumpCodeStr = "ALL";
+                        }
+                    } else {
+                        options.dumpCodeStr = "ALL";
+                    }
+                } else if (arg == "-dm" || arg == "--dump-mem") {
+                    if (i + 1 < argc) {
+                        std::string next_arg = argv[i + 1];
+                        if (next_arg[0] != '-' && is_valid_address_format(next_arg)) {
+                            if (next_arg.find(':') != std::string::npos) {
+                                options.dumpMemStr = argv[++i];
+                            } else {
+                                throw std::runtime_error("Missing length for " + arg + ". Format: address:length");
+                            }
+                        } else {
+                            if (std::isdigit(next_arg[0]) && next_arg.find(':') != std::string::npos) {
+                                throw std::runtime_error("Invalid value for " + arg + ": " + next_arg);
+                            }
+                            options.dumpMemStr = "ALL";
+                        }
+                    } else {
+                        options.dumpMemStr = "ALL";
+                    }
+                } else {
+                    throw std::runtime_error("Unknown argument '" + arg + "' for 'run' mode.");
+                }
             } else if (options.mode == Options::ToolMode::Debug) {
-                if ((arg == "-e" || arg == "--entry") && i + 1 < argc) options.entryPointStr = argv[++i];
-                else if (arg == "-l" || arg == "--labels") options.autoLabels = true;
-                else if ((arg == "-s" || arg == "--script") && i + 1 < argc) options.scriptFile = argv[++i];
-                else throw std::runtime_error("Unknown argument '" + arg + "' for 'debug' mode.");
-            } else
+                if (arg == "-e" || arg == "--entry") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
+                    options.entryPointStr = argv[++i];
+                } else if (arg == "-l" || arg == "--labels") {
+                    options.autoLabels = true;
+                } else if (arg == "-s" || arg == "--script") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
+                    options.scriptFile = argv[++i];
+                } else {
+                    throw std::runtime_error("Unknown argument '" + arg + "' for 'debug' mode.");
+                }
+            } else {
                 throw std::runtime_error("Unknown argument '" + arg + "'.");
+            }
         } else { // It's a positional argument, should be the input file
             options.inputFiles.push_back(arg);
         }
@@ -115,14 +222,16 @@ void CommandLine::print_usage() const {
               << "  -l, --listing        Generate a source listing file.\n\n"
               << "Static Analysis Options (disasm command):\n"
               << "  -l, --labels         Auto-load symbol files.\n"
-              << "  -e, --entry <addr>   Entry point for code flow tracing.\n"
+              << "  -e, --entry [a:n]    Entry point 'a' for code flow tracing (optional limit 'n').\n"
               << "  -m, --mode <m>       Disassembly mode: raw, heuristic, execute.\n\n"
               << "Headless Execution Options (run command):\n"
+              << "  -e, --entry <addr>   Entry point for execution.\n"
               << "  -s, --steps <n>      Stop after N instructions.\n"
               << "  -t, --ticks <n>      Stop after N T-states.\n"
-              << "  -tm, --timeout <s>   Stop after S seconds.\n"
-              << "  -dr, --dump-regs     Dump registers on exit.\n"
-              << "  -dm, --dump-mem <a:l> Dump memory on exit (e.g., 0x8000:64).\n\n"
+              << "  -to, --timeout <s>   Stop after S seconds.\n"
+              << "  -dr, --dump-regs       Dump registers on exit.\n"
+              << "  -dc, --dump-code [a:n]  Dump n instructions from address a on exit (default: all blocks).\n"
+              << "  -dm, --dump-mem [a:n]   Dump n bytes from address a on exit (default: all blocks).\n\n"
               << "Interactive Debugging Options (debug command):\n"
               << "  -l, --labels         Auto-load symbol files.\n"
               << "  -s, --script <file>  Execute debugger commands from file on start.\n";
