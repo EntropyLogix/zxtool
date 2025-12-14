@@ -260,71 +260,107 @@ std::vector<std::string> CodeView::render() {
         bool is_pc = ((uint16_t)line.address == m_pc);
         std::string bg = is_pc ? Terminal::BG_DARK_GRAY : "";
         std::string rst = is_pc ? (Terminal::RESET + bg) : Terminal::RESET;
-        if (is_pc)
-            ss << bg << Terminal::HI_GREEN << Terminal::BOLD << "> " << rst;
+        
+        // ZONE 1: Gutter (0-2)
+        if (is_pc) 
+            ss << bg << Terminal::HI_GREEN << Terminal::BOLD << ">  " << rst;
         else
-            ss << "  ";
+            ss << "   ";
+
+        // ZONE 2: Address (3-8)
         if (is_pc)
             ss << Terminal::HI_WHITE << Terminal::BOLD << Strings::hex16((uint16_t)line.address) << rst << ": ";
         else
             ss << Terminal::GRAY << Strings::hex16((uint16_t)line.address) << rst << ": ";
-        ss << Terminal::GRAY;
-        for(size_t i=0; i<std::min((size_t)4, line.bytes.size()); ++i)
-            ss << Strings::hex8(line.bytes[i]) << " ";
-        for(size_t i=line.bytes.size(); i<4; ++i)
-            ss << "   ";
-        ss << rst << " ";
 
+        // ZONE 3: Hex (9-18)
+        std::stringstream hex_ss;
+        if (line.bytes.size() > 3) {
+            hex_ss << Strings::hex8(line.bytes[0]) << " " << Strings::hex8(line.bytes[1]) << " ..";
+        } else {
+            for(size_t i=0; i<line.bytes.size(); ++i) {
+                if (i > 0) hex_ss << " ";
+                hex_ss << Strings::hex8(line.bytes[i]);
+            }
+        }
+        std::string hex_str = hex_ss.str();
+        ss << Terminal::GRAY << hex_str << rst;
+        int hex_len = (int)hex_str.length();
+        int hex_pad = 10 - hex_len;
+        if (hex_pad > 0) ss << std::string(hex_pad, ' ');
+
+        // ZONE 4: Mnemonic (19-34)
+        std::stringstream mn_ss;
         if (is_pc)
-            ss << Terminal::BOLD << Terminal::WHITE;
+            mn_ss << Terminal::BOLD << Terminal::WHITE;
         else
-            ss << Terminal::BLUE;
-        ss << std::left << std::setw(5) << line.mnemonic << rst << " ";
+            mn_ss << Terminal::BLUE;
+        mn_ss << line.mnemonic << rst;
+
         if (!line.operands.empty()) {
+            mn_ss << " ";
             using Operand = typename std::decay_t<decltype(line)>::Operand;
             for (size_t i = 0; i < line.operands.size(); ++i) {
                 if (i > 0)
-                    ss << ", ";
+                    mn_ss << ", ";
                 const auto& op = line.operands[i];
                 bool is_num = (op.type == Operand::IMM8 || op.type == Operand::IMM16 || op.type == Operand::MEM_IMM16);
                 if (is_num)
-                    ss << Terminal::YELLOW;
+                    mn_ss << Terminal::YELLOW;
                 switch (op.type) {
-                    case Operand::REG8:
-                    case Operand::REG16:
-                    case Operand::CONDITION:
-                        ss << op.s_val;
-                        break;
-                    case Operand::IMM8:
-                        ss << "$" << Strings::hex8(op.num_val);
-                        break;
-                    case Operand::IMM16:
-                        ss << "$" << Strings::hex16(op.num_val);
-                        break;
-                    case Operand::MEM_IMM16:
-                        ss << "($" << Strings::hex16(op.num_val) << ")";
-                        break;
-                    case Operand::MEM_REG16:
-                        ss << "(" << op.s_val << ")";
-                        break;
-                    case Operand::MEM_INDEXED:
-                        ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")";
-                        break;
-                    case Operand::STRING:
-                        ss << "\"" << op.s_val << "\"";
-                        break;
-                    default:
-                        break;
+                    case Operand::REG8: case Operand::REG16: case Operand::CONDITION: mn_ss << op.s_val; break;
+                    case Operand::IMM8: mn_ss << "$" << Strings::hex8(op.num_val); break;
+                    case Operand::IMM16: mn_ss << "$" << Strings::hex16(op.num_val); break;
+                    case Operand::MEM_IMM16: mn_ss << "($" << Strings::hex16(op.num_val) << ")"; break;
+                    case Operand::PORT_IMM8: mn_ss << "($" << Strings::hex8(op.num_val) << ")"; break;
+                    case Operand::MEM_REG16: mn_ss << "(" << op.s_val << ")"; break;
+                    case Operand::MEM_INDEXED: mn_ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
+                    case Operand::STRING: mn_ss << "\"" << op.s_val << "\""; break;
+                    case Operand::CHAR_LITERAL: mn_ss << "'" << (char)op.num_val << "'"; break;
+                    default: break;
                 }
                 if (is_num)
-                    ss << rst;
+                    mn_ss << rst;
             }
         }
         
+        std::string mn_str = mn_ss.str();
+        int mn_len = (int)Strings::ansi_len(mn_str);
+        if (mn_len > 16) {
+             std::string clipped;
+             int visible = 0;
+             bool in_ansi = false;
+             for (char c : mn_str) {
+                 if (c == '\x1B') in_ansi = true;
+                 if (in_ansi) {
+                     clipped += c;
+                     if (c == 'm' || c == 'K') in_ansi = false;
+                 } else {
+                     if (visible < 13) {
+                         clipped += c;
+                         visible++;
+                     } else {
+                         break;
+                     }
+                 }
+             }
+             clipped += Terminal::RESET + "...";
+             ss << clipped;
+        } else {
+            ss << mn_str;
+            ss << std::string(16 - mn_len, ' ');
+        }
+
+        // ZONE 5: Comment (35-79)
         if (ctx.metadata.count((uint16_t)line.address)) {
              const auto& comment = ctx.metadata.at((uint16_t)line.address).inline_comment;
-             if (!comment.empty())
-                 ss << "  " << Terminal::GREEN << "; " << comment << Terminal::RESET;
+             if (!comment.empty()) {
+                 std::string cmt_full = "; " + comment;
+                 if (cmt_full.length() > 45) {
+                     cmt_full = cmt_full.substr(0, 42) + "...";
+                 }
+                 ss << Terminal::GREEN << cmt_full << Terminal::RESET;
+             }
         }
 
         if (m_width > 0) {
@@ -918,7 +954,7 @@ void Dashboard::print_dashboard() {
         left_lines.clear();
         right_lines.clear();
         if (m_show_code) {
-            int width = (m_show_watch || m_show_breakpoints) ? 0 : terminal_width;
+            int width = terminal_width;
             
             uint16_t view_pc = m_code_view_addr;
             uint16_t highlight_pc = pc;
@@ -929,52 +965,88 @@ void Dashboard::print_dashboard() {
 
             CodeView view(core, view_pc, m_code_rows, highlight_pc, width, m_focus == FOCUS_CODE, m_debugger.get_last_pc(), m_debugger.has_history(), m_debugger.pc_moved());
             auto code_lines = view.render();
-            left_lines.insert(left_lines.end(), code_lines.begin(), code_lines.end());
+            for (const auto& l : code_lines) std::cout << l << "\n";
         }
+
         if (m_show_watch || m_show_breakpoints) {
-            // [WATCH]
-            if (m_show_watch) {
-                if (m_focus == FOCUS_WATCH) right_lines.push_back(Terminal::YELLOW + "[WATCH]" + Terminal::RESET);
-                else right_lines.push_back(Terminal::GREEN + "[WATCH]" + Terminal::RESET);
-                
-                const auto& watches = m_debugger.get_watches();
-                for (uint16_t addr : watches) {
-                    uint8_t val = core.get_memory().read(addr);
-                    std::stringstream ss;
-                    ss << "  " << Strings::hex16(addr) << ": " << Terminal::HI_WHITE << Strings::hex8(val) << Terminal::RESET;
-                    if (std::isprint(val)) ss << " (" << Terminal::HI_YELLOW << (char)val << Terminal::RESET << ")";
-                    right_lines.push_back(ss.str());
-                }
-                if (watches.empty()) {
-                    right_lines.push_back(Terminal::GRAY + "  No items." + Terminal::RESET);
-                    right_lines.push_back(Terminal::GRAY + "  Use 'w <addr>'" + Terminal::RESET);
-                }
-                right_lines.push_back("");
+            print_separator();
+        }
+
+        if (m_show_watch) {
+            std::stringstream ss;
+            std::string label = " WATCH: ";
+            if (m_focus == FOCUS_WATCH) ss << Terminal::BG_DARK_GRAY;
+            ss << Terminal::CYAN << label << Terminal::RESET;
+            
+            const auto& watches = m_debugger.get_watches();
+            std::vector<std::string> items;
+            for (uint16_t addr : watches) {
+                uint8_t val = core.get_memory().read(addr);
+                std::stringstream item_ss;
+                auto pair = core.get_context().find_nearest_symbol(addr);
+                if (!pair.first.empty() && pair.second == addr) item_ss << pair.first;
+                else item_ss << Strings::hex16(addr);
+                item_ss << "=" << (int)val;
+                items.push_back(item_ss.str());
             }
             
-            // [BREAKPOINTS]
-            if (m_show_breakpoints) {
-                if (m_focus == FOCUS_BREAKPOINTS) right_lines.push_back(Terminal::YELLOW + "[BREAKPOINTS]" + Terminal::RESET);
-                else right_lines.push_back(Terminal::GREEN + "[BREAKPOINTS]" + Terminal::RESET);
-                int i = 1;
-                const auto& breakpoints = m_debugger.get_breakpoints();
-                for (const auto& bp : breakpoints) {
-                    std::stringstream ss;
-                    ss << "  " << i++ << ". " << Strings::hex16(bp.addr);
-                    if (!bp.enabled) ss << Terminal::GRAY << " [Disabled]" << Terminal::RESET;
-                    right_lines.push_back(ss.str());
+            int max_len = 80;
+            int current_len = (int)label.length();
+            bool first = true;
+            for (size_t i = 0; i < items.size(); ++i) {
+                std::string sep = first ? "" : ", ";
+                if (current_len + sep.length() + items[i].length() > (size_t)(max_len - 10)) {
+                    ss << Terminal::GRAY << "... (+" << (items.size() - i) << ")" << Terminal::RESET;
+                    break;
                 }
-                if (breakpoints.empty()) {
-                    right_lines.push_back(Terminal::GRAY + "  No items." + Terminal::RESET);
-                    right_lines.push_back(Terminal::GRAY + "  Use 'b <addr>'" + Terminal::RESET);
-                }
+                ss << Terminal::HI_WHITE << sep << items[i] << Terminal::RESET;
+                current_len += sep.length() + items[i].length();
+                first = false;
             }
-            print_columns(left_lines, right_lines, 40);
-        } else 
-            for (const auto& l : left_lines)
-                std::cout << l << "\n";
+            if (items.empty()) ss << Terminal::GRAY << "No items." << Terminal::RESET;
+            std::cout << ss.str() << "\n";
+        }
+
+        if (m_show_breakpoints) {
+            std::stringstream ss;
+            std::string label = " BREAK: ";
+            if (m_focus == FOCUS_BREAKPOINTS) ss << Terminal::BG_DARK_GRAY;
+            ss << Terminal::RED << label << Terminal::RESET;
+            
+            const auto& breakpoints = m_debugger.get_breakpoints();
+            std::vector<std::string> items;
+            for (const auto& bp : breakpoints) {
+                std::stringstream item_ss;
+                item_ss << (bp.enabled ? "*" : "o") << Strings::hex16(bp.addr);
+                auto pair = core.get_context().find_nearest_symbol(bp.addr);
+                if (!pair.first.empty() && pair.second == bp.addr) item_ss << " (" << pair.first << ")";
+                items.push_back(item_ss.str());
+            }
+            
+            int max_len = 80;
+            int current_len = (int)label.length();
+            bool first = true;
+            for (size_t i = 0; i < items.size(); ++i) {
+                std::string sep = first ? "" : ", ";
+                if (current_len + sep.length() + items[i].length() > (size_t)(max_len - 10)) {
+                    ss << Terminal::GRAY << "... (+" << (items.size() - i) << ")" << Terminal::RESET;
+                    break;
+                }
+                ss << Terminal::HI_WHITE << sep << items[i] << Terminal::RESET;
+                current_len += sep.length() + items[i].length();
+                first = false;
+            }
+            if (items.empty()) ss << Terminal::GRAY << "No items." << Terminal::RESET;
+            std::cout << ss.str() << "\n";
+        }
+
+        if (m_show_watch || m_show_breakpoints) {
+            print_separator();
+        }
+
+        bool has_output = (m_output_buffer.tellp() > 0);
         print_output_buffer();
-        print_separator();
+        if (has_output || (!m_show_watch && !m_show_breakpoints)) print_separator();
         print_footer();
         std::cout << std::flush;
 }
