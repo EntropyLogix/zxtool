@@ -21,7 +21,7 @@ public:
 
     int run(CommandLine& commands);
 
-    Z80<Memory>& get_cpu() { return m_vm.get_cpu(); }
+    auto& get_cpu() {  return m_vm.get_cpu(); }
     Memory& get_memory() { return m_vm.get_memory(); }
     Analyzer& get_analyzer() { return m_vm.get_analyzer(); }
     ToolAssembler& get_assembler() { return m_vm.get_assembler(); }

@@ -9,6 +9,7 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <deque>
 #include <sstream>
 #include <algorithm>
 #include <iostream>
@@ -38,12 +39,12 @@ private:
 
 class RegisterView : public DebugView {
 public:
-    RegisterView(VirtualMachine& vm, const Z80<Memory>::State& prev, bool has_focus, uint64_t tstates) 
+    RegisterView(VirtualMachine& vm, const VirtualMachine::CpuType::State& prev, bool has_focus, uint64_t tstates) 
         : DebugView(vm, has_focus), m_prev(prev), m_tstates(tstates) {}
     std::vector<std::string> render() override;
 private:
     std::string format_flags(uint8_t f, uint8_t prev_f);
-    const Z80<Memory>::State& m_prev;
+    const VirtualMachine::CpuType::State& m_prev;
     uint64_t m_tstates;
 };
 
@@ -79,6 +80,9 @@ public:
         uint16_t addr;
         bool enabled;
     };
+    struct HistoryItem {
+        uint16_t pc;
+    };
 
     Debugger(VirtualMachine& vm) : m_vm(vm) { m_prev_state = m_vm.get_cpu().save_state(); }
     ~Debugger() = default;
@@ -87,11 +91,12 @@ public:
     VirtualMachine& get_vm() { return m_vm; }
     const std::vector<Breakpoint>& get_breakpoints() const { return m_breakpoints; }
     const std::vector<uint16_t>& get_watches() const { return m_watches; }
+    const std::deque<HistoryItem>& get_execution_history() const { return m_execution_history; }
     uint16_t get_last_pc() const { return m_last_pc; }
     bool has_history() const { return m_has_history; }
     bool pc_moved() const { return m_pc_moved; }
     uint64_t get_tstates() const { return m_vm.get_cpu().get_ticks(); }
-    const Z80<Memory>::State& get_prev_state() const { return m_prev_state; }
+    const VirtualMachine::CpuType::State& get_prev_state() const { return m_prev_state; }
 
     void add_breakpoint(uint16_t addr) { m_breakpoints.push_back({addr, true}); }
     void remove_breakpoint(uint16_t addr) {
@@ -112,11 +117,13 @@ private:
     Logger m_logger;
     std::vector<Breakpoint> m_breakpoints;
     std::vector<uint16_t> m_watches;
+    std::deque<HistoryItem> m_execution_history;
     uint16_t m_last_pc = 0;
     bool m_has_history = false;
     bool m_pc_moved = false;
-    Z80<Memory>::State m_prev_state;
+    VirtualMachine::CpuType::State m_prev_state;
 
+    void record_history(uint16_t pc);
     void log(const std::string& msg) { if (m_logger) m_logger(msg); }
 };
 
@@ -146,8 +153,9 @@ private:
     bool m_show_regs = true;
     bool m_show_code = true;
     bool m_show_stack = true;
-    bool m_show_watch = true;
-    bool m_show_breakpoints = true;
+    bool m_show_watch = false;
+    bool m_show_breakpoints = false;
+    bool m_auto_follow = true;
     
     void validate_focus();
     void handle_command(const std::string& input);
@@ -159,6 +167,9 @@ private:
     void print_columns(const std::vector<std::string>& left, const std::vector<std::string>& right, size_t left_width);
     void print_output_buffer();
     void log(const std::string& msg) { m_output_buffer << msg << "\n"; }
+    uint16_t find_prev_instruction_pc(uint16_t target_addr);
+    uint16_t get_pc_window_start(uint16_t pc, int lines);
+    void update_code_view();
 };
 
 class DebugEngine : public Engine {

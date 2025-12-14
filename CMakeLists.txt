@@ -15,7 +15,7 @@ FetchContent_Declare(
 FetchContent_Declare(
   Z80
   GIT_REPOSITORY https://github.com/EntropyLogix/Z80.git
-  GIT_TAG        v1.1.5
+  GIT_TAG        main
 )
 
 FetchContent_MakeAvailable(replxx)
@@ -36,6 +36,7 @@ add_executable(zxtool
                 Files/SymbolFile.cpp
                 Files/ControlFile.cpp
                 Utils/Strings.cpp
+                Utils/Terminal.cpp
   )
 
   target_include_directories(zxtool PRIVATE 

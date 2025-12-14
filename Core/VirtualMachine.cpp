@@ -13,10 +13,13 @@ namespace fs = std::filesystem;
 
 VirtualMachine::VirtualMachine() 
     : m_memory()
-    , m_cpu(&m_memory)
+    , m_code_map_data(0x10000, 0)
+    , m_profiler(m_code_map_data, &m_memory)
+    , m_cpu(&m_profiler, nullptr, &m_profiler)
     , m_assembler(&m_memory, this)
     , m_analyzer(&m_memory)
 {
+    m_profiler.connect(&m_cpu);
 }
 
 void VirtualMachine::load_input_files(const std::vector<std::string>& inputs) {
@@ -37,6 +40,7 @@ void VirtualMachine::load_input_files(const std::vector<std::string>& inputs) {
 void VirtualMachine::reset() {
     m_cpu.reset();
     m_blocks.clear();
+    m_profiler.reset();
     m_analyzer.context.labels.clear();
     m_analyzer.context.metadata.clear();
     m_current_path_stack.clear();
@@ -45,16 +49,28 @@ void VirtualMachine::reset() {
 uint16_t VirtualMachine::parse_address(const std::string& addr_str) {
     try {
         std::string s = addr_str;
+        if (s.empty()) return 0;
+
+        // Decimal prefix '#' (e.g. #100 -> 100)
+        if (s[0] == '#') {
+            return (uint16_t)std::stoul(s.substr(1), nullptr, 10);
+        }
+
         // Remove 0x prefix if present
         if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
-            return std::stoul(s.substr(2), nullptr, 16);
+            return (uint16_t)std::stoul(s.substr(2), nullptr, 16);
+        }
+        // Handle $ prefix
+        if (s[0] == '$') {
+            return (uint16_t)std::stoul(s.substr(1), nullptr, 16);
         }
         // Handle H suffix
-        if (!s.empty() && (s.back() == 'h' || s.back() == 'H')) {
-             return std::stoul(s.substr(0, s.size()-1), nullptr, 16);
+        if ((s.back() == 'h' || s.back() == 'H')) {
+             return (uint16_t)std::stoul(s.substr(0, s.size()-1), nullptr, 16);
         }
-        // Default to auto-detection (0x, 0, or decimal)
-        return std::stoul(s, nullptr, 0);
+        
+        // Default to HEX (standard for addresses)
+        return (uint16_t)std::stoul(s, nullptr, 16);
     } catch (const std::exception& e) {
         throw std::runtime_error("Invalid address format '" + addr_str + "': " + e.what());
     }
@@ -83,6 +99,9 @@ void VirtualMachine::process_file(const std::string& path, uint16_t address) {
     }
     
     load_sidecar_files(path);
+
+    std::cout << "Running static analysis..." << std::endl;
+    m_analyzer.parse_code(address, 0, &get_code_map(), false, true);
 }
 
 void VirtualMachine::load_sidecar_files(const std::string& path) {

@@ -5,6 +5,7 @@
 #include "Z80.h"
 #include "Analyzer.h"
 #include "Assembler.h"
+#include "Z80Analyze.h"
 #include "Z80Assemble.h"
 #include <vector>
 #include <string>
@@ -12,6 +13,8 @@
 
 class VirtualMachine : public IFileProvider {
 public:
+    using CpuType = Z80<Z80Analyzer<Memory>::CodeMapProfiler, Z80StandardEvents, Z80Analyzer<Memory>::CodeMapProfiler>;
+
     struct Block {
         uint16_t start_address;
         uint16_t size;
@@ -26,7 +29,10 @@ public:
     void reset();
 
     Memory& get_memory() { return m_memory; }
-    Z80<Memory>& get_cpu() { return m_cpu; }
+    CpuType& get_cpu() { return m_cpu; }
+    Z80Analyzer<Memory>::CodeMap& get_code_map() { return m_code_map_data; }
+    Z80Analyzer<Memory>::CodeMapProfiler& get_profiler() { return m_profiler; }
+
     Analyzer& get_analyzer() { return m_analyzer; }
     ToolAssembler& get_assembler() { return m_assembler; }
     const std::vector<Block>& get_blocks() const { return m_blocks; }
@@ -40,7 +46,9 @@ public:
 
 private:
     Memory m_memory;
-    Z80<Memory> m_cpu;
+    Z80Analyzer<Memory>::CodeMap m_code_map_data;
+    Z80Analyzer<Memory>::CodeMapProfiler m_profiler;
+    CpuType m_cpu;
     ToolAssembler m_assembler;
     Analyzer m_analyzer;
     std::vector<Block> m_blocks;

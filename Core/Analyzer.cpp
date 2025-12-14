@@ -69,15 +69,14 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
         if (forcedType == TYPE_CODE) {
             is_code = true;
         } else if (forcedType == TYPE_UNKNOWN) {
+            is_code = true;
             if (use_map) {
-                // Fallback do flag profilera
-                if (map[current_pc] & Z80Analyzer<Memory>::FLAG_CODE_START) is_code = true;
-                else if (map[current_pc] & Z80Analyzer<Memory>::FLAG_CODE_INTERIOR) {
+                if (map[current_pc] & Z80Analyzer<Memory>::FLAG_CODE_INTERIOR) {
                     pc++; continue; // Skip inside
                 }
-                // Jeśli nie ma flagi Code, a mamy mapę -> to są dane
-            } else {
-                is_code = true; // Raw mode default
+                if ((map[current_pc] & Z80Analyzer<Memory>::FLAG_DATA_READ) && !(map[current_pc] & Z80Analyzer<Memory>::FLAG_CODE_START)) {
+                    is_code = false;
+                }
             }
         }
 
@@ -98,6 +97,7 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
             if (line.bytes.empty()) { // Fail-safe
                 result.push_back(this->parse_db(current_pc, 1));
                 pc++;
+                pc &= 0xFFFF;
             } else {
                 result.push_back(line);
                 pc = current_pc; // parse_instruction przesunęło
@@ -114,6 +114,7 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
             uint16_t tmp = current_pc;
             result.push_back(this->parse_db(tmp, count));
             pc += count;
+            pc &= 0xFFFF;
         }
         else if (forcedType == TYPE_WORD) {
             uint16_t tmp = current_pc;
@@ -142,9 +143,11 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
             line.operands.push_back(typename CodeLine::Operand(CodeLine::Operand::STRING, txt));
             result.push_back(line);
             pc += count;
+            pc &= 0xFFFF;
         }
         else if (forcedType == TYPE_IGNORE) {
                 pc++; // Skip silently or add a dummy line
+                pc &= 0xFFFF;
         }
         else {
             // Unknown Data (from Profiler or Heuristic finding hole)
@@ -155,6 +158,7 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
                     if (get_map_type(map, addr) != TYPE_UNKNOWN) return false;
                     return !(map[addr] & (Z80Analyzer<Memory>::FLAG_CODE_START | Z80Analyzer<Memory>::FLAG_CODE_INTERIOR));
             });
+            pc &= 0xFFFF;
         }
     }
     start_address = static_cast<uint16_t>(pc);

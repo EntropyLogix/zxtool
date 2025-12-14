@@ -77,26 +77,48 @@ std::vector<std::string> RegisterView::render() {
             << (v != pv ? Terminal::HI_YELLOW : Terminal::GRAY) << Strings::hex16(v) << Terminal::RESET;
         return ss.str();
     };
-    auto fmt_reg8 = [&](const std::string& l, uint8_t v, uint8_t pv) -> std::string {
+    auto fmt_reg8_compact = [&](const std::string& l, uint8_t v, uint8_t pv) -> std::string {
         std::stringstream ss;
-        ss << Terminal::CYAN << std::setw(3) << std::left << l << Terminal::RESET << ": " 
+        ss << Terminal::CYAN << l << Terminal::RESET << ":" 
             << (v != pv ? Terminal::HI_YELLOW : Terminal::GRAY) << Strings::hex8(v) << Terminal::RESET;
         return ss.str();
     };
+
     std::stringstream ss;
-    ss << "  " << fmt_reg16("AF", cpu.get_AF(), m_prev.m_AF.w) << "   " << fmt_reg16("AF'", cpu.get_AFp(), m_prev.m_AFp.w) << "   " << fmt_reg8("I", cpu.get_I(), m_prev.m_I);
+    // Row 1: AF, AF', PC
+    ss << "  " << fmt_reg16("AF", cpu.get_AF(), m_prev.m_AF.w) 
+       << "   " << fmt_reg16("AF'", cpu.get_AFp(), m_prev.m_AFp.w) 
+       << "   " << fmt_reg16("PC", cpu.get_PC(), m_prev.m_PC.w);
     lines.push_back(ss.str());
-    ss.str(""); ss << "  " << fmt_reg16("BC", cpu.get_BC(), m_prev.m_BC.w) << "   " << fmt_reg16("BC'", cpu.get_BCp(), m_prev.m_BCp.w) << "   " << fmt_reg8("R", cpu.get_R(), m_prev.m_R);
+
+    // Row 2: BC, BC', SP
+    ss.str(""); 
+    ss << "  " << fmt_reg16("BC", cpu.get_BC(), m_prev.m_BC.w) 
+       << "   " << fmt_reg16("BC'", cpu.get_BCp(), m_prev.m_BCp.w) 
+       << "   " << fmt_reg16("SP", cpu.get_SP(), m_prev.m_SP.w);
     lines.push_back(ss.str());
-    ss.str(""); ss << "  " << fmt_reg16("DE", cpu.get_DE(), m_prev.m_DE.w) << "   " << fmt_reg16("DE'", cpu.get_DEp(), m_prev.m_DEp.w) << "   "
-        << Terminal::CYAN << std::setw(3) << std::left << "IM" << Terminal::RESET << ": " 
-        << (cpu.get_IRQ_mode() != m_prev.m_IRQ_mode ? Terminal::HI_YELLOW : Terminal::GRAY) << (int)cpu.get_IRQ_mode() << Terminal::RESET;
+
+    // Row 3: DE, DE', I, R
+    ss.str(""); 
+    ss << "  " << fmt_reg16("DE", cpu.get_DE(), m_prev.m_DE.w) 
+       << "   " << fmt_reg16("DE'", cpu.get_DEp(), m_prev.m_DEp.w) 
+       << "   " << fmt_reg8_compact("I", cpu.get_I(), m_prev.m_I) 
+       << " " << fmt_reg8_compact("R", cpu.get_R(), m_prev.m_R);
     lines.push_back(ss.str());
-    ss.str(""); ss << "  " << fmt_reg16("HL", cpu.get_HL(), m_prev.m_HL.w) << "   " << fmt_reg16("HL'", cpu.get_HLp(), m_prev.m_HLp.w) << "   "
-        << Terminal::CYAN << std::setw(3) << std::left << "IFF" << Terminal::RESET << ": " 
-        << (cpu.get_IFF1() ? (Terminal::HI_GREEN + "ON ") : (Terminal::GRAY + "OFF")) << Terminal::RESET;
+
+    // Row 4: HL, HL', IM, IFF
+    ss.str(""); 
+    ss << "  " << fmt_reg16("HL", cpu.get_HL(), m_prev.m_HL.w) 
+       << "   " << fmt_reg16("HL'", cpu.get_HLp(), m_prev.m_HLp.w) 
+       << "   " << Terminal::CYAN << "IM" << Terminal::RESET << ":" 
+       << (cpu.get_IRQ_mode() != m_prev.m_IRQ_mode ? Terminal::HI_YELLOW : Terminal::GRAY) << (int)cpu.get_IRQ_mode() << Terminal::RESET
+       << " " << (cpu.get_IFF1() ? (Terminal::HI_GREEN + "EI") : (Terminal::GRAY + "DI")) << Terminal::RESET;
     lines.push_back(ss.str());
-    ss.str(""); ss << "  " << fmt_reg16("IX", cpu.get_IX(), m_prev.m_IX.w) << "   " << fmt_reg16("IY", cpu.get_IY(), m_prev.m_IY.w) << "   "
+
+    // Row 5: IX, IY, F
+    ss.str(""); 
+    ss << "  " << fmt_reg16("IX", cpu.get_IX(), m_prev.m_IX.w) 
+       << "   " << fmt_reg16("IY", cpu.get_IY(), m_prev.m_IY.w) << "   "
         << Terminal::CYAN << std::setw(3) << std::left << "F" << Terminal::RESET << ": " << format_flags(cpu.get_AF() & 0xFF, m_prev.m_AF.w & 0xFF);
     lines.push_back(ss.str());
     return lines;
@@ -132,9 +154,10 @@ std::vector<std::string> StackView::render() {
         uint16_t val = l | (h << 8);
         std::stringstream ss;
         ss << "  " << Terminal::GRAY << Strings::hex16(addr) << Terminal::RESET << ": " << Terminal::HI_WHITE << Strings::hex16(val) << Terminal::RESET;
-        auto code_lines = m_vm.get_analyzer().parse_code(val, 1);
-        if (!code_lines.empty() && !code_lines[0].label.empty())
-            ss << Terminal::HI_YELLOW << " (" << code_lines[0].label << ")" << Terminal::RESET;
+        uint16_t temp_val = val;
+        auto line = m_vm.get_analyzer().parse_instruction(temp_val);
+        if (!line.label.empty())
+            ss << Terminal::HI_YELLOW << " (" << line.label << ")" << Terminal::RESET;
         lines.push_back(ss.str());
     }
     return lines;
@@ -145,9 +168,9 @@ std::vector<std::string> CodeView::render() {
     lines_out.push_back(format_header("CODE"));
     if (m_has_history && m_start_addr == m_pc && (m_last_pc != m_pc || !m_pc_moved)) {
         uint16_t hist_addr = m_last_pc;
-        auto hist_lines = m_vm.get_analyzer().parse_code(hist_addr, 1);
-        if (!hist_lines.empty()) {
-            const auto& line = hist_lines[0];
+        uint16_t temp_hist = hist_addr;
+        auto line = m_vm.get_analyzer().parse_instruction(temp_hist);
+        if (!line.mnemonic.empty()) {
             std::stringstream ss;
             ss << "  " << Terminal::GRAY << Strings::hex16((uint16_t)line.address) << ": ";
             for(size_t i=0; i<std::min((size_t)4, line.bytes.size()); ++i)
@@ -167,9 +190,11 @@ std::vector<std::string> CodeView::render() {
                         case Operand::IMM8: ss << "$" << Strings::hex8(op.num_val); break;
                         case Operand::IMM16: ss << "$" << Strings::hex16(op.num_val); break;
                         case Operand::MEM_IMM16: ss << "($" << Strings::hex16(op.num_val) << ")"; break;
+                        case Operand::PORT_IMM8: ss << "($" << Strings::hex8(op.num_val) << ")"; break;
                         case Operand::MEM_REG16: ss << "(" << op.s_val << ")"; break;
                         case Operand::MEM_INDEXED: ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
                         case Operand::STRING: ss << "\"" << op.s_val << "\""; break;
+                        case Operand::CHAR_LITERAL: ss << "'" << (char)op.num_val << "'"; break;
                         default: break;
                     }
                 }
@@ -179,7 +204,8 @@ std::vector<std::string> CodeView::render() {
         }
     }
     uint16_t temp_pc_iter = m_start_addr;
-    auto lines = m_vm.get_analyzer().parse_code(temp_pc_iter, m_rows);   
+    auto* code_map = &m_vm.get_code_map();
+    auto lines = m_vm.get_analyzer().parse_code(temp_pc_iter, m_rows, code_map);   
     for (const auto& line : lines) {
         std::stringstream ss;
         bool is_pc = ((uint16_t)line.address == m_pc);
@@ -266,12 +292,19 @@ bool Debugger::check_breakpoints(uint16_t pc) {
     return false;
 }
 
+void Debugger::record_history(uint16_t pc) {
+    if (m_execution_history.size() >= 100)
+        m_execution_history.pop_front();
+    m_execution_history.push_back({pc});
+}
+
 void Debugger::step(int n) {
     m_prev_state = m_vm.get_cpu().save_state();
     for (int i = 0; i < n; ++i) {
         if (i > 0 && check_breakpoints(m_vm.get_cpu().get_PC()))
             break;
         uint16_t pc_before = m_vm.get_cpu().get_PC();
+        record_history(pc_before);
         m_vm.get_cpu().step();
         uint16_t pc_after = m_vm.get_cpu().get_PC();
         m_last_pc = pc_before;
@@ -283,22 +316,29 @@ void Debugger::step(int n) {
 void Debugger::next() {
         m_prev_state = m_vm.get_cpu().save_state();
         uint16_t pc_before = m_vm.get_cpu().get_PC();
-
-        auto lines = m_vm.get_analyzer().parse_code(pc_before, 2);
-        if (lines.empty()) { m_vm.get_cpu().step(); }
+        
+        uint16_t temp_pc = pc_before;
+        auto line = m_vm.get_analyzer().parse_instruction(temp_pc);
+        
+        if (line.mnemonic.empty()) { 
+            record_history(pc_before);
+            m_vm.get_cpu().step(); 
+        }
         else {
+        using Type = Z80Analyzer<Memory>::CodeLine::Type;
+        bool is_call = line.has_flag(Type::CALL);
+        bool is_block = line.has_flag(Type::BLOCK);
 
-        std::string mnemonic = lines[0].mnemonic;
-        bool is_subroutine = (mnemonic.find("CALL") == 0) || (mnemonic.find("RST") == 0) || (mnemonic.find("LDIR") == 0) || (mnemonic.find("LDDR") == 0);
-
-        if (is_subroutine) {
-            uint16_t next_pc = (lines.size() > 1) ? lines[1].address : pc_before + lines[0].bytes.size();
+        if (is_call || is_block) {
+            uint16_t next_pc = temp_pc;
             log("Stepping over... (Target: " + Strings::hex16(next_pc) + ")");
             while (m_vm.get_cpu().get_PC() != next_pc) {
                 if (check_breakpoints(m_vm.get_cpu().get_PC())) break;
                 m_vm.get_cpu().step();
             }
+            record_history(m_vm.get_cpu().get_PC());
         } else {
+            record_history(pc_before);
             m_vm.get_cpu().step();
         }
         }
@@ -316,6 +356,7 @@ void Debugger::cont() {
             return;
         }
         uint16_t pc_before = m_vm.get_cpu().get_PC();
+        record_history(pc_before);
         m_vm.get_cpu().step();
         uint16_t pc_after = m_vm.get_cpu().get_PC();
         m_last_pc = pc_before;
@@ -327,7 +368,7 @@ void Debugger::cont() {
 void Dashboard::run() {
     setup_replxx();
     m_repl.history_load("zxtool_history.txt");
-    m_code_view_addr = m_debugger.get_vm().get_cpu().get_PC();
+    update_code_view();
     m_mem_view_addr = m_debugger.get_vm().get_cpu().get_PC();
     m_stack_view_addr = m_debugger.get_vm().get_cpu().get_SP();
     validate_focus();
@@ -374,16 +415,17 @@ void Dashboard::handle_command(const std::string& input) {
         if (cmd == "s" || cmd == "step") { 
             int n=1; ss >> n; if(ss.fail()) n=1; 
             m_debugger.step(n); 
-            m_code_view_addr = m_debugger.get_vm().get_cpu().get_PC(); 
+            if (m_auto_follow) update_code_view();
         }
         else if (cmd == "n" || cmd == "next") { 
             m_debugger.next(); 
-            m_code_view_addr = m_debugger.get_vm().get_cpu().get_PC(); 
+            if (m_auto_follow) update_code_view();
         }
         else if (cmd == "c" || cmd == "continue") { 
             log("Running...");
             print_dashboard();
             m_debugger.cont(); 
+            if (m_auto_follow) update_code_view();
         }
         else if (cmd == "q" || cmd == "quit") { m_running = false; }
         else if (cmd == "h" || cmd == "help") { print_help(); }
@@ -411,7 +453,11 @@ void Dashboard::handle_command(const std::string& input) {
         else if (cmd == "b" || cmd == "break") {
             std::string arg; 
             if(ss>>arg) { 
-                try { m_debugger.add_breakpoint(m_debugger.get_vm().parse_address(arg)); log("Breakpoint set."); }
+                try { 
+                    m_debugger.add_breakpoint(m_debugger.get_vm().parse_address(arg)); 
+                    if (m_debugger.get_breakpoints().size() == 1) m_show_breakpoints = true;
+                    log("Breakpoint set."); 
+                }
                 catch(...) { log("Invalid address."); }
             }
         }
@@ -425,7 +471,10 @@ void Dashboard::handle_command(const std::string& input) {
         else if (cmd == "w" || cmd == "watch") {
             std::string arg; 
             if(ss>>arg) { 
-                try { m_debugger.add_watch(m_debugger.get_vm().parse_address(arg)); }
+                try { 
+                    m_debugger.add_watch(m_debugger.get_vm().parse_address(arg)); 
+                    if (m_debugger.get_watches().size() == 1) m_show_watch = true;
+                }
                 catch(...) { log("Invalid address."); }
             }
         }
@@ -436,6 +485,43 @@ void Dashboard::handle_command(const std::string& input) {
                 catch(...) { log("Invalid address."); }
             }
         }
+        else if (cmd == "f" || cmd == "follow") {
+            m_auto_follow = true;
+            update_code_view();
+            log("Auto-follow enabled.");
+        }
+        else if (cmd == "data" || cmd == "byte") {
+            std::string arg;
+            if (ss >> arg) {
+                try {
+                    uint16_t addr = m_debugger.get_vm().parse_address(arg);
+                    int count = 1;
+                    ss >> count;
+                    auto& analyzer = m_debugger.get_vm().get_analyzer();
+                    auto& map = m_debugger.get_vm().get_code_map();
+                    for(int i=0; i<count; ++i) {
+                        analyzer.set_map_type(map, addr + i, Analyzer::TYPE_BYTE);
+                    }
+                    log("Marked as data.");
+                } catch(...) { log("Invalid address."); }
+            } else log("Usage: data <addr> [count]");
+        }
+        else if (cmd == "code") {
+            std::string arg;
+            if (ss >> arg) {
+                try {
+                    uint16_t addr = m_debugger.get_vm().parse_address(arg);
+                    int count = 1;
+                    ss >> count;
+                    auto& analyzer = m_debugger.get_vm().get_analyzer();
+                    auto& map = m_debugger.get_vm().get_code_map();
+                    for(int i=0; i<count; ++i) {
+                        analyzer.set_map_type(map, addr + i, Analyzer::TYPE_CODE);
+                    }
+                    log("Marked as code.");
+                } catch(...) { log("Invalid address."); }
+            } else log("Usage: code <addr> [count]");
+        }
         else { log("Unknown command."); }
 }
 
@@ -444,8 +530,17 @@ void Dashboard::setup_replxx() {
         
         auto bind_scroll = [&](char32_t key, int mem_delta, int code_delta, int stack_delta) {
             m_repl.bind_key(key, [this, mem_delta, code_delta, stack_delta](char32_t code) {
+                m_auto_follow = false;
                 if (m_focus == FOCUS_MEMORY) m_mem_view_addr += mem_delta;
-                else if (m_focus == FOCUS_CODE) m_code_view_addr += code_delta;
+                else if (m_focus == FOCUS_CODE) {
+                    if (code_delta < 0) {
+                        m_code_view_addr = find_prev_instruction_pc(m_code_view_addr);
+                    } else {
+                        uint16_t temp = m_code_view_addr;
+                        m_debugger.get_vm().get_analyzer().parse_instruction(temp);
+                        m_code_view_addr = temp;
+                    }
+                }
                 else if (m_focus == FOCUS_STACK) m_stack_view_addr += stack_delta;
                 print_dashboard();
                 m_repl.invoke(replxx::Replxx::ACTION::REPAINT, code);
@@ -457,6 +552,7 @@ void Dashboard::setup_replxx() {
         bind_scroll(replxx::Replxx::KEY::DOWN, 16, 1, 2);
 
         auto tab_handler = [this](char32_t code) {
+            m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT);
             validate_focus();
             print_dashboard();
             m_repl.invoke(replxx::Replxx::ACTION::REPAINT, code);
@@ -481,6 +577,9 @@ void Dashboard::print_help() {
         m_output_buffer << "   d, delete <addr>       Delete breakpoint\n";
         m_output_buffer << "   w, watch <addr>        Add watch address\n";
         m_output_buffer << "   u, unwatch <addr>      Remove watch\n";
+        m_output_buffer << "   f, follow              Center view on PC\n";
+        m_output_buffer << "   data <addr> [n]        Mark as data\n";
+        m_output_buffer << "   code <addr> [n]        Mark as code\n";
         m_output_buffer << "   q, quit                Exit debugger\n";
 }
 
@@ -597,30 +696,86 @@ void Dashboard::print_footer() {
         std::cout << "\n";
 }
 
+uint16_t Dashboard::find_prev_instruction_pc(uint16_t target_addr) {
+    auto& analyzer = m_debugger.get_vm().get_analyzer();
+    auto& code_map = m_debugger.get_vm().get_code_map();
+    
+    // 1. Try execution history
+    const auto& history = m_debugger.get_execution_history();
+    for (auto it = history.rbegin(); it != history.rend(); ++it) {
+        uint16_t pc = it->pc;
+        uint16_t diff = target_addr - pc;
+        if (diff >= 1 && diff <= 6) {
+             uint16_t temp = pc;
+             analyzer.parse_instruction(temp);
+             if (temp == target_addr) return pc;
+        }
+    }
+
+    // 2. Try CodeMap (Look for FLAG_CODE_START)
+    for (int offset = 1; offset <= 6; ++offset) {
+        uint16_t candidate = target_addr - offset;
+        if (code_map[candidate] & Z80Analyzer<Memory>::FLAG_CODE_START) {
+             uint16_t temp = candidate;
+             analyzer.parse_instruction(temp);
+             if (temp == target_addr) return candidate;
+        }
+    }
+
+    // 3. Fallback to heuristic
+    for (int offset = 1; offset <= 4; ++offset) {
+        uint16_t candidate_addr = target_addr - offset;
+        
+        // Skip if we know it's inside another instruction
+        if (code_map[candidate_addr] & Z80Analyzer<Memory>::FLAG_CODE_INTERIOR) 
+            continue;
+
+        uint16_t temp_addr = candidate_addr;
+        analyzer.parse_instruction(temp_addr);
+        if (temp_addr == target_addr) {
+            return candidate_addr;
+        }
+    }
+    return target_addr - 1;
+}
+
+uint16_t Dashboard::get_pc_window_start(uint16_t pc, int lines) {
+    uint16_t addr = pc;
+    for (int i = 0; i < lines; ++i) {
+        addr = find_prev_instruction_pc(addr);
+    }
+    return addr;
+}
+
+void Dashboard::update_code_view() {
+    if (!m_auto_follow) return;
+    uint16_t pc = m_debugger.get_vm().get_cpu().get_PC();
+    int offset = m_code_rows / 3;
+    m_code_view_addr = get_pc_window_start(pc, offset);
+}
+
 void Dashboard::print_columns(const std::vector<std::string>& left, const std::vector<std::string>& right, size_t left_width) {
         size_t rows = std::max(left.size(), right.size());
         static const std::regex ansi_regex("\x1B\\[[0-9;]*[mK]");
 
         for (size_t i = 0; i < rows; ++i) {
             std::string l = (i < left.size()) ? left[i] : "";
-            
-            std::string plain = std::regex_replace(l, ansi_regex, "");
-            size_t len = plain.length();
-            
-            int padding = (int)left_width - (int)len;
-            if (padding < 0) padding = 0;
-
             bool has_bg = (l.find("[100m") != std::string::npos);
 
             std::cout << l;
             if (has_bg) std::cout << Terminal::BG_DARK_GRAY;
-            std::cout << std::string(padding, ' ');
-            if (has_bg) std::cout << Terminal::RESET;
-
-            std::cout << Terminal::GRAY << " | " << Terminal::RESET;
-
-            if (i < right.size()) {
-                std::cout << " " << right[i];
+            
+            if (!right.empty()) {
+                std::string plain = std::regex_replace(l, ansi_regex, "");
+                size_t len = plain.length();
+                int padding = (int)left_width - (int)len;
+                if (padding < 0) padding = 0;
+                std::cout << std::string(padding, ' ');
+                if (has_bg) std::cout << Terminal::RESET;
+                std::cout << Terminal::GRAY << " | " << Terminal::RESET;
+                if (i < right.size()) std::cout << " " << right[i];
+            } else {
+                if (has_bg) std::cout << Terminal::RESET;
             }
             std::cout << "\n";
         }
