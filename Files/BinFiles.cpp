@@ -33,3 +33,17 @@ std::vector<uint8_t> BinFiles::read_binary_file(const std::string& path, std::if
     file.read(reinterpret_cast<char*>(buffer.data()), size);
     return buffer;
 }
+
+LoadResult BinFiles::load(const std::string& filename, std::vector<LoadedBlock>& blocks, uint16_t address) {
+    try {
+        auto block = load(filename, address);
+        blocks.push_back({block.start_address, block.size, "Loaded from " + filename});
+        return {true, block.start_address};
+    } catch (...) {
+        return {false, std::nullopt};
+    }
+}
+
+std::vector<std::string> BinFiles::get_extensions() const {
+    return { ".bin", "*" };
+}

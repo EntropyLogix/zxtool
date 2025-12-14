@@ -2,18 +2,18 @@
 #define __DISASSEMBLE_ENGINE_H__
 
 #include "Engine.h"
-#include "../Core/VirtualMachine.h"
+#include "../Core/Core.h"
 #include "../Cmd/Options.h"
 
 class DisassembleEngine : public Engine {
 public:
-    DisassembleEngine(VirtualMachine& vm, const Options& options);
+    DisassembleEngine(Core& core, const Options& options);
     virtual ~DisassembleEngine() = default;
     
     int run() override;
 
 private:
-    VirtualMachine& m_vm;
+    Core& m_core;
     const Options& m_options;
 };
 

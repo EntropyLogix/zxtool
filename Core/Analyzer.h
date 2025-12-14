@@ -7,29 +7,7 @@
 #include <vector>
 #include <map>
 
-// ---------------------------------------------------------
-// Kontekst Projektu: Symbole, Komentarze, Metadane
-// ---------------------------------------------------------
-class ProjectContext : public ILabels {
-public:
-    struct MetaInfo {
-        std::string block_description; // "D" - opis nad blokiem
-        std::string inline_comment;    // "C" - komentarz po instrukcji
-    };
-
-    std::map<uint16_t, std::string> labels;
-    std::map<uint16_t, MetaInfo> metadata;
-
-    // --- ILabels Interface Implementation ---
-    std::string get_label(uint16_t address) const override;
-    void add_label(uint16_t address, const std::string& label) override;
-
-    // --- Helpers for Metadata ---
-    void add_block_desc(uint16_t addr, const std::string& desc);
-    void add_inline_comment(uint16_t addr, const std::string& comment);
-    std::string get_inline_comment(uint16_t addr);
-    std::string get_block_desc(uint16_t addr);
-};
+class Context;
 
 // ---------------------------------------------------------
 // Smart Analyzer
@@ -55,10 +33,10 @@ public:
         TYPE_IGNORE  = 5  // i/s
     };
 
-    ProjectContext context;
+    Context& context;
     CodeMap m_map;
 
-    Analyzer(Memory* memory);
+    Analyzer(Memory* memory, Context* ctx);
     
     // Helper do ustawiania bitów typu w mapie (nie ruszając flag profilera)
     void set_map_type(CodeMap& map, uint16_t addr, ExtendedFlags type);

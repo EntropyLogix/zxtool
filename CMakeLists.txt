@@ -11,7 +11,6 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/AmokHuginnsson/replxx.git
   GIT_TAG        release-0.0.4 
 )
-
 FetchContent_Declare(
   Z80
   GIT_REPOSITORY https://github.com/EntropyLogix/Z80.git
@@ -24,8 +23,10 @@ FetchContent_MakeAvailable(Z80)
 add_executable(zxtool 
                 main.cpp
                 Cmd/CommandLine.cpp
+                Core/Context.cpp
                 Core/Analyzer.cpp
-                Core/VirtualMachine.cpp
+                Core/Core.cpp
+                Core/Evaluator.cpp
                 Core/Application.cpp
                 Engines/AssembleEngine.cpp
                 Engines/RunEngine.cpp
@@ -33,8 +34,10 @@ add_executable(zxtool
                 Engines/DebugEngine.cpp
                 Files/AsmFiles.cpp
                 Files/BinFiles.cpp
+                Files/Z80File.cpp
                 Files/SymbolFile.cpp
                 Files/ControlFile.cpp
+                Files/FileManager.cpp
                 Utils/Strings.cpp
                 Utils/Terminal.cpp
   )

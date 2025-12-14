@@ -8,13 +8,13 @@
 #include <type_traits>
 #include "../Utils/Strings.h"
 
-DisassembleEngine::DisassembleEngine(VirtualMachine& vm, const Options& options)
-    : m_vm(vm), m_options(options)
+DisassembleEngine::DisassembleEngine(Core& core, const Options& options)
+    : m_core(core), m_options(options)
 {
 }
 
 int DisassembleEngine::run() {
-    auto& analyzer = m_vm.get_analyzer();
+    auto& analyzer = m_core.get_analyzer();
     
     std::ofstream file_out;
     std::streambuf* buf = std::cout.rdbuf();
@@ -37,7 +37,7 @@ int DisassembleEngine::run() {
     bool has_steps = m_options.runSteps > 0;
 
     if (!has_entry && !has_steps) {
-        const auto& blocks = m_vm.get_blocks();
+        const auto& blocks = m_core.get_blocks();
         if (blocks.empty()) {
              jobs.push_back({0, 0, false, 20, ""});
         } else {
@@ -57,7 +57,7 @@ int DisassembleEngine::run() {
                 ep = ep.substr(0, colon);
             }
             try {
-                pc = m_vm.parse_address(ep);
+                pc = m_core.parse_address(ep);
             } catch (const std::exception& e) { std::cerr << "Invalid entry point: " << ep << " (" << e.what() << ")\n"; }
         }
         if (has_steps) count = m_options.runSteps;

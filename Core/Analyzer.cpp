@@ -1,48 +1,14 @@
 #include "Analyzer.h"
+#include "Core.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
 
 // ---------------------------------------------------------
-// ProjectContext Implementation
-// ---------------------------------------------------------
-
-std::string ProjectContext::get_label(uint16_t address) const {
-    auto it = labels.find(address);
-    return (it != labels.end()) ? it->second : "";
-}
-
-void ProjectContext::add_label(uint16_t address, const std::string& label) {
-    // Nie nadpisuj istniejących etykiet (priorytet mają te z plików)
-    if (labels.find(address) == labels.end()) {
-        labels[address] = label;
-    }
-}
-
-void ProjectContext::add_block_desc(uint16_t addr, const std::string& desc) {
-    if (!metadata[addr].block_description.empty()) metadata[addr].block_description += "\n";
-    metadata[addr].block_description += "; " + desc;
-}
-
-void ProjectContext::add_inline_comment(uint16_t addr, const std::string& comment) {
-    metadata[addr].inline_comment = comment;
-}
-
-std::string ProjectContext::get_inline_comment(uint16_t addr) {
-    if (metadata.count(addr)) return metadata[addr].inline_comment;
-    return "";
-}
-
-std::string ProjectContext::get_block_desc(uint16_t addr) {
-    if (metadata.count(addr)) return metadata[addr].block_description;
-    return "";
-}
-
-// ---------------------------------------------------------
 // Analyzer Implementation
 // ---------------------------------------------------------
 
-Analyzer::Analyzer(Memory* memory) : Z80Analyzer<Memory>(memory, &context) {}
+Analyzer::Analyzer(Memory* memory, Context* ctx) : Z80Analyzer<Memory>(memory, ctx), context(*ctx) {}
 
 void Analyzer::set_map_type(CodeMap& map, uint16_t addr, ExtendedFlags type) {
     map[addr] = (map[addr] & ~TYPE_MASK) | (type << TYPE_SHIFT);

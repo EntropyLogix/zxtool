@@ -1,7 +1,7 @@
 #ifndef __ENGINE_H__
 #define __ENGINE_H__
 
-#include "../Core/VirtualMachine.h"
+#include "../Core/Core.h"
 #include "../Cmd/Options.h"
 
 class Engine {

@@ -15,6 +15,23 @@
 #include "../Utils/Strings.h"
 #include "../Utils/Terminal.h"
 
+static size_t levenshtein_distance(const std::string& s1, const std::string& s2) {
+    const size_t m = s1.length();
+    const size_t n = s2.length();
+    std::vector<std::vector<size_t>> dp(m + 1, std::vector<size_t>(n + 1));
+
+    for (size_t i = 0; i <= m; ++i) dp[i][0] = i;
+    for (size_t j = 0; j <= n; ++j) dp[0][j] = j;
+
+    for (size_t i = 1; i <= m; ++i) {
+        for (size_t j = 1; j <= n; ++j) {
+            size_t cost = (s1[i - 1] == s2[j - 1]) ? 0 : 1;
+            dp[i][j] = std::min({ dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost });
+        }
+    }
+    return dp[m][n];
+}
+
 std::string DebugView::format_header(const std::string& title, const std::string& extra) const {
     std::stringstream ss;
     if (m_has_focus) ss << Terminal::YELLOW << "[" << title << "]" << Terminal::RESET;
@@ -31,7 +48,7 @@ std::vector<std::string> MemoryView::render() {
     extra << Terminal::CYAN << " View: " << Terminal::HI_WHITE << Strings::hex16(m_start_addr) << Terminal::RESET;
     lines.push_back(format_header("MEMORY", extra.str()));
     lines.push_back(sep);
-    auto& mem = m_vm.get_memory();
+    auto& mem = m_core.get_memory();
     for (size_t i = 0; i < m_rows * 16; i += 16) {
         std::stringstream ss;
         uint16_t addr = m_start_addr + i;
@@ -71,7 +88,7 @@ std::vector<std::string> RegisterView::render() {
         extra << Terminal::RED << " (+" << delta << ")" << Terminal::RESET;
     lines.push_back(format_header("REGS", extra.str()));
 
-    auto& cpu = m_vm.get_cpu();
+    auto& cpu = m_core.get_cpu();
     auto fmt_reg16 = [&](const std::string& l, uint16_t v, uint16_t pv) -> std::string {
         std::stringstream ss;
         ss << Terminal::CYAN << std::setw(3) << std::left << l << Terminal::RESET << ": " 
@@ -145,18 +162,18 @@ std::string RegisterView::format_flags(uint8_t f, uint8_t prev_f) {
 std::vector<std::string> StackView::render() {
     std::vector<std::string> lines;
     std::stringstream extra;
-    extra << Terminal::CYAN << " (SP=" << Terminal::HI_WHITE << Strings::hex16(m_vm.get_cpu().get_SP()) << Terminal::CYAN << ")" << Terminal::RESET;
+    extra << Terminal::CYAN << " (SP=" << Terminal::HI_WHITE << Strings::hex16(m_core.get_cpu().get_SP()) << Terminal::CYAN << ")" << Terminal::RESET;
     lines.push_back(format_header("STACK", extra.str()));
 
     for (int i=0; i<5; ++i) {
         uint16_t addr = m_view_addr + i*2;
-        uint8_t l = m_vm.get_memory().read(addr);
-        uint8_t h = m_vm.get_memory().read(addr + 1);
+        uint8_t l = m_core.get_memory().read(addr);
+        uint8_t h = m_core.get_memory().read(addr + 1);
         uint16_t val = l | (h << 8);
         std::stringstream ss;
         ss << "  " << Terminal::GRAY << Strings::hex16(addr) << Terminal::RESET << ": " << Terminal::HI_WHITE << Strings::hex16(val) << Terminal::RESET;
         uint16_t temp_val = val;
-        auto line = m_vm.get_analyzer().parse_instruction(temp_val);
+        auto line = m_core.get_analyzer().parse_instruction(temp_val);
         if (!line.label.empty())
             ss << Terminal::HI_YELLOW << " (" << line.label << ")" << Terminal::RESET;
         lines.push_back(ss.str());
@@ -170,7 +187,7 @@ std::vector<std::string> CodeView::render() {
     if (m_has_history && m_start_addr == m_pc && (m_last_pc != m_pc || !m_pc_moved)) {
         uint16_t hist_addr = m_last_pc;
         uint16_t temp_hist = hist_addr;
-        auto line = m_vm.get_analyzer().parse_instruction(temp_hist);
+        auto line = m_core.get_analyzer().parse_instruction(temp_hist);
         if (!line.mnemonic.empty()) {
             std::stringstream ss;
             ss << "  " << Terminal::GRAY << Strings::hex16((uint16_t)line.address) << ": ";
@@ -205,9 +222,40 @@ std::vector<std::string> CodeView::render() {
         }
     }
     uint16_t temp_pc_iter = m_start_addr;
-    auto* code_map = &m_vm.get_code_map();
-    auto lines = m_vm.get_analyzer().parse_code(temp_pc_iter, m_rows, code_map);   
-    for (const auto& line : lines) {
+    auto* code_map = &m_core.get_code_map();
+    bool first_line = true;
+    int lines_count = 0;
+
+    while (lines_count < m_rows) {
+        auto lines = m_core.get_analyzer().parse_code(temp_pc_iter, 1, code_map);
+        if (lines.empty()) break;
+        const auto& line = lines[0];
+
+        auto& ctx = m_core.get_analyzer().context;
+        bool has_block_desc = ctx.metadata.count((uint16_t)line.address) && !ctx.metadata.at((uint16_t)line.address).block_description.empty();
+        bool has_label = !line.label.empty();
+
+        // 1. Separacja wertykalna (Pusta linia przed nowym blokiem)
+        if (!first_line && (has_label || has_block_desc)) {
+            if (lines_count < m_rows) { lines_out.push_back(""); lines_count++; }
+        }
+
+        if (ctx.metadata.count((uint16_t)line.address)) {
+             const auto& desc = ctx.metadata.at((uint16_t)line.address).block_description;
+             if (!desc.empty()) {
+                 std::stringstream desc_ss(desc);
+                 std::string segment;
+                 while(std::getline(desc_ss, segment, '\n')) {
+                     if (lines_count < m_rows) { lines_out.push_back(Terminal::GRAY + segment + Terminal::RESET); lines_count++; }
+                 }
+             }
+        }
+
+        // Podejście 1: Etykieta w osobnej linii
+        if (!line.label.empty()) {
+            if (lines_count < m_rows) { lines_out.push_back(Terminal::MAGENTA + line.label + ":" + Terminal::RESET); lines_count++; }
+        }
+
         std::stringstream ss;
         bool is_pc = ((uint16_t)line.address == m_pc);
         std::string bg = is_pc ? Terminal::BG_DARK_GRAY : "";
@@ -226,6 +274,7 @@ std::vector<std::string> CodeView::render() {
         for(size_t i=line.bytes.size(); i<4; ++i)
             ss << "   ";
         ss << rst << " ";
+
         if (is_pc)
             ss << Terminal::BOLD << Terminal::WHITE;
         else
@@ -271,6 +320,13 @@ std::vector<std::string> CodeView::render() {
                     ss << rst;
             }
         }
+        
+        if (ctx.metadata.count((uint16_t)line.address)) {
+             const auto& comment = ctx.metadata.at((uint16_t)line.address).inline_comment;
+             if (!comment.empty())
+                 ss << "  " << Terminal::GREEN << "; " << comment << Terminal::RESET;
+        }
+
         if (m_width > 0) {
             std::string s = ss.str();
             size_t len = Strings::ansi_len(s);
@@ -278,9 +334,10 @@ std::vector<std::string> CodeView::render() {
             if (pad > 0)
                 s += std::string(pad, ' ');
             s += Terminal::RESET; 
-            lines_out.push_back(s);
+            if (lines_count < m_rows) { lines_out.push_back(s); lines_count++; }
         } else
-            lines_out.push_back(ss.str());
+            if (lines_count < m_rows) { lines_out.push_back(ss.str()); lines_count++; }
+        first_line = false;
     }
     return lines_out;
 }
@@ -300,14 +357,14 @@ void Debugger::record_history(uint16_t pc) {
 }
 
 void Debugger::step(int n) {
-    m_prev_state = m_vm.get_cpu().save_state();
+    m_prev_state = m_core.get_cpu().save_state();
     for (int i = 0; i < n; ++i) {
-        if (i > 0 && check_breakpoints(m_vm.get_cpu().get_PC()))
+        if (i > 0 && check_breakpoints(m_core.get_cpu().get_PC()))
             break;
-        uint16_t pc_before = m_vm.get_cpu().get_PC();
+        uint16_t pc_before = m_core.get_cpu().get_PC();
         record_history(pc_before);
-        m_vm.get_cpu().step();
-        uint16_t pc_after = m_vm.get_cpu().get_PC();
+        m_core.get_cpu().step();
+        uint16_t pc_after = m_core.get_cpu().get_PC();
         m_last_pc = pc_before;
         m_has_history = true;
         m_pc_moved = (pc_before != pc_after);
@@ -315,15 +372,15 @@ void Debugger::step(int n) {
 }
 
 void Debugger::next() {
-        m_prev_state = m_vm.get_cpu().save_state();
-        uint16_t pc_before = m_vm.get_cpu().get_PC();
+        m_prev_state = m_core.get_cpu().save_state();
+        uint16_t pc_before = m_core.get_cpu().get_PC();
         
         uint16_t temp_pc = pc_before;
-        auto line = m_vm.get_analyzer().parse_instruction(temp_pc);
+        auto line = m_core.get_analyzer().parse_instruction(temp_pc);
         
         if (line.mnemonic.empty()) { 
             record_history(pc_before);
-            m_vm.get_cpu().step(); 
+            m_core.get_cpu().step(); 
         }
         else {
         using Type = Z80Analyzer<Memory>::CodeLine::Type;
@@ -333,33 +390,33 @@ void Debugger::next() {
         if (is_call || is_block) {
             uint16_t next_pc = temp_pc;
             log("Stepping over... (Target: " + Strings::hex16(next_pc) + ")");
-            while (m_vm.get_cpu().get_PC() != next_pc) {
-                if (check_breakpoints(m_vm.get_cpu().get_PC())) break;
-                m_vm.get_cpu().step();
+            while (m_core.get_cpu().get_PC() != next_pc) {
+                if (check_breakpoints(m_core.get_cpu().get_PC())) break;
+                m_core.get_cpu().step();
             }
-            record_history(m_vm.get_cpu().get_PC());
+            record_history(m_core.get_cpu().get_PC());
         } else {
             record_history(pc_before);
-            m_vm.get_cpu().step();
+            m_core.get_cpu().step();
         }
         }
-        uint16_t pc_after = m_vm.get_cpu().get_PC();
+        uint16_t pc_after = m_core.get_cpu().get_PC();
         m_last_pc = pc_before;
         m_has_history = true;
         m_pc_moved = (pc_before != pc_after);
 }
 
 void Debugger::cont() {
-    m_prev_state = m_vm.get_cpu().save_state();
+    m_prev_state = m_core.get_cpu().save_state();
     while (true) {
-        if (check_breakpoints(m_vm.get_cpu().get_PC())) {
+        if (check_breakpoints(m_core.get_cpu().get_PC())) {
             log("Breakpoint hit!");
             return;
         }
-        uint16_t pc_before = m_vm.get_cpu().get_PC();
+        uint16_t pc_before = m_core.get_cpu().get_PC();
         record_history(pc_before);
-        m_vm.get_cpu().step();
-        uint16_t pc_after = m_vm.get_cpu().get_PC();
+        m_core.get_cpu().step();
+        uint16_t pc_after = m_core.get_cpu().get_PC();
         m_last_pc = pc_before;
         m_has_history = true;
         m_pc_moved = (pc_before != pc_after);
@@ -370,8 +427,8 @@ void Dashboard::run() {
     setup_replxx();
     m_repl.history_load("zxtool_history.txt");
     update_code_view();
-    m_mem_view_addr = m_debugger.get_vm().get_cpu().get_PC();
-    m_stack_view_addr = m_debugger.get_vm().get_cpu().get_SP();
+    m_mem_view_addr = m_debugger.get_core().get_cpu().get_PC();
+    m_stack_view_addr = m_debugger.get_core().get_cpu().get_SP();
     validate_focus();
     while (m_running) {
         print_dashboard();
@@ -384,7 +441,14 @@ void Dashboard::run() {
                 continue;
             input = m_last_command;
         } else {
-            m_last_command = input;
+            std::stringstream ss(input);
+            std::string cmd;
+            ss >> cmd;
+            if (cmd == "s" || cmd == "step" || cmd == "n" || cmd == "next" || cmd == "c" || cmd == "continue") {
+                m_last_command = input;
+            } else {
+                m_last_command.clear();
+            }
             m_repl.history_add(input);
         }
         handle_command(input);
@@ -455,7 +519,7 @@ void Dashboard::handle_command(const std::string& input) {
             std::string arg; 
             if(ss>>arg) { 
                 try { 
-                    m_debugger.add_breakpoint(m_debugger.get_vm().parse_address(arg)); 
+                    m_debugger.add_breakpoint(m_debugger.get_core().parse_address(arg)); 
                     if (m_debugger.get_breakpoints().size() == 1) m_show_breakpoints = true;
                     log("Breakpoint set."); 
                 }
@@ -465,7 +529,7 @@ void Dashboard::handle_command(const std::string& input) {
         else if (cmd == "d" || cmd == "delete") {
             std::string arg; 
             if(ss>>arg) { 
-                try { m_debugger.remove_breakpoint(m_debugger.get_vm().parse_address(arg)); }
+                try { m_debugger.remove_breakpoint(m_debugger.get_core().parse_address(arg)); }
                 catch(...) { log("Invalid address."); }
             }
         }
@@ -473,7 +537,7 @@ void Dashboard::handle_command(const std::string& input) {
             std::string arg; 
             if(ss>>arg) { 
                 try { 
-                    m_debugger.add_watch(m_debugger.get_vm().parse_address(arg)); 
+                    m_debugger.add_watch(m_debugger.get_core().parse_address(arg)); 
                     if (m_debugger.get_watches().size() == 1) m_show_watch = true;
                 }
                 catch(...) { log("Invalid address."); }
@@ -482,7 +546,7 @@ void Dashboard::handle_command(const std::string& input) {
         else if (cmd == "u" || cmd == "unwatch") {
             std::string arg; 
             if(ss>>arg) { 
-                try { m_debugger.remove_watch(m_debugger.get_vm().parse_address(arg)); }
+                try { m_debugger.remove_watch(m_debugger.get_core().parse_address(arg)); }
                 catch(...) { log("Invalid address."); }
             }
         }
@@ -495,11 +559,11 @@ void Dashboard::handle_command(const std::string& input) {
             std::string arg;
             if (ss >> arg) {
                 try {
-                    uint16_t addr = m_debugger.get_vm().parse_address(arg);
+                    uint16_t addr = m_debugger.get_core().parse_address(arg);
                     int count = 1;
                     ss >> count;
-                    auto& analyzer = m_debugger.get_vm().get_analyzer();
-                    auto& map = m_debugger.get_vm().get_code_map();
+                    auto& analyzer = m_debugger.get_core().get_analyzer();
+                    auto& map = m_debugger.get_core().get_code_map();
                     for(int i=0; i<count; ++i) {
                         analyzer.set_map_type(map, addr + i, Analyzer::TYPE_BYTE);
                     }
@@ -511,11 +575,11 @@ void Dashboard::handle_command(const std::string& input) {
             std::string arg;
             if (ss >> arg) {
                 try {
-                    uint16_t addr = m_debugger.get_vm().parse_address(arg);
+                    uint16_t addr = m_debugger.get_core().parse_address(arg);
                     int count = 1;
                     ss >> count;
-                    auto& analyzer = m_debugger.get_vm().get_analyzer();
-                    auto& map = m_debugger.get_vm().get_code_map();
+                    auto& analyzer = m_debugger.get_core().get_analyzer();
+                    auto& map = m_debugger.get_core().get_code_map();
                     for(int i=0; i<count; ++i) {
                         analyzer.set_map_type(map, addr + i, Analyzer::TYPE_CODE);
                     }
@@ -530,7 +594,7 @@ void Dashboard::handle_command(const std::string& input) {
                 log("Usage: ? <expression> (e.g. ? HL / 2)");
             } else {
                 try {
-                    Evaluator eval(m_debugger.get_vm());
+                    Evaluator eval(m_debugger.get_core());
                     double result = eval.evaluate(expr);
                     
                     uint16_t as_int = static_cast<uint16_t>(result);
@@ -551,6 +615,127 @@ void Dashboard::handle_command(const std::string& input) {
                 }
             }
         }
+        else if (cmd == "symbols" || cmd == "sym") {
+            std::string arg;
+            std::string filter;
+            bool sort_by_addr = false;
+            
+            while(ss >> arg) {
+                if (arg == "/a") sort_by_addr = true;
+                else filter = arg;
+            }
+
+            // Metoda 2: Reverse Lookup / Nearest Symbol
+            // Check if filter looks like an address (starts with digit, $, # or 0x)
+            bool is_address = false;
+            uint16_t target_addr = 0;
+            if (!filter.empty() && filter != "*") {
+                if (isdigit(filter[0]) || filter[0] == '$' || filter[0] == '#' || (filter.size() > 2 && filter[0] == '0' && tolower(filter[1]) == 'x')) {
+                    try {
+                        target_addr = m_debugger.get_core().parse_address(filter);
+                        is_address = true;
+                    } catch(...) {}
+                }
+            }
+
+            if (is_address) {
+                auto pair = m_debugger.get_core().get_context().find_nearest_symbol(target_addr);
+                if (!pair.first.empty()) {
+                    int offset = target_addr - pair.second;
+                    std::stringstream out;
+                    out << "Symbol for " << Strings::hex16(target_addr) << ": " << Terminal::HI_YELLOW << pair.first << Terminal::RESET;
+                    if (offset > 0) out << " + " << offset;
+                    log(out.str());
+                } else {
+                    log("No symbol found near " + Strings::hex16(target_addr));
+                }
+                return;
+            }
+
+            auto& labels = m_debugger.get_core().get_context().labels;
+
+            // Case 1: sym (no arguments) -> Statistics only
+            if (filter.empty()) {
+                log("Total symbols loaded: " + std::to_string(labels.size()));
+                log("Use 'sym *' to list all, or 'sym <phrase>' to search.");
+                return;
+            }
+
+            // Metoda 1: Smart List
+            struct SymEntry { uint16_t addr; std::string name; };
+            std::vector<SymEntry> matches;
+
+            std::string filter_lower = filter;
+            std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
+            bool unlimited_output = (filter == "*");
+            bool match_any = (filter == "*");
+
+            for (const auto& [addr, name] : labels) {
+                if (match_any) {
+                    matches.push_back({addr, name});
+                } else {
+                    std::string name_lower = name;
+                    std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
+                    if (name_lower.find(filter_lower) != std::string::npos) {
+                        matches.push_back({addr, name});
+                    }
+                }
+            }
+
+            if (matches.empty()) {
+                log("No symbols found.");
+                return;
+            }
+
+            if (sort_by_addr) {
+                // Already sorted by address (std::map iteration order)
+            } else {
+                std::sort(matches.begin(), matches.end(), [](const SymEntry& a, const SymEntry& b) {
+                    if (a.name.length() != b.name.length())
+                        return a.name.length() < b.name.length();
+                    return a.name < b.name;
+                });
+            }
+
+            std::stringstream out;
+            out << "Found " << matches.size() << " symbols:\n";
+            
+            int col_width = 30;
+            int cols = 80 / col_width; // Assuming 80 chars width
+            if (cols < 1) cols = 1;
+
+            const size_t SYMBOL_LIST_LIMIT = 10;
+            size_t limit = unlimited_output ? matches.size() : SYMBOL_LIST_LIMIT;
+            size_t count = std::min(matches.size(), limit);
+
+            for (size_t i = 0; i < count; ++i) {
+                std::stringstream entry_ss;
+                entry_ss << matches[i].name << " (" << Strings::hex16(matches[i].addr) << ")";
+                std::string entry = entry_ss.str();
+                if (entry.length() > (size_t)col_width - 2) entry = entry.substr(0, col_width - 5) + "...";
+                
+                out << std::left << std::setw(col_width) << entry;
+                if ((i + 1) % cols == 0) out << "\n";
+            }
+            if (count % cols != 0) out << "\n";
+            
+            if (matches.size() > limit) {
+                out << "... and " << (matches.size() - limit) << " more.";
+            }
+            
+            log(out.str());
+        }
+        else if (cmd == "undef" || cmd == "del" || cmd == "kill") {
+            std::string arg;
+            if (ss >> arg) {
+                if (m_debugger.get_core().get_context().remove_symbol(arg)) {
+                    log(Terminal::GREEN + "Symbol '" + arg + "' removed." + Terminal::RESET);
+                    update_code_view(); // Refresh to remove label from view
+                } else {
+                    log(Terminal::RED + "Error: Symbol '" + arg + "' not found." + Terminal::RESET);
+                }
+            } else log("Usage: undef <symbol_name>");
+        }
         else {
             size_t eq_pos = input.find('=');
             bool is_assignment = (eq_pos != std::string::npos);
@@ -567,29 +752,68 @@ void Dashboard::handle_command(const std::string& input) {
                 std::string lhs = input.substr(0, eq_pos);
                 std::string rhs = input.substr(eq_pos + 1);
                 try {
-                    Evaluator eval(m_debugger.get_vm());
+                    Evaluator eval(m_debugger.get_core());
                     double val = eval.evaluate(rhs); 
-                    eval.assign(lhs, val);
+                    uint16_t val16 = static_cast<uint16_t>(val);
 
                     std::string target = lhs;
                     target.erase(std::remove_if(target.begin(), target.end(), ::isspace), target.end());
-                    std::transform(target.begin(), target.end(), target.begin(), ::toupper);
+                    std::string target_upper = target;
+                    std::transform(target_upper.begin(), target_upper.end(), target_upper.begin(), ::toupper);
 
-                    if (target == "PC") {
-                        uint16_t new_pc = (uint16_t)val;
-                        auto& vm = m_debugger.get_vm();
-                        vm.get_profiler().reset();
-                        vm.get_analyzer().parse_code(new_pc, 0, &vm.get_code_map(), false, true);
-                        log("PC changed. History reset and static analysis performed.");
-                        m_auto_follow = true;
-                        update_code_view();
+                    // 1. Rejestr?
+                    if (Evaluator::is_register(target_upper)) {
+                        eval.assign(target, val); // Evaluator handles registers
+                        
+                        if (target_upper == "PC") {
+                            auto& core = m_debugger.get_core();
+                            core.get_profiler().reset();
+                            core.get_analyzer().parse_code(val16, 0, &core.get_code_map(), false, true);
+                            log("PC changed. History reset and static analysis performed.");
+                            m_auto_follow = true;
+                            update_code_view();
+                        }
+                        
+                        std::stringstream out;
+                        out << "Assigned " << Terminal::HI_YELLOW << Strings::hex16(val16) << Terminal::RESET
+                            << " to " << Terminal::CYAN << target_upper << Terminal::RESET;
+                        log(out.str());
                     }
-
-                    std::stringstream out;
-                    out << "Assigned " << Terminal::HI_YELLOW << Strings::hex16((uint16_t)val) << Terminal::RESET
-                        << " to " << Terminal::CYAN << lhs << Terminal::RESET;
-                    log(out.str());
-                    if (m_auto_follow) update_code_view();
+                    // 2. Pamięć?
+                    else if (target.front() == '[' && target.back() == ']') {
+                        eval.assign(target, val); // Evaluator handles memory
+                        std::stringstream out;
+                        out << "Assigned " << Terminal::HI_YELLOW << Strings::hex8((uint8_t)val16) << Terminal::RESET
+                            << " to memory " << Terminal::CYAN << target << Terminal::RESET;
+                        log(out.str());
+                    }
+                    // 3. Symbol
+                    else {
+                        // Check for valid symbol name
+                        if (isdigit(target[0])) {
+                             log(Terminal::RED + "Error: Symbol name cannot start with a digit." + Terminal::RESET);
+                        } else {
+                            auto result = m_debugger.get_core().get_context().add_or_update_symbol(target, val16);
+                            
+                            if (result.result == Context::SymbolResult::Created) {
+                                log(Terminal::MAGENTA + "Defined NEW Symbol '" + target + "' = " + Strings::hex16(val16) + Terminal::RESET);
+                                
+                                // Fuzzy match check
+                                for (const auto& [addr, name] : m_debugger.get_core().get_context().labels) {
+                                    if (name != target && levenshtein_distance(target, name) <= 1) {
+                                        log(Terminal::YELLOW + "Warning: Did you mean '" + name + "'?" + Terminal::RESET);
+                                    }
+                                }
+                            } else {
+                                log(Terminal::YELLOW + "UPDATED Symbol '" + target + "': " + 
+                                    Strings::hex16(result.old_address) + " -> " + Strings::hex16(val16) + Terminal::RESET);
+                            }
+                            // Force refresh code view to show new label
+                            update_code_view();
+                        }
+                    }
+                    
+                    if (m_auto_follow && target_upper != "PC") update_code_view();
                 } catch (const std::exception& e) {
                     log(std::string(Terminal::RED) + "Error: " + e.what() + Terminal::RESET);
                 }
@@ -604,14 +828,14 @@ void Dashboard::setup_replxx() {
         
         auto bind_scroll = [&](char32_t key, int mem_delta, int code_delta, int stack_delta) {
             m_repl.bind_key(key, [this, mem_delta, code_delta, stack_delta](char32_t code) {
-                m_auto_follow = false;
                 if (m_focus == FOCUS_MEMORY) m_mem_view_addr += mem_delta;
                 else if (m_focus == FOCUS_CODE) {
+                    m_auto_follow = false;
                     if (code_delta < 0) {
                         m_code_view_addr = find_prev_instruction_pc(m_code_view_addr);
                     } else {
                         uint16_t temp = m_code_view_addr;
-                        m_debugger.get_vm().get_analyzer().parse_instruction(temp);
+                        m_debugger.get_core().get_analyzer().parse_instruction(temp);
                         m_code_view_addr = temp;
                     }
                 }
@@ -657,18 +881,20 @@ void Dashboard::print_help() {
         m_output_buffer << "   ? <expr>               Evaluate expression\n";
         m_output_buffer << "   <reg>=<val>            Set register value\n";
         m_output_buffer << "   [<addr>]=<val>         Set memory value\n";
+        m_output_buffer << "   symbols, sym [filter]  Show loaded symbols (e.g. start*)\n";
+        m_output_buffer << "   undef <sym>            Remove symbol (alias: del, kill)\n";
         m_output_buffer << "   q, quit                Exit debugger\n";
 }
 
 
 void Dashboard::print_dashboard() {
         Terminal::clear();
-        auto& vm = m_debugger.get_vm();
-        auto& cpu = vm.get_cpu();
+        auto& core = m_debugger.get_core();
+        auto& cpu = core.get_cpu();
         uint16_t pc = cpu.get_PC();
         const int terminal_width = 80;
         if (m_show_mem) {
-            MemoryView view(vm, m_mem_view_addr, m_mem_rows, m_focus == FOCUS_MEMORY);
+            MemoryView view(core, m_mem_view_addr, m_mem_rows, m_focus == FOCUS_MEMORY);
             auto lines = view.render();
             for (const auto& line : lines)
                 std::cout << line << "\n";
@@ -677,12 +903,12 @@ void Dashboard::print_dashboard() {
         std::vector<std::string> left_lines;
         std::vector<std::string> right_lines;
         if (m_show_regs) {
-            RegisterView view(vm, m_debugger.get_prev_state(), m_focus == FOCUS_REGS, m_debugger.get_tstates());
+            RegisterView view(core, m_debugger.get_prev_state(), m_focus == FOCUS_REGS, m_debugger.get_tstates());
             auto regs_lines = view.render();
             left_lines.insert(left_lines.end(), regs_lines.begin(), regs_lines.end());
         }
         if (m_show_stack) {
-            StackView view(vm, m_stack_view_addr, m_focus == FOCUS_STACK);
+            StackView view(core, m_stack_view_addr, m_focus == FOCUS_STACK);
             auto stack_lines = view.render();
             right_lines.insert(right_lines.end(), stack_lines.begin(), stack_lines.end());
         }
@@ -701,7 +927,7 @@ void Dashboard::print_dashboard() {
                 if (view_pc == pc) view_pc = highlight_pc;
             }
 
-            CodeView view(vm, view_pc, m_code_rows, highlight_pc, width, m_focus == FOCUS_CODE, m_debugger.get_last_pc(), m_debugger.has_history(), m_debugger.pc_moved());
+            CodeView view(core, view_pc, m_code_rows, highlight_pc, width, m_focus == FOCUS_CODE, m_debugger.get_last_pc(), m_debugger.has_history(), m_debugger.pc_moved());
             auto code_lines = view.render();
             left_lines.insert(left_lines.end(), code_lines.begin(), code_lines.end());
         }
@@ -713,7 +939,7 @@ void Dashboard::print_dashboard() {
                 
                 const auto& watches = m_debugger.get_watches();
                 for (uint16_t addr : watches) {
-                    uint8_t val = vm.get_memory().read(addr);
+                    uint8_t val = core.get_memory().read(addr);
                     std::stringstream ss;
                     ss << "  " << Strings::hex16(addr) << ": " << Terminal::HI_WHITE << Strings::hex8(val) << Terminal::RESET;
                     if (std::isprint(val)) ss << " (" << Terminal::HI_YELLOW << (char)val << Terminal::RESET << ")";
@@ -774,8 +1000,8 @@ void Dashboard::print_footer() {
 }
 
 uint16_t Dashboard::find_prev_instruction_pc(uint16_t target_addr) {
-    auto& analyzer = m_debugger.get_vm().get_analyzer();
-    auto& code_map = m_debugger.get_vm().get_code_map();
+    auto& analyzer = m_debugger.get_core().get_analyzer();
+    auto& code_map = m_debugger.get_core().get_code_map();
     
     // 1. Try execution history
     const auto& history = m_debugger.get_execution_history();
@@ -834,7 +1060,7 @@ uint16_t Dashboard::get_pc_window_start(uint16_t pc, int lines) {
 
 void Dashboard::update_code_view() {
     if (!m_auto_follow) return;
-    uint16_t pc = m_debugger.get_vm().get_cpu().get_PC();
+    uint16_t pc = m_debugger.get_core().get_cpu().get_PC();
     int offset = m_code_rows / 3;
     m_code_view_addr = get_pc_window_start(pc, offset);
 }
@@ -875,14 +1101,14 @@ int DebugEngine::run() {
             if (colon != std::string::npos) {
                 ep = ep.substr(0, colon);
             }
-            uint16_t pc = m_vm.parse_address(ep);
-            m_vm.get_cpu().set_PC(pc);
+            uint16_t pc = m_core.parse_address(ep);
+            m_core.get_cpu().set_PC(pc);
         } catch (const std::exception& e) {
             std::cerr << "Error parsing entry point: " << e.what() << "\n";
         }
     }
 
-    Debugger debugger(m_vm);
+    Debugger debugger(m_core);
     Dashboard dashboard(debugger, m_repl);
     dashboard.run();
     

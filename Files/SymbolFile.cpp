@@ -1,4 +1,5 @@
 #include "SymbolFile.h"
+#include "../Core/Core.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -13,16 +14,35 @@ static uint16_t parse_hex_addr(const std::string& s) {
 
 void SymbolFile::load_sym(const std::string& filename) {
     std::ifstream file(filename);
-    std::string line, label, dummy, valStr;
+    std::string line;
     while (std::getline(file, line)) {
         if (line.empty() || line[0] == ';') continue;
+
+        std::string comment;
+        size_t comment_pos = line.find(';');
+        if (comment_pos != std::string::npos) {
+            comment = line.substr(comment_pos + 1);
+            line = line.substr(0, comment_pos);
+            
+            size_t first = comment.find_first_not_of(" \t\r");
+            if (first != std::string::npos) {
+                size_t last = comment.find_last_not_of(" \t\r");
+                comment = comment.substr(first, (last - first + 1));
+            } else {
+                comment.clear();
+            }
+        }
+
         std::stringstream ss(line);
-        ss >> label >> dummy >> valStr; // LAB EQU VAL
-        if (dummy == "EQU" || dummy == "=") {
+        std::string label, dummy, valStr;
+        if ((ss >> label >> dummy >> valStr) && (dummy == "EQU" || dummy == "=")) {
             if (valStr.back() == 'H' || valStr.back() == 'h')
                 valStr.pop_back();
             uint16_t addr = parse_hex_addr(valStr);
             m_analyzer.context.add_label(addr, label);
+            if (!comment.empty()) {
+                m_analyzer.context.add_inline_comment(addr, comment);
+            }
         }
     }
 }
@@ -37,4 +57,18 @@ void SymbolFile::load_map(const std::string& filename) {
         if (!label.empty())
             m_analyzer.context.add_label(addr, label);
     }
+}
+
+bool SymbolFile::load(const std::string& filename) {
+    if (filename.find(".map") != std::string::npos) {
+        load_map(filename);
+        return true;
+    } else {
+        load_sym(filename);
+        return true;
+    }
+}
+
+std::vector<std::string> SymbolFile::get_extensions() const {
+    return { ".sym", ".map" };
 }

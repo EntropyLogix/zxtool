@@ -3,8 +3,9 @@
 
 #include <string>
 #include "../Core/Analyzer.h"
+#include "File.h"
 
-class SymbolFile {
+class SymbolFile : public IAuxiliaryFile {
 public:
     explicit SymbolFile(Analyzer& analyzer) : m_analyzer(analyzer) {}
 
@@ -13,6 +14,10 @@ public:
 
     // Format: "VALUE LABEL" (Simple map)
     void load_map(const std::string& filename);
+
+    // IFile implementation
+    bool load(const std::string& filename) override;
+    std::vector<std::string> get_extensions() const override;
 
 private:
     Analyzer& m_analyzer;

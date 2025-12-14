@@ -5,13 +5,13 @@
 #include <stdexcept>
 #include "../Utils/Strings.h"
 
-RunEngine::RunEngine(VirtualMachine& vm, const Options& options)
-    : m_vm(vm), m_options(options) {}
+RunEngine::RunEngine(Core& core, const Options& options)
+    : m_core(core), m_options(options) {}
 
 int RunEngine::run() {
-    auto& m_cpu = m_vm.get_cpu();
-    auto& m_memory = m_vm.get_memory();
-    auto& m_analyzer = m_vm.get_analyzer();
+    auto& m_cpu = m_core.get_cpu();
+    auto& m_memory = m_core.get_memory();
+    auto& m_analyzer = m_core.get_analyzer();
 
     long long runSteps = m_options.runSteps;
     if (!m_options.entryPointStr.empty()) {
@@ -24,7 +24,7 @@ int RunEngine::run() {
             } catch (...) {}
             ep = ep.substr(0, colon);
         }
-        m_cpu.set_PC(m_vm.parse_address(ep));
+        m_cpu.set_PC(m_core.parse_address(ep));
     }
 
     if (runSteps > 0) {
@@ -82,7 +82,7 @@ int RunEngine::run() {
         };
 
         if (m_options.dumpCodeStr == "ALL") {
-            for (const auto& block : m_vm.get_blocks()) {
+            for (const auto& block : m_core.get_blocks()) {
                 uint16_t addr = block.start_address;
                 uint16_t end_addr = addr + block.size;
                 std::cout << "--- Code Dump from " << Strings::format_hex(addr, 4) << " (" << std::dec << block.size << " bytes) ---\n";
@@ -100,10 +100,10 @@ int RunEngine::run() {
             size_t count = 16;
             size_t colon_pos = m_options.dumpCodeStr.find(':');
             if (colon_pos != std::string::npos) {
-                addr = m_vm.parse_address(m_options.dumpCodeStr.substr(0, colon_pos));
+                addr = m_core.parse_address(m_options.dumpCodeStr.substr(0, colon_pos));
                 count = std::stoul(m_options.dumpCodeStr.substr(colon_pos + 1), nullptr, 0);
             } else {
-                addr = m_vm.parse_address(m_options.dumpCodeStr);
+                addr = m_core.parse_address(m_options.dumpCodeStr);
             }
             for (size_t i = 0; i < count; ++i) {
                 uint16_t temp_pc = addr;
@@ -118,7 +118,7 @@ int RunEngine::run() {
     if (!m_options.dumpMemStr.empty()) {
         if (m_options.dumpMemStr == "ALL") {
             std::cout << "File loaded successfully.\n";
-            for (const auto& block : m_vm.get_blocks()) {
+            for (const auto& block : m_core.get_blocks()) {
                 uint16_t addr = block.start_address;
                 size_t len = block.size;
                 std::cout << "--- Memory Dump from " << Strings::format_hex(addr, 4) << " (" << std::dec << len << " bytes) ---\n";
@@ -147,10 +147,10 @@ int RunEngine::run() {
         size_t len = 256;
 
         if (colon_pos != std::string::npos) {
-            addr = m_vm.parse_address(m_options.dumpMemStr.substr(0, colon_pos));
+            addr = m_core.parse_address(m_options.dumpMemStr.substr(0, colon_pos));
             len = std::stoul(m_options.dumpMemStr.substr(colon_pos + 1), nullptr, 0);
         } else {
-            addr = m_vm.parse_address(m_options.dumpMemStr);
+            addr = m_core.parse_address(m_options.dumpMemStr);
         }
 
         std::cout << "File loaded successfully.\n";

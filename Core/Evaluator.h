@@ -1,5 +1,5 @@
 #pragma once
-#include "VirtualMachine.h"
+#include "Core.h"
 #include <string>
 #include <vector>
 #include <stack>
@@ -11,7 +11,7 @@
 
 class Evaluator {
 public:
-    Evaluator(VirtualMachine& vm);
+    Evaluator(Core& core);
 
     // Zwraca double (np. 2.5)
     double evaluate(const std::string& expression);
@@ -19,19 +19,21 @@ public:
     // Przyjmuje double, ale rzutuje go wewnętrznie na uint16_t przy zapisie
     void assign(const std::string& target, double value);
 
+    static bool is_register(const std::string& name);
+
 private:
-    VirtualMachine& m_vm;
+    Core& m_core;
 
     struct OperatorInfo {
         int precedence;
         bool left_assoc;
         bool is_unary;
-        std::function<double(VirtualMachine&, const std::vector<double>&)> apply;
+        std::function<double(Core&, const std::vector<double>&)> apply;
     };
 
     struct FunctionInfo {
         int num_args;
-        std::function<double(VirtualMachine&, const std::vector<double>&)> apply;
+        std::function<double(Core&, const std::vector<double>&)> apply;
     };
 
     enum class TokenType {
@@ -62,5 +64,4 @@ private:
 
     double resolve_symbol(const std::string& name);
     void set_register_value(const std::string& name, double value);
-    bool is_register(const std::string& name);
 };

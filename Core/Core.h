@@ -1,5 +1,5 @@
-#ifndef __VIRTUAL_MACHINE_H__
-#define __VIRTUAL_MACHINE_H__
+#ifndef __CORE_H__
+#define __CORE_H__
 
 #include "Memory.h"
 #include "Z80.h"
@@ -7,26 +7,25 @@
 #include "Assembler.h"
 #include "Z80Analyze.h"
 #include "Z80Assemble.h"
+#include "Context.h"
+#include "../Files/FileManager.h"
 #include <vector>
 #include <string>
 #include <filesystem>
 
-class VirtualMachine : public IFileProvider {
+class Core : public IFileProvider {
 public:
     using CpuType = Z80<Z80Analyzer<Memory>::CodeMapProfiler, Z80StandardEvents, Z80Analyzer<Memory>::CodeMapProfiler>;
+    
+    using Block = LoadedBlock;
 
-    struct Block {
-        uint16_t start_address;
-        uint16_t size;
-        std::string description;
-    };
-
-    VirtualMachine();
+    Core();
 
     // Wczytuje pliki z listy (format "plik" lub "plik:adres")
     // Automatycznie szuka i ładuje pliki .map, .sym, .ctl, .lst
     void load_input_files(const std::vector<std::string>& inputs);
     void reset();
+    void print_symbols(const std::string& filter = "");
 
     Memory& get_memory() { return m_memory; }
     CpuType& get_cpu() { return m_cpu; }
@@ -34,6 +33,7 @@ public:
     Z80Analyzer<Memory>::CodeMapProfiler& get_profiler() { return m_profiler; }
 
     Analyzer& get_analyzer() { return m_analyzer; }
+    Context& get_context() { return m_context; }
     ToolAssembler& get_assembler() { return m_assembler; }
     const std::vector<Block>& get_blocks() const { return m_blocks; }
 
@@ -50,13 +50,15 @@ private:
     Z80Analyzer<Memory>::CodeMapProfiler m_profiler;
     CpuType m_cpu;
     ToolAssembler m_assembler;
+    Context m_context;
     Analyzer m_analyzer;
     std::vector<Block> m_blocks;
     std::vector<std::filesystem::path> m_current_path_stack;
+    FileManager m_file_manager;
 
     // Helper methods
     void process_file(const std::string& path, uint16_t address);
     void load_sidecar_files(const std::string& path);
 };
 
-#endif // __VIRTUAL_MACHINE_H__
+#endif // __CORE_H__

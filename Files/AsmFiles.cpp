@@ -53,3 +53,18 @@ std::vector<typename ToolAssembler::BlockInfo> AsmFiles::assemble(const std::str
         return {};
     }
 }
+
+LoadResult AsmFiles::load(const std::string& filename, std::vector<LoadedBlock>& blocks, uint16_t address) {
+    auto asm_blocks = assemble(filename, address, false);
+    if (asm_blocks.empty()) return {false, std::nullopt};
+    
+    uint16_t start_addr = asm_blocks.front().start_address;
+    for (const auto& b : asm_blocks) {
+        blocks.push_back({b.start_address, b.size, "Assembled from " + filename});
+    }
+    return {true, start_addr};
+}
+
+std::vector<std::string> AsmFiles::get_extensions() const {
+    return { ".asm" };
+}

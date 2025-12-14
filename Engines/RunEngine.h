@@ -2,14 +2,15 @@
 #define __RUNENGINE_H__
 
 #include "Engine.h"
+#include "../Core/Core.h"
 
 class RunEngine : public Engine {
 public:
-    RunEngine(VirtualMachine& vm, const Options& options);
+    RunEngine(Core& core, const Options& options);
     int run() override;
 
 private:
-    VirtualMachine& m_vm;
+    Core& m_core;
     const Options& m_options;
 };
 

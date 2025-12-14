@@ -9,7 +9,7 @@
 #include "../Engines/DisassembleEngine.h"
 #include "../Engines/DebugEngine.h"
 
-Application::Application() : m_vm(), m_options(nullptr) {
+Application::Application() : m_core(), m_options(nullptr) {
 }
 
 int Application::run(CommandLine& commands) {
@@ -23,19 +23,19 @@ int Application::run(CommandLine& commands) {
 
         switch (options.mode) {
             case Options::ToolMode::Assemble:
-                engine = std::make_unique<AssembleEngine>(m_vm, options);
+                engine = std::make_unique<AssembleEngine>(m_core, options);
                 break;
 
             case Options::ToolMode::Run:
-                engine = std::make_unique<RunEngine>(m_vm, options);
+                engine = std::make_unique<RunEngine>(m_core, options);
                 break;
 
             case Options::ToolMode::Disassemble:
-                engine = std::make_unique<DisassembleEngine>(m_vm, options);
+                engine = std::make_unique<DisassembleEngine>(m_core, options);
                 break;
 
             case Options::ToolMode::Debug:
-                engine = std::make_unique<DebugEngine>(m_vm, options);
+                engine = std::make_unique<DebugEngine>(m_core, options);
                 break;
 
             case Options::ToolMode::Unknown:
@@ -61,5 +61,5 @@ void Application::load_input_files() {
     const auto& options = *m_options;
     
     // Project handles parsing "file:addr" strings and loading sidecars
-    m_vm.load_input_files(options.inputFiles);
+    m_core.load_input_files(options.inputFiles);
 }

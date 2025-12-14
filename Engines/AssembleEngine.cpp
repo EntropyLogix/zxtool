@@ -4,17 +4,17 @@
 #include <algorithm>
 #include <cctype>
 
-AssembleEngine::AssembleEngine(VirtualMachine& vm, const Options& options)
-    : m_vm(vm), m_options(options) {}
+AssembleEngine::AssembleEngine(Core& core, const Options& options)
+    : m_core(core), m_options(options) {}
 
 int AssembleEngine::run() {
     if (!m_options.outputFile.empty()) {
-        save_output_file(m_options.outputFile, m_options.outputFormat, m_vm.get_blocks());
+        save_output_file(m_options.outputFile, m_options.outputFormat, m_core.get_blocks());
     }
     return 0;
 }
 
-void AssembleEngine::save_output_file(const std::string& outputFile, const std::string& format, const std::vector<VirtualMachine::Block>& blocks) {
+void AssembleEngine::save_output_file(const std::string& outputFile, const std::string& format, const std::vector<Core::Block>& blocks) {
     if (outputFile.empty()) {
         return;
     }
@@ -30,7 +30,7 @@ void AssembleEngine::save_output_file(const std::string& outputFile, const std::
     }
 }
 
-void AssembleEngine::save_bin(const std::string& outputFile, const std::vector<VirtualMachine::Block>& blocks) {
+void AssembleEngine::save_bin(const std::string& outputFile, const std::vector<Core::Block>& blocks) {
     if (blocks.empty()) {
         std::cerr << "Warning: No memory blocks to save. File '" << outputFile << "' not created." << std::endl;
         return;
@@ -41,6 +41,6 @@ void AssembleEngine::save_bin(const std::string& outputFile, const std::vector<V
 
     std::ofstream file(outputFile, std::ios::binary);
     for (uint16_t i = 0; i < first_block.size; ++i) {
-        file.put(m_vm.get_memory().peek(first_block.start_address + i));
+        file.put(m_core.get_memory().peek(first_block.start_address + i));
     }
 }

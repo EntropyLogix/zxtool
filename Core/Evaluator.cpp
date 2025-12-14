@@ -8,41 +8,41 @@
 #include <random>
 #include <stack>
 
-Evaluator::Evaluator(VirtualMachine& vm) : m_vm(vm) {}
+Evaluator::Evaluator(Core& core) : m_core(core) {}
 
 const std::map<std::string, Evaluator::OperatorInfo>& Evaluator::get_operators() {
     static const std::map<std::string, OperatorInfo> ops = {
-        {"_",   {100, false, true,  [](VirtualMachine&, const std::vector<double>& args) { return -args[0]; }}},
-        {"!",   {100, false, true,  [](VirtualMachine&, const std::vector<double>& args) { return (double)(!args[0]); }}},
-        {"~",   {100, false, true,  [](VirtualMachine&, const std::vector<double>& args) { return (double)(~(uint32_t)args[0]); }}},
-        {"@",   {100, false, true,  [](VirtualMachine& vm, const std::vector<double>& args) { 
-                    return (double)vm.get_memory().read((uint16_t)args[0]); 
+        {"_",   {100, false, true,  [](Core&, const std::vector<double>& args) { return -args[0]; }}},
+        {"!",   {100, false, true,  [](Core&, const std::vector<double>& args) { return (double)(!args[0]); }}},
+        {"~",   {100, false, true,  [](Core&, const std::vector<double>& args) { return (double)(~(uint32_t)args[0]); }}},
+        {"@",   {100, false, true,  [](Core& core, const std::vector<double>& args) { 
+                    return (double)core.get_memory().read((uint16_t)args[0]); 
                 }}},
-        {"*",   {90, true,  false, [](VirtualMachine&, const std::vector<double>& args) { return args[0] * args[1]; }}},
-        {"/",   {90, true,  false, [](VirtualMachine&, const std::vector<double>& args) { return (args[1] != 0) ? args[0] / args[1] : 0; }}},
-        {"%",   {90, true,  false, [](VirtualMachine&, const std::vector<double>& args) { return std::fmod(args[0], args[1]); }}},
-        {"+",   {80, true,  false, [](VirtualMachine&, const std::vector<double>& args) { return args[0] + args[1]; }}},
-        {"-",   {80, true,  false, [](VirtualMachine&, const std::vector<double>& args) { return args[0] - args[1]; }}},
-        {"<<",  {70, true,  false, [](VirtualMachine&, const std::vector<double>& args) { return (double)((int)args[0] << (int)args[1]); }}},
-        {">>",  {70, true,  false, [](VirtualMachine&, const std::vector<double>& args) { return (double)((int)args[0] >> (int)args[1]); }}},
-        {"&",   {60, true,  false, [](VirtualMachine&, const std::vector<double>& args) { return (double)((int)args[0] & (int)args[1]); }}},
-        {"^",   {50, true,  false, [](VirtualMachine&, const std::vector<double>& args) { return (double)((int)args[0] ^ (int)args[1]); }}},
-        {"|",   {40, true,  false, [](VirtualMachine&, const std::vector<double>& args) { return (double)((int)args[0] | (int)args[1]); }}},
+        {"*",   {90, true,  false, [](Core&, const std::vector<double>& args) { return args[0] * args[1]; }}},
+        {"/",   {90, true,  false, [](Core&, const std::vector<double>& args) { return (args[1] != 0) ? args[0] / args[1] : 0; }}},
+        {"%",   {90, true,  false, [](Core&, const std::vector<double>& args) { return std::fmod(args[0], args[1]); }}},
+        {"+",   {80, true,  false, [](Core&, const std::vector<double>& args) { return args[0] + args[1]; }}},
+        {"-",   {80, true,  false, [](Core&, const std::vector<double>& args) { return args[0] - args[1]; }}},
+        {"<<",  {70, true,  false, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] << (int)args[1]); }}},
+        {">>",  {70, true,  false, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] >> (int)args[1]); }}},
+        {"&",   {60, true,  false, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] & (int)args[1]); }}},
+        {"^",   {50, true,  false, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] ^ (int)args[1]); }}},
+        {"|",   {40, true,  false, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] | (int)args[1]); }}},
     };
     return ops;
 }
 
 const std::map<std::string, Evaluator::FunctionInfo>& Evaluator::get_functions() {
     static const std::map<std::string, FunctionInfo> funcs = {
-        {"SIN",  {1, [](VirtualMachine&, const std::vector<double>& args) { return std::sin(args[0]); }}},
-        {"COS",  {1, [](VirtualMachine&, const std::vector<double>& args) { return std::cos(args[0]); }}},
-        {"SQRT", {1, [](VirtualMachine&, const std::vector<double>& args) { return std::sqrt(args[0]); }}},
-        {"MIN",  {2, [](VirtualMachine&, const std::vector<double>& args) { return std::min(args[0], args[1]); }}},
-        {"MAX",  {2, [](VirtualMachine&, const std::vector<double>& args) { return std::max(args[0], args[1]); }}},
-        {"RND",  {0, [](VirtualMachine&, const std::vector<double>&) { return (double)rand() / RAND_MAX; }}},
-        {"ABS",  {1, [](VirtualMachine&, const std::vector<double>& args) { return std::abs(args[0]); }}},
-        {"LOW",  {1, [](VirtualMachine&, const std::vector<double>& args) { return (double)((int)args[0] & 0xFF); }}},
-        {"HIGH", {1, [](VirtualMachine&, const std::vector<double>& args) { return (double)(((int)args[0] >> 8) & 0xFF); }}}
+        {"SIN",  {1, [](Core&, const std::vector<double>& args) { return std::sin(args[0]); }}},
+        {"COS",  {1, [](Core&, const std::vector<double>& args) { return std::cos(args[0]); }}},
+        {"SQRT", {1, [](Core&, const std::vector<double>& args) { return std::sqrt(args[0]); }}},
+        {"MIN",  {2, [](Core&, const std::vector<double>& args) { return std::min(args[0], args[1]); }}},
+        {"MAX",  {2, [](Core&, const std::vector<double>& args) { return std::max(args[0], args[1]); }}},
+        {"RND",  {0, [](Core&, const std::vector<double>&) { return (double)rand() / RAND_MAX; }}},
+        {"ABS",  {1, [](Core&, const std::vector<double>& args) { return std::abs(args[0]); }}},
+        {"LOW",  {1, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] & 0xFF); }}},
+        {"HIGH", {1, [](Core&, const std::vector<double>& args) { return (double)(((int)args[0] >> 8) & 0xFF); }}}
     };
     return funcs;
 }
@@ -75,17 +75,11 @@ void Evaluator::assign(const std::string& target_in, double value) {
         
         // Zapisz do pamięci (Z80 jest 8-bitowe, więc bierzemy modulo 256)
         uint8_t byte_val = static_cast<uint8_t>(static_cast<int>(value) & 0xFF);
-        m_vm.get_memory().poke(address, byte_val);
+        m_core.get_memory().poke(address, byte_val);
         return;
     }
 
-    // 2. Rejestr
-    if (is_register(target)) {
-        set_register_value(target, value);
-        return;
-    }
-
-    throw std::runtime_error("Invalid assignment target: '" + target_in + "'");
+    set_register_value(target, value);
 }
 
 // --- Tokenizer ---
@@ -146,15 +140,20 @@ std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
                 if (func_it != get_functions().end()) {
                     tokens.push_back({TokenType::FUNCTION, 0, upper_word, nullptr, &func_it->second});
                 }
-                else if (is_register(upper_word)) {
-                    tokens.push_back({TokenType::NUMBER, resolve_symbol(upper_word)});
-                } else {
+                else {
+                    // Try to resolve as symbol or register
+                    try {
+                        double val = resolve_symbol(word); // Use original case for labels
+                        tokens.push_back({TokenType::NUMBER, val});
+                        continue;
+                    } catch (...) { /* Not a symbol/register, try as number below */ }
+
                     // Sprawdzamy czy to hex/prefixy (te zwracają uint16_t, rzutujemy na double)
                     // Jeśli to czysty decimal z kropką (np. "2.5"), parse_address tego nie obsłuży standardowo,
                     // ale zakładamy, że na razie wprowadzamy adresy/inty.
                     // Dla pełnego wsparcia float w input (np. "2.5") można tu dodać std::stod.
                     try {
-                        tokens.push_back({TokenType::NUMBER, static_cast<double>(m_vm.parse_address(word))}); 
+                        tokens.push_back({TokenType::NUMBER, static_cast<double>(m_core.parse_address(word))}); 
                     } catch(...) {
                         // Fallback dla prostych floatów w stringu, jeśli parse_address rzuci wyjątek
                         try { tokens.push_back({TokenType::NUMBER, std::stod(word)}); } catch(...) { throw std::runtime_error("Unknown token: " + word); }
@@ -248,7 +247,7 @@ double Evaluator::execute_rpn(const std::vector<Token>& rpn) {
             }
             std::reverse(args.begin(), args.end());
             
-            stack.push_back(info->apply(m_vm, args));
+            stack.push_back(info->apply(m_core, args));
         }
         else if (token.type == TokenType::FUNCTION) {
             const auto* info = token.func_info;
@@ -262,7 +261,7 @@ double Evaluator::execute_rpn(const std::vector<Token>& rpn) {
             }
             std::reverse(args.begin(), args.end());
             
-            stack.push_back(info->apply(m_vm, args));
+            stack.push_back(info->apply(m_core, args));
         }
     }
     return stack.empty() ? 0.0 : stack.back();
@@ -279,36 +278,46 @@ bool Evaluator::is_register(const std::string& name) {
 
 // Zwracamy double
 double Evaluator::resolve_symbol(const std::string& name) {
-    auto& cpu = m_vm.get_cpu();
+    // 1. Check context labels (case-sensitive)
+    for (const auto& [addr, label] : m_core.get_context().labels) {
+        if (label == name) return static_cast<double>(addr);
+    }
+
+    // 2. Check registers (case-insensitive)
+    std::string upper_name = name;
+    std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(), ::toupper);
+
+    auto& cpu = m_core.get_cpu();
     uint16_t val = 0;
-    if (name == "PC") val = cpu.get_PC();
-    else if (name == "SP") val = cpu.get_SP();
-    else if (name == "HL") val = cpu.get_HL();
-    else if (name == "DE") val = cpu.get_DE();
-    else if (name == "BC") val = cpu.get_BC();
-    else if (name == "AF") val = cpu.get_AF();
-    else if (name == "IX") val = cpu.get_IX();
-    else if (name == "IY") val = cpu.get_IY();
-    else if (name == "A") val = cpu.get_AF() >> 8;
-    else if (name == "B") val = cpu.get_BC() >> 8;
-    else if (name == "C") val = cpu.get_BC() & 0xFF;
-    else if (name == "D") val = cpu.get_DE() >> 8;
-    else if (name == "E") val = cpu.get_DE() & 0xFF;
-    else if (name == "H") val = cpu.get_HL() >> 8;
-    else if (name == "L") val = cpu.get_HL() & 0xFF;
-    else if (name == "I") val = cpu.get_I();
-    else if (name == "R") val = cpu.get_R();
-    else if (name == "IXH") val = cpu.get_IX() >> 8;
-    else if (name == "IXL") val = cpu.get_IX() & 0xFF;
-    else if (name == "IYH") val = cpu.get_IY() >> 8;
-    else if (name == "IYL") val = cpu.get_IY() & 0xFF;
+    if (upper_name == "PC") val = cpu.get_PC();
+    else if (upper_name == "SP") val = cpu.get_SP();
+    else if (upper_name == "HL") val = cpu.get_HL();
+    else if (upper_name == "DE") val = cpu.get_DE();
+    else if (upper_name == "BC") val = cpu.get_BC();
+    else if (upper_name == "AF") val = cpu.get_AF();
+    else if (upper_name == "IX") val = cpu.get_IX();
+    else if (upper_name == "IY") val = cpu.get_IY();
+    else if (upper_name == "A") val = cpu.get_AF() >> 8;
+    else if (upper_name == "B") val = cpu.get_BC() >> 8;
+    else if (upper_name == "C") val = cpu.get_BC() & 0xFF;
+    else if (upper_name == "D") val = cpu.get_DE() >> 8;
+    else if (upper_name == "E") val = cpu.get_DE() & 0xFF;
+    else if (upper_name == "H") val = cpu.get_HL() >> 8;
+    else if (upper_name == "L") val = cpu.get_HL() & 0xFF;
+    else if (upper_name == "I") val = cpu.get_I();
+    else if (upper_name == "R") val = cpu.get_R();
+    else if (upper_name == "IXH") val = cpu.get_IX() >> 8;
+    else if (upper_name == "IXL") val = cpu.get_IX() & 0xFF;
+    else if (upper_name == "IYH") val = cpu.get_IY() >> 8;
+    else if (upper_name == "IYL") val = cpu.get_IY() & 0xFF;
+    else throw std::runtime_error("Unknown symbol: " + name);
     
     return static_cast<double>(val);
 }
 
 // Przyjmujemy double, rzutujemy na uint16_t
 void Evaluator::set_register_value(const std::string& name, double val_dbl) {
-    auto& cpu = m_vm.get_cpu();
+    auto& cpu = m_core.get_cpu();
     
     // Rzutujemy double na uint16_t (ucinamy część ułamkową)
     uint16_t val = static_cast<uint16_t>(val_dbl);

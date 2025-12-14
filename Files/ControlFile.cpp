@@ -1,7 +1,9 @@
 #include "ControlFile.h"
+#include "../Core/Core.h"
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <regex>
 
 static uint16_t parse_hex_addr(const std::string& s) {
     size_t dollar = s.find('$');
@@ -20,7 +22,16 @@ static int parse_int_len(const std::string& s) {
     } catch (...) { return 1; }
 }
 
-void ControlFile::load(const std::string& filename) {
+static std::string clean_skool_tags(const std::string& text) {
+    std::string result = text;
+    // Replace #R$XXXX with $XXXX
+    static const std::regex r_tag("#R\\$([0-9A-Fa-f]+)");
+    result = std::regex_replace(result, r_tag, "\\$$1");
+
+    return result;
+}
+
+bool ControlFile::load(const std::string& filename) {
     auto& map = m_analyzer.m_map;
     if (map.size() < 0x10000) map.resize(0x10000, 0);
     
@@ -68,17 +79,23 @@ void ControlFile::load(const std::string& filename) {
 
         switch (type) {
             case 'c': // Code
-                m_analyzer.set_map_type(map, addr, Analyzer::TYPE_CODE);
-                if (!remainder.empty()) m_analyzer.context.add_block_desc(addr, remainder);
+                m_analyzer.set_map_type(map, addr, Analyzer::TYPE_CODE); // This should probably be add_inline_comment
+                if (!remainder.empty()) m_analyzer.context.add_inline_comment(addr, clean_skool_tags(remainder));
                 break;
             case 'C': // Comment
-                 if (!remainder.empty()) m_analyzer.context.add_inline_comment(addr, remainder);
-                 break;
+                if (!remainder.empty()) {
+                    size_t first = remainder.find_first_not_of(" \t\r");
+                    if (first != std::string::npos) {
+                        size_t last = remainder.find_last_not_of(" \t\r");
+                        m_analyzer.context.add_inline_comment(addr, clean_skool_tags(remainder.substr(first, (last - first + 1))));
+                    }
+                }
+                break;
             case 'b': case 'B': // Byte
             case 's': case 'S': // Space
             case 'g':           // Game state
                 set_range(Analyzer::TYPE_BYTE);
-                if (!remainder.empty() && type == 'b') m_analyzer.context.add_block_desc(addr, remainder);
+                if (!remainder.empty() && type == 'b') m_analyzer.context.add_block_desc(addr, clean_skool_tags(remainder));
                 break;
             case 'w': case 'W': // Word
                 set_range(Analyzer::TYPE_WORD);
@@ -100,11 +117,16 @@ void ControlFile::load(const std::string& filename) {
                 break;
             }
             case 'D': case 'N': // Description
-                m_analyzer.context.add_block_desc(addr, remainder);
+                m_analyzer.context.add_block_desc(addr, clean_skool_tags(remainder));
                 break;
             case 'R': // Register info
-                m_analyzer.context.add_block_desc(addr, "[Regs: " + remainder + "]");
+                m_analyzer.context.add_block_desc(addr, "[Regs: " + clean_skool_tags(remainder) + "]");
                 break;
         }
     }
+    return true;
+}
+
+std::vector<std::string> ControlFile::get_extensions() const {
+    return { ".ctl", ".txt" };
 }

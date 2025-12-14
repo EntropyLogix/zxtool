@@ -7,12 +7,12 @@
 #include <stdexcept>
 #include <vector>
 
-#include "VirtualMachine.h"
+#include "Core.h"
 
 class CommandLine;
 struct Options;
 
-using MemoryBlock = VirtualMachine::Block;
+using MemoryBlock = Core::Block;
 
 class Application {
 public:
@@ -21,17 +21,17 @@ public:
 
     int run(CommandLine& commands);
 
-    auto& get_cpu() {  return m_vm.get_cpu(); }
-    Memory& get_memory() { return m_vm.get_memory(); }
-    Analyzer& get_analyzer() { return m_vm.get_analyzer(); }
-    ToolAssembler& get_assembler() { return m_vm.get_assembler(); }
-    Memory& get_bus() { return m_vm.get_memory(); }
-    VirtualMachine& get_vm() { return m_vm; }
+    auto& get_cpu() {  return m_core.get_cpu(); }
+    Memory& get_memory() { return m_core.get_memory(); }
+    Analyzer& get_analyzer() { return m_core.get_analyzer(); }
+    ToolAssembler& get_assembler() { return m_core.get_assembler(); }
+    Memory& get_bus() { return m_core.get_memory(); }
+    Core& get_core() { return m_core; }
 
 private:
     void load_input_files();
 
-    VirtualMachine m_vm;
+    Core m_core;
     const Options* m_options = nullptr;
 };
 

@@ -2,7 +2,7 @@
 #define __DEBUGENGINE_H__
 
 #include "Engine.h"
-#include "../Core/VirtualMachine.h"
+#include "../Core/Core.h"
 #include "../Cmd/Options.h"
 #include "../Utils/Terminal.h"
 #include <replxx.hxx>
@@ -16,21 +16,21 @@
 
 class DebugView {
 public:
-    DebugView(VirtualMachine& vm, bool has_focus) : m_vm(vm), m_has_focus(has_focus) {}
+    DebugView(Core& core, bool has_focus) : m_core(core), m_has_focus(has_focus) {}
     virtual ~DebugView() = default;
     virtual std::vector<std::string> render() = 0;
 
 protected:
     std::string format_header(const std::string& title, const std::string& extra = "") const;
 
-    VirtualMachine& m_vm;
+    Core& m_core;
     bool m_has_focus;
 };
 
 class MemoryView : public DebugView {
 public:
-    MemoryView(VirtualMachine& vm, uint16_t start_addr, int rows, bool has_focus) 
-        : DebugView(vm, has_focus), m_start_addr(start_addr), m_rows(rows) {}
+    MemoryView(Core& core, uint16_t start_addr, int rows, bool has_focus) 
+        : DebugView(core, has_focus), m_start_addr(start_addr), m_rows(rows) {}
     std::vector<std::string> render() override;
 private:
     uint16_t m_start_addr;
@@ -39,19 +39,19 @@ private:
 
 class RegisterView : public DebugView {
 public:
-    RegisterView(VirtualMachine& vm, const VirtualMachine::CpuType::State& prev, bool has_focus, uint64_t tstates) 
-        : DebugView(vm, has_focus), m_prev(prev), m_tstates(tstates) {}
+    RegisterView(Core& core, const Core::CpuType::State& prev, bool has_focus, uint64_t tstates) 
+        : DebugView(core, has_focus), m_prev(prev), m_tstates(tstates) {}
     std::vector<std::string> render() override;
 private:
     std::string format_flags(uint8_t f, uint8_t prev_f);
-    const VirtualMachine::CpuType::State& m_prev;
+    const Core::CpuType::State& m_prev;
     uint64_t m_tstates;
 };
 
 class StackView : public DebugView {
 public:
-    StackView(VirtualMachine& vm, uint16_t view_addr, bool has_focus) 
-        : DebugView(vm, has_focus), m_view_addr(view_addr) {}
+    StackView(Core& core, uint16_t view_addr, bool has_focus) 
+        : DebugView(core, has_focus), m_view_addr(view_addr) {}
     std::vector<std::string> render() override;
 private:
     uint16_t m_view_addr;
@@ -59,8 +59,8 @@ private:
 
 class CodeView : public DebugView {
 public:
-    CodeView(VirtualMachine& vm, uint16_t start_addr, int rows, uint16_t pc, int width, bool has_focus, uint16_t last_pc, bool has_history, bool pc_moved) 
-        : DebugView(vm, has_focus), m_start_addr(start_addr), m_rows(rows), m_pc(pc), m_width(width), m_last_pc(last_pc), m_has_history(has_history), m_pc_moved(pc_moved) {}
+    CodeView(Core& core, uint16_t start_addr, int rows, uint16_t pc, int width, bool has_focus, uint16_t last_pc, bool has_history, bool pc_moved) 
+        : DebugView(core, has_focus), m_start_addr(start_addr), m_rows(rows), m_pc(pc), m_width(width), m_last_pc(last_pc), m_has_history(has_history), m_pc_moved(pc_moved) {}
     std::vector<std::string> render() override;
 private:
     uint16_t m_start_addr;
@@ -84,19 +84,19 @@ public:
         uint16_t pc;
     };
 
-    Debugger(VirtualMachine& vm) : m_vm(vm) { m_prev_state = m_vm.get_cpu().save_state(); }
+    Debugger(Core& core) : m_core(core) { m_prev_state = m_core.get_cpu().save_state(); }
     ~Debugger() = default;
 
     void set_logger(Logger logger) { m_logger = logger; }
-    VirtualMachine& get_vm() { return m_vm; }
+    Core& get_core() { return m_core; }
     const std::vector<Breakpoint>& get_breakpoints() const { return m_breakpoints; }
     const std::vector<uint16_t>& get_watches() const { return m_watches; }
     const std::deque<HistoryItem>& get_execution_history() const { return m_execution_history; }
     uint16_t get_last_pc() const { return m_last_pc; }
     bool has_history() const { return m_has_history; }
     bool pc_moved() const { return m_pc_moved; }
-    uint64_t get_tstates() const { return m_vm.get_cpu().get_ticks(); }
-    const VirtualMachine::CpuType::State& get_prev_state() const { return m_prev_state; }
+    uint64_t get_tstates() const { return m_core.get_cpu().get_ticks(); }
+    const Core::CpuType::State& get_prev_state() const { return m_prev_state; }
 
     void add_breakpoint(uint16_t addr) { m_breakpoints.push_back({addr, true}); }
     void remove_breakpoint(uint16_t addr) {
@@ -113,7 +113,7 @@ public:
     void cont();
 
 private:
-    VirtualMachine& m_vm;
+    Core& m_core;
     Logger m_logger;
     std::vector<Breakpoint> m_breakpoints;
     std::vector<uint16_t> m_watches;
@@ -121,7 +121,7 @@ private:
     uint16_t m_last_pc = 0;
     bool m_has_history = false;
     bool m_pc_moved = false;
-    VirtualMachine::CpuType::State m_prev_state;
+    Core::CpuType::State m_prev_state;
 
     void record_history(uint16_t pc);
     void log(const std::string& msg) { if (m_logger) m_logger(msg); }
@@ -174,13 +174,13 @@ private:
 
 class DebugEngine : public Engine {
 public:
-    DebugEngine(VirtualMachine& vm, const Options& options) : m_vm(vm), m_options(options) {}
+    DebugEngine(Core& core, const Options& options) : m_core(core), m_options(options) {}
     virtual ~DebugEngine() = default;
     
     int run() override;
 
 private:
-    VirtualMachine& m_vm;
+    Core& m_core;
     const Options& m_options;
     replxx::Replxx m_repl;
 };
