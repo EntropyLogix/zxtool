@@ -271,7 +271,7 @@ std::vector<std::string> CodeView::render() {
         if (is_pc)
             ss << Terminal::HI_WHITE << Terminal::BOLD << Strings::hex16((uint16_t)line.address) << rst << ": ";
         else
-            ss << Terminal::GRAY << Strings::hex16((uint16_t)line.address) << rst << ": ";
+            ss << Terminal::CYAN << Strings::hex16((uint16_t)line.address) << rst << ": ";
 
         // ZONE 3: Hex (9-18)
         std::stringstream hex_ss;
@@ -286,10 +286,13 @@ std::vector<std::string> CodeView::render() {
         std::string hex_str = hex_ss.str();
         ss << Terminal::GRAY << hex_str << rst;
         int hex_len = (int)hex_str.length();
-        int hex_pad = 10 - hex_len;
+        int hex_pad = 9 - hex_len;
         if (hex_pad > 0) ss << std::string(hex_pad, ' ');
 
-        // ZONE 4: Mnemonic (19-34)
+        // GAP (18-19)
+        ss << "  ";
+
+        // ZONE 4: Mnemonic (20-34)
         std::stringstream mn_ss;
         if (is_pc)
             mn_ss << Terminal::BOLD << Terminal::WHITE;
@@ -326,7 +329,7 @@ std::vector<std::string> CodeView::render() {
         
         std::string mn_str = mn_ss.str();
         int mn_len = (int)Strings::ansi_len(mn_str);
-        if (mn_len > 16) {
+        if (mn_len > 15) {
              std::string clipped;
              int visible = 0;
              bool in_ansi = false;
@@ -336,7 +339,7 @@ std::vector<std::string> CodeView::render() {
                      clipped += c;
                      if (c == 'm' || c == 'K') in_ansi = false;
                  } else {
-                     if (visible < 13) {
+                     if (visible < 12) {
                          clipped += c;
                          visible++;
                      } else {
@@ -348,7 +351,7 @@ std::vector<std::string> CodeView::render() {
              ss << clipped;
         } else {
             ss << mn_str;
-            ss << std::string(16 - mn_len, ' ');
+            ss << std::string(15 - mn_len, ' ');
         }
 
         // ZONE 5: Comment (35-79)
@@ -508,6 +511,26 @@ void Dashboard::validate_focus() {
         }
 }
 
+static std::string preprocess_expr(const std::string& input) {
+    std::string result;
+    result.reserve(input.length());
+    for (size_t i = 0; i < input.length(); ++i) {
+        if (input[i] == '$') {
+            bool is_hex = false;
+            if (i + 1 < input.length()) {
+                char next = input[i+1];
+                if (std::isxdigit(static_cast<unsigned char>(next))) {
+                    is_hex = true;
+                }
+            }
+            result += (is_hex ? "$" : "PC");
+        } else {
+            result += input[i];
+        }
+    }
+    return result;
+}
+
 void Dashboard::handle_command(const std::string& input) {
         std::stringstream ss(input);
         std::string cmd;
@@ -625,6 +648,7 @@ void Dashboard::handle_command(const std::string& input) {
         else if (cmd == "?" || cmd == "calc" || cmd == "eval") {
             std::string expr;
             std::getline(ss, expr);
+            expr = preprocess_expr(expr);
             if (expr.empty()) {
                 log("Usage: ? <expression> (e.g. ? HL / 2)");
             } else {
@@ -786,6 +810,8 @@ void Dashboard::handle_command(const std::string& input) {
             if (is_assignment) {
                 std::string lhs = input.substr(0, eq_pos);
                 std::string rhs = input.substr(eq_pos + 1);
+                lhs = preprocess_expr(lhs);
+                rhs = preprocess_expr(rhs);
                 try {
                     Evaluator eval(m_debugger.get_core());
                     double val = eval.evaluate(rhs); 
