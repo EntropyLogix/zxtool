@@ -5,6 +5,7 @@
 #include <fstream>
 #include <algorithm>
 #include <vector>
+#include <type_traits>
 #include "../Utils/Strings.h"
 
 DisassembleEngine::DisassembleEngine(VirtualMachine& vm, const Options& options)
@@ -79,7 +80,7 @@ int DisassembleEngine::run() {
             }
 
             uint16_t prev_pc = pc;
-            auto lines = analyzer.parse_code(pc, batch);
+            auto lines = analyzer.parse_code(pc, batch, nullptr);
             if (lines.empty()) break;
 
             for (const auto& line : lines) {
@@ -87,6 +88,11 @@ int DisassembleEngine::run() {
                     pc = line.address;
                     break;
                 }
+
+                using AnalyzerType = std::decay_t<decltype(analyzer)>;
+                using CodeLine = typename AnalyzerType::CodeLine;
+                using Operand = typename CodeLine::Operand;
+                using Type = typename CodeLine::Type;
 
                 out << Strings::format_hex(line.address, 4) << "  ";
                 std::stringstream bytes_ss;
@@ -98,24 +104,56 @@ int DisassembleEngine::run() {
                 out << std::setw(12) << label_part;
                 out << std::setw(6) << line.mnemonic << " ";
                 if (!line.operands.empty()) {
-                    using Operand = typename std::decay_t<decltype(line)>::Operand;
                     for (size_t i = 0; i < line.operands.size(); ++i) {
                         if (i > 0) out << ", ";
                         const auto& op = line.operands[i];
                         switch (op.type) {
-                            case Operand::REG8: case Operand::REG16: case Operand::CONDITION: out << op.s_val; break;
-                            case Operand::IMM8: out << Strings::format_hex(op.num_val, 2); break;
-                            case Operand::IMM16: out << Strings::format_hex(op.num_val, 4); break;
-                            case Operand::MEM_IMM16: out << "(" << Strings::format_hex(op.num_val, 4) << ")"; break;
-                            case Operand::MEM_REG16: out << "(" << op.s_val << ")"; break;
-                            case Operand::MEM_INDEXED: out << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << std::dec << (int)op.offset << ")"; break;
-                            case Operand::STRING: out << "\"" << op.s_val << "\""; break;
-                            default: break;
+                            case Operand::REG8: 
+                            case Operand::REG16: 
+                            case Operand::CONDITION: 
+                                out << op.s_val; 
+                                break;
+                            case Operand::IMM8: 
+                                out << "$" << Strings::format_hex(op.num_val, 2); 
+                                break;
+                            case Operand::IMM16: 
+                                out << "$" << Strings::format_hex(op.num_val, 4); 
+                                break;
+                            case Operand::MEM_IMM16: 
+                                out << "($" << Strings::format_hex(op.num_val, 4) << ")"; 
+                                break;
+                            case Operand::PORT_IMM8: 
+                                out << "($" << Strings::format_hex(op.num_val, 2) << ")"; 
+                                break;
+                            case Operand::MEM_REG16: 
+                                out << "(" << op.s_val << ")"; 
+                                break;
+                            case Operand::MEM_INDEXED: 
+                                out << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << std::dec << (int)op.offset << ")"; 
+                                break;
+                            case Operand::STRING: 
+                                out << "\"" << op.s_val << "\""; 
+                                break;
+                            case Operand::CHAR_LITERAL: 
+                                out << "'" << (char)op.num_val << "'"; 
+                                break;
+                            default: 
+                                break;
                         }
                     }
                 }
                 out << std::endl;
                 lines_printed++;
+
+                bool is_ret = (line.type & Type::RETURN);
+                bool is_uncond_jump = (line.type & Type::JUMP) && 
+                                      line.mnemonic != "DJNZ" && 
+                                      (line.operands.empty() || line.operands[0].type != Operand::CONDITION);
+
+                if (is_ret || is_uncond_jump) {
+                    out << "\n";
+                }
+
                 if (job.limit > 0 && lines_printed >= job.limit) break;
             }
             if (pc <= prev_pc) break;

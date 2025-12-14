@@ -1,4 +1,5 @@
 #include "DebugEngine.h"
+#include "../Core/Evaluator.h"
 #include <replxx.hxx>
 #include <iostream>
 #include <iomanip>
@@ -522,7 +523,80 @@ void Dashboard::handle_command(const std::string& input) {
                 } catch(...) { log("Invalid address."); }
             } else log("Usage: code <addr> [count]");
         }
-        else { log("Unknown command."); }
+        else if (cmd == "?" || cmd == "calc" || cmd == "eval") {
+            std::string expr;
+            std::getline(ss, expr);
+            if (expr.empty()) {
+                log("Usage: ? <expression> (e.g. ? HL / 2)");
+            } else {
+                try {
+                    Evaluator eval(m_debugger.get_vm());
+                    double result = eval.evaluate(expr);
+                    
+                    uint16_t as_int = static_cast<uint16_t>(result);
+                    
+                    std::stringstream out;
+                    out << Terminal::CYAN << expr << Terminal::RESET 
+                        << " = " << Terminal::HI_YELLOW << Strings::hex16(as_int) << Terminal::RESET
+                        << " (Dec: " << as_int;
+                    
+                    if (result != std::floor(result)) {
+                        out << ", Float: " << std::fixed << std::setprecision(2) << result;
+                    }
+                    out << ")";
+                    
+                    log(out.str());
+                } catch (const std::exception& e) {
+                    log(std::string(Terminal::RED) + "Eval Error: " + e.what() + Terminal::RESET);
+                }
+            }
+        }
+        else {
+            size_t eq_pos = input.find('=');
+            bool is_assignment = (eq_pos != std::string::npos);
+
+            if (is_assignment) {
+                char next_char = (eq_pos + 1 < input.length()) ? input[eq_pos+1] : 0;
+                char prev_char = (eq_pos > 0) ? input[eq_pos-1] : 0;
+                if (next_char == '=' || prev_char == '>' || prev_char == '<' || prev_char == '!') {
+                    is_assignment = false; 
+                }
+            }
+
+            if (is_assignment) {
+                std::string lhs = input.substr(0, eq_pos);
+                std::string rhs = input.substr(eq_pos + 1);
+                try {
+                    Evaluator eval(m_debugger.get_vm());
+                    double val = eval.evaluate(rhs); 
+                    eval.assign(lhs, val);
+
+                    std::string target = lhs;
+                    target.erase(std::remove_if(target.begin(), target.end(), ::isspace), target.end());
+                    std::transform(target.begin(), target.end(), target.begin(), ::toupper);
+
+                    if (target == "PC") {
+                        uint16_t new_pc = (uint16_t)val;
+                        auto& vm = m_debugger.get_vm();
+                        vm.get_profiler().reset();
+                        vm.get_analyzer().parse_code(new_pc, 0, &vm.get_code_map(), false, true);
+                        log("PC changed. History reset and static analysis performed.");
+                        m_auto_follow = true;
+                        update_code_view();
+                    }
+
+                    std::stringstream out;
+                    out << "Assigned " << Terminal::HI_YELLOW << Strings::hex16((uint16_t)val) << Terminal::RESET
+                        << " to " << Terminal::CYAN << lhs << Terminal::RESET;
+                    log(out.str());
+                    if (m_auto_follow) update_code_view();
+                } catch (const std::exception& e) {
+                    log(std::string(Terminal::RED) + "Error: " + e.what() + Terminal::RESET);
+                }
+            } else {
+                log("Unknown command.");
+            }
+        }
 }
 
 void Dashboard::setup_replxx() {
@@ -580,6 +654,9 @@ void Dashboard::print_help() {
         m_output_buffer << "   f, follow              Center view on PC\n";
         m_output_buffer << "   data <addr> [n]        Mark as data\n";
         m_output_buffer << "   code <addr> [n]        Mark as code\n";
+        m_output_buffer << "   ? <expr>               Evaluate expression\n";
+        m_output_buffer << "   <reg>=<val>            Set register value\n";
+        m_output_buffer << "   [<addr>]=<val>         Set memory value\n";
         m_output_buffer << "   q, quit                Exit debugger\n";
 }
 
@@ -733,6 +810,14 @@ uint16_t Dashboard::find_prev_instruction_pc(uint16_t target_addr) {
         uint16_t temp_addr = candidate_addr;
         analyzer.parse_instruction(temp_addr);
         if (temp_addr == target_addr) {
+            bool overlap = false;
+            for (int k = 1; k < offset; ++k) {
+                if (code_map[(uint16_t)(candidate_addr + k)] & Z80Analyzer<Memory>::FLAG_CODE_START) {
+                    overlap = true;
+                    break;
+                }
+            }
+            if (overlap) continue;
             return candidate_addr;
         }
     }

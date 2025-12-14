@@ -83,7 +83,25 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
         // --- Przetwarzanie ---
         
         if (is_code) {
+            uint16_t instr_start = current_pc;
             CodeLine line = this->parse_instruction(current_pc); // pc przesuwane przez ref wewnątrz
+            
+            if (use_map && !(map[instr_start] & Z80Analyzer<Memory>::FLAG_CODE_START)) {
+                bool collision = false;
+                for (uint16_t k = instr_start + 1; k < current_pc; ++k) {
+                    if (map[k] & Z80Analyzer<Memory>::FLAG_CODE_START) {
+                        collision = true;
+                        break;
+                    }
+                }
+                if (collision) {
+                    uint16_t db_addr = instr_start;
+                    result.push_back(this->parse_db(db_addr, 1));
+                    pc = db_addr;
+                    pc &= 0xFFFF;
+                    continue;
+                }
+            }
             
             // Wzbogać linię o komentarz z metadanych
             std::string comment = context.get_inline_comment(line.address);
@@ -95,8 +113,9 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
             }
             
             if (line.bytes.empty()) { // Fail-safe
-                result.push_back(this->parse_db(current_pc, 1));
-                pc++;
+                uint16_t db_addr = instr_start;
+                result.push_back(this->parse_db(db_addr, 1));
+                pc = db_addr;
                 pc &= 0xFFFF;
             } else {
                 result.push_back(line);
