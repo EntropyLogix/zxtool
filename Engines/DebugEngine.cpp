@@ -501,7 +501,7 @@ void Dashboard::validate_focus() {
             (m_focus == FOCUS_STACK && !m_show_stack) ||
             (m_focus == FOCUS_CODE && !m_show_code) ||
             (m_focus == FOCUS_WATCH && !m_show_watch) ||
-            (m_focus == FOCUS_BREAKPOINTS && !m_show_breakpoints)
+            (m_focus == FOCUS_BREAKPOINTS && !m_show_watch)
         )) {
             m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT);
             attempts++;
@@ -546,17 +546,16 @@ void Dashboard::handle_command(const std::string& input) {
                 else if (panel == "regs" || panel == "registers") m_show_regs = !m_show_regs;
                 else if (panel == "code") m_show_code = !m_show_code;
                 else if (panel == "stack") m_show_stack = !m_show_stack;
-                else if (panel == "watch" || panel == "w") m_show_watch = !m_show_watch;
-                else if (panel == "breakpoints" || panel == "bp") m_show_breakpoints = !m_show_breakpoints;
-                else log("Usage: toggle <mem|regs|code|stack|watch|breakpoints>");
-            } else log("Usage: toggle <mem|regs|code|stack|watch|breakpoints>");
+                else if (panel == "status" || panel == "s") m_show_watch = !m_show_watch;
+                else log("Usage: toggle <mem|regs|code|stack|status>");
+            } else log("Usage: toggle <mem|regs|code|stack|status>");
         }
         else if (cmd == "b" || cmd == "break") {
             std::string arg; 
             if(ss>>arg) { 
                 try { 
                     m_debugger.add_breakpoint(m_debugger.get_core().parse_address(arg)); 
-                    if (m_debugger.get_breakpoints().size() == 1) m_show_breakpoints = true;
+                    if (m_debugger.get_breakpoints().size() == 1) m_show_watch = true;
                     log("Breakpoint set."); 
                 }
                 catch(...) { log("Invalid address."); }
@@ -906,7 +905,7 @@ void Dashboard::print_help() {
         m_output_buffer << " [SYSTEM]\n";
         m_output_buffer << "   h, help                Show this message\n";
         m_output_buffer << "   lines <type> <n>       Set lines (code/mem/stack)\n";
-        m_output_buffer << "   toggle <panel>         Toggle panel visibility\n";
+        m_output_buffer << "   toggle <panel>         Toggle panel (mem/regs/code/stack/status)\n";
         m_output_buffer << "   b, break <addr>        Set breakpoint\n";
         m_output_buffer << "   d, delete <addr>       Delete breakpoint\n";
         m_output_buffer << "   w, watch <addr>        Add watch address\n";
@@ -968,14 +967,12 @@ void Dashboard::print_dashboard() {
             for (const auto& l : code_lines) std::cout << l << "\n";
         }
 
-        if (m_show_watch || m_show_breakpoints) {
-            print_separator();
-        }
-
         if (m_show_watch) {
+            print_separator();
+            std::cout << (m_focus == FOCUS_WATCH || m_focus == FOCUS_BREAKPOINTS ? Terminal::YELLOW : Terminal::GREEN) << "[STATUS]" << Terminal::RESET << "\n";
+
             std::stringstream ss;
             std::string label = " WATCH: ";
-            if (m_focus == FOCUS_WATCH) ss << Terminal::BG_DARK_GRAY;
             ss << Terminal::CYAN << label << Terminal::RESET;
             
             const auto& watches = m_debugger.get_watches();
@@ -1005,16 +1002,13 @@ void Dashboard::print_dashboard() {
             }
             if (items.empty()) ss << Terminal::GRAY << "No items." << Terminal::RESET;
             std::cout << ss.str() << "\n";
-        }
-
-        if (m_show_breakpoints) {
-            std::stringstream ss;
-            std::string label = " BREAK: ";
-            if (m_focus == FOCUS_BREAKPOINTS) ss << Terminal::BG_DARK_GRAY;
+            
+            ss.str(""); ss.clear();
+            label = " BREAK: ";
             ss << Terminal::RED << label << Terminal::RESET;
             
             const auto& breakpoints = m_debugger.get_breakpoints();
-            std::vector<std::string> items;
+            items.clear();
             for (const auto& bp : breakpoints) {
                 std::stringstream item_ss;
                 item_ss << (bp.enabled ? "*" : "o") << Strings::hex16(bp.addr);
@@ -1023,9 +1017,9 @@ void Dashboard::print_dashboard() {
                 items.push_back(item_ss.str());
             }
             
-            int max_len = 80;
-            int current_len = (int)label.length();
-            bool first = true;
+            max_len = 80;
+            current_len = (int)label.length();
+            first = true;
             for (size_t i = 0; i < items.size(); ++i) {
                 std::string sep = first ? "" : ", ";
                 if (current_len + sep.length() + items[i].length() > (size_t)(max_len - 10)) {
@@ -1038,15 +1032,12 @@ void Dashboard::print_dashboard() {
             }
             if (items.empty()) ss << Terminal::GRAY << "No items." << Terminal::RESET;
             std::cout << ss.str() << "\n";
-        }
-
-        if (m_show_watch || m_show_breakpoints) {
             print_separator();
         }
 
         bool has_output = (m_output_buffer.tellp() > 0);
         print_output_buffer();
-        if (has_output || (!m_show_watch && !m_show_breakpoints)) print_separator();
+        if (has_output || !m_show_watch) print_separator();
         print_footer();
         std::cout << std::flush;
 }
