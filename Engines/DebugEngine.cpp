@@ -603,7 +603,7 @@ static std::string preprocess_expr(const std::string& input) {
 static double eval_number(Core& core, const std::string& arg) {
     std::string expr = preprocess_expr(arg);
     Evaluator eval(core);
-    return eval.evaluate(expr);
+    return eval.evaluate(expr).as_number();
 }
 static uint16_t eval_addr(Core& core, const std::string& arg) {
     return static_cast<uint16_t>(eval_number(core, arg));
@@ -664,7 +664,7 @@ void Dashboard::perform_assignment(const std::string& lhs_in, const std::string&
             // 1. Calculate Start Address
             std::string addr_expr = target.substr(1, target.size() - 2);
             Evaluator eval(m_debugger.get_core());
-            uint16_t start_addr = static_cast<uint16_t>(eval.evaluate(addr_expr));
+            uint16_t start_addr = static_cast<uint16_t>(eval.evaluate(addr_expr).as_number());
             
             // 2. Extract instruction
             size_t open_paren = rhs_trimmed_raw.find('(');
@@ -743,7 +743,7 @@ void Dashboard::perform_assignment(const std::string& lhs_in, const std::string&
             // 1. Calculate Start Address
             std::string addr_expr = target.substr(1, target.size() - 2);
             Evaluator eval(m_debugger.get_core());
-            uint16_t start_addr = static_cast<uint16_t>(eval.evaluate(addr_expr));
+            uint16_t start_addr = static_cast<uint16_t>(eval.evaluate(addr_expr).as_number());
             
             // 2. Parse Byte List
             std::string list_content = rhs_trimmed.substr(1, rhs_trimmed.size() - 2);
@@ -766,7 +766,7 @@ void Dashboard::perform_assignment(const std::string& lhs_in, const std::string&
             uint16_t current_addr = start_addr;
             for (const auto& el : elements) {
                 if (el.find_first_not_of(" \t") == std::string::npos) continue;
-                double val = eval.evaluate(el);
+                double val = eval.evaluate(el).as_number();
                 uint8_t byte_val = static_cast<uint8_t>(static_cast<int>(val));
                 m_debugger.get_core().get_memory().write(current_addr, byte_val);
                 current_addr++;
@@ -787,7 +787,7 @@ void Dashboard::perform_assignment(const std::string& lhs_in, const std::string&
 
     try {
         Evaluator eval(m_debugger.get_core());
-        double val = eval.evaluate(rhs); 
+        double val = eval.evaluate(rhs).as_number(); 
         uint16_t val16 = static_cast<uint16_t>(val);
 
         std::string target = lhs;
@@ -817,7 +817,7 @@ void Dashboard::perform_assignment(const std::string& lhs_in, const std::string&
         else if (target.front() == '[' && target.back() == ']') {
             // Manual assignment to capture address for re-analysis and avoid double evaluation side-effects
             std::string addr_expr = target.substr(1, target.size() - 2);
-            uint16_t addr = static_cast<uint16_t>(eval.evaluate(addr_expr));
+            uint16_t addr = static_cast<uint16_t>(eval.evaluate(addr_expr).as_number());
             m_debugger.get_core().get_memory().write(addr, (uint8_t)val16);
             
             invalidate_area(addr, 1);
@@ -1238,21 +1238,25 @@ void Dashboard::handle_command(const std::string& input) {
             } else {
                 try {
                     Evaluator eval(m_debugger.get_core());
-                    double result = eval.evaluate(expr);
+                    Value val = eval.evaluate(expr);
                     
-                    uint16_t as_int = static_cast<uint16_t>(result);
-                    
-                    std::stringstream out;
-                    out << Terminal::CYAN << expr << Terminal::RESET 
-                        << " = " << Terminal::HI_YELLOW << Strings::hex16(as_int) << Terminal::RESET
-                        << " (Dec: " << as_int;
-                    
-                    if (result != std::floor(result)) {
-                        out << ", Float: " << std::fixed << std::setprecision(2) << result;
+                    if (val.is_number()) {
+                        double result = val.as_number();
+                        uint16_t as_int = static_cast<uint16_t>(result);
+                        
+                        std::stringstream out;
+                        out << Terminal::CYAN << expr << Terminal::RESET 
+                            << " = " << Terminal::HI_YELLOW << Strings::hex16(as_int) << Terminal::RESET
+                            << " (Dec: " << as_int;
+                        
+                        if (result != std::floor(result)) {
+                            out << ", Float: " << std::fixed << std::setprecision(2) << result;
+                        }
+                        out << ")";
+                        log(out.str());
+                    } else {
+                        log(val.as_string());
                     }
-                    out << ")";
-                    
-                    log(out.str());
                 } catch (const std::exception& e) {
                     log(std::string(Terminal::RED) + "Eval Error: " + e.what() + Terminal::RESET);
                 }

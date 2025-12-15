@@ -2,6 +2,7 @@
 #include <sstream>
 #include <iomanip>
 #include <type_traits>
+#include <charconv>
 
 template <typename T>
 std::string Strings::format_hex(T value, int width) {
@@ -46,4 +47,74 @@ std::string Strings::pad_ansi(const std::string& s, size_t width, char fill) {
     size_t vis = ansi_len(s);
     if (vis >= width) return s;
     return s + std::string(width - vis, fill);
+}
+
+bool Strings::is_number(const std::string& s, int32_t& out_value) {
+    std::string str = s;
+    const char* whitespace = " \t";
+    str.erase(0, str.find_first_not_of(whitespace));
+    str.erase(str.find_last_not_of(whitespace) + 1);
+
+    if (str.empty())
+        return false;
+    const char* start = str.data();
+    const char* end = str.data() + str.size();
+    bool is_negative = false;
+    if (start < end && *start == '-') {
+        is_negative = true;
+        start++;
+    } else if (start < end && *start == '+')
+        start++;
+    int base = 10;
+    if ((end - start) > 2 && (*start == '0' && (*(start + 1) == 'x' || *(start + 1) == 'X'))) {
+        start += 2;
+        base = 16;
+    } else if ((end - start) > 2 && (*start == '0' && (*(start + 1) == 'b' || *(start + 1) == 'B'))) {
+        start += 2;
+        base = 2;
+    } else if ((end - start) > 1 && *start == '$') {
+        start += 1;
+        base = 16;
+    } else if ((end - start) > 1 && *start == '%') {
+        start += 1;
+        base = 2;
+    } else if ((end - start) > 0) {
+        char last_char = *(end - 1);
+        if (last_char == 'H' || last_char == 'h') {
+            end -= 1;
+            base = 16;
+        } else if (last_char == 'B' || last_char == 'b') {
+            end -= 1;
+            base = 2;
+        }
+    }
+    if (start == end)
+        return false;
+    auto result = std::from_chars(start, end, out_value, base);
+    bool success = (result.ec == std::errc() && result.ptr == end);
+    if (success && is_negative)
+        out_value = -out_value;
+    return success;
+}
+
+bool Strings::parse_double(const std::string& s, double& out_value) {
+    int32_t i_val;
+    if (is_number(s, i_val)) {
+        out_value = static_cast<double>(i_val);
+        return true;
+    }
+    
+    std::string str = s;
+    const char* whitespace = " \t";
+    str.erase(0, str.find_first_not_of(whitespace));
+    str.erase(str.find_last_not_of(whitespace) + 1);
+    if (str.empty()) return false;
+
+    try {
+        size_t idx;
+        out_value = std::stod(str, &idx);
+        return idx == str.length();
+    } catch (...) {
+        return false;
+    }
 }

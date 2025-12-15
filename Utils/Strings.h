@@ -11,6 +11,8 @@ public:
     static std::string hex16(uint16_t v);
     static size_t ansi_len(const std::string& s);
     static std::string pad_ansi(const std::string& s, size_t width, char fill = ' ');
+    static bool is_number(const std::string& s, int32_t& out_value);
+    static bool parse_double(const std::string& s, double& out_value);
 };
 
 #endif//__STRINGS_H__

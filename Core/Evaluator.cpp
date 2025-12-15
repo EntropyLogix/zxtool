@@ -7,58 +7,105 @@
 #include <cmath> // Dla fmod jeśli będziesz chciał modulo
 #include <random>
 #include <stack>
+#include <variant>
+#include <iomanip>
 
 Evaluator::Evaluator(Core& core) : m_core(core) {}
 
 const std::map<std::string, Evaluator::OperatorInfo>& Evaluator::get_operators() {
     static const std::map<std::string, OperatorInfo> ops = {
-        {"_",   {100, false, true,  [](Core&, const std::vector<double>& args) { return -args[0]; }}},
-        {"!",   {100, false, true,  [](Core&, const std::vector<double>& args) { return (double)(!args[0]); }}},
-        {"~",   {100, false, true,  [](Core&, const std::vector<double>& args) { return (double)(~(uint32_t)args[0]); }}},
-        {"@",   {100, false, true,  [](Core& core, const std::vector<double>& args) { 
-                    return (double)core.get_memory().read((uint16_t)args[0]); 
+        {"_",   {100, false, true,  [](Core&, const std::vector<Value>& args) { return -args[0].as_number(); }}},
+        {"!",   {100, false, true,  [](Core&, const std::vector<Value>& args) { return (double)(!args[0].as_number()); }}},
+        {"~",   {100, false, true,  [](Core&, const std::vector<Value>& args) { return (double)(~(uint32_t)args[0].as_number()); }}},
+        {"@",   {100, false, true,  [](Core& core, const std::vector<Value>& args) { 
+                    return (double)core.get_memory().read((uint16_t)args[0].as_number()); 
                 }}},
-        {"++",  {100, false, true,  [](Core&, const std::vector<double>& args) { return args[0] + 1; }}},
-        {"--",  {100, false, true,  [](Core&, const std::vector<double>& args) { return args[0] - 1; }}},
-        {"*",   {90, true,  false, [](Core&, const std::vector<double>& args) { return args[0] * args[1]; }}},
-        {"/",   {90, true,  false, [](Core&, const std::vector<double>& args) { return (args[1] != 0) ? args[0] / args[1] : 0; }}},
-        {"%",   {90, true,  false, [](Core&, const std::vector<double>& args) { return std::fmod(args[0], args[1]); }}},
-        {"+",   {80, true,  false, [](Core&, const std::vector<double>& args) { return args[0] + args[1]; }}},
-        {"-",   {80, true,  false, [](Core&, const std::vector<double>& args) { return args[0] - args[1]; }}},
-        {"<<",  {70, true,  false, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] << (int)args[1]); }}},
-        {">>",  {70, true,  false, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] >> (int)args[1]); }}},
-        {"&",   {60, true,  false, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] & (int)args[1]); }}},
-        {"^",   {50, true,  false, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] ^ (int)args[1]); }}},
-        {"|",   {40, true,  false, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] | (int)args[1]); }}},
+        {"++",  {100, false, true,  [](Core&, const std::vector<Value>& args) { return args[0].as_number() + 1; }}},
+        {"--",  {100, false, true,  [](Core&, const std::vector<Value>& args) { return args[0].as_number() - 1; }}},
+        {"*",   {90, true,  false, [](Core&, const std::vector<Value>& args) { return args[0].as_number() * args[1].as_number(); }}},
+        {"/",   {90, true,  false, [](Core&, const std::vector<Value>& args) { 
+                    double div = args[1].as_number();
+                    return (div != 0) ? args[0].as_number() / div : 0; 
+                }}},
+        {"%",   {90, true,  false, [](Core&, const std::vector<Value>& args) { return std::fmod(args[0].as_number(), args[1].as_number()); }}},
+        {"+",   {80, true,  false, [](Core&, const std::vector<Value>& args) { 
+                    if (args[0].is_string() || args[1].is_string()) {
+                        return Value(args[0].as_string() + args[1].as_string());
+                    }
+                    return Value(args[0].as_number() + args[1].as_number()); 
+                }}},
+        {"-",   {80, true,  false, [](Core&, const std::vector<Value>& args) { return args[0].as_number() - args[1].as_number(); }}},
+        {"<<",  {70, true,  false, [](Core&, const std::vector<Value>& args) { return (double)((int)args[0].as_number() << (int)args[1].as_number()); }}},
+        {">>",  {70, true,  false, [](Core&, const std::vector<Value>& args) { return (double)((int)args[0].as_number() >> (int)args[1].as_number()); }}},
+        {"&",   {60, true,  false, [](Core&, const std::vector<Value>& args) { return (double)((int)args[0].as_number() & (int)args[1].as_number()); }}},
+        {"^",   {50, true,  false, [](Core&, const std::vector<Value>& args) { return (double)((int)args[0].as_number() ^ (int)args[1].as_number()); }}},
+        {"|",   {40, true,  false, [](Core&, const std::vector<Value>& args) { return (double)((int)args[0].as_number() | (int)args[1].as_number()); }}},
     };
     return ops;
 }
 
 const std::map<std::string, Evaluator::FunctionInfo>& Evaluator::get_functions() {
     static const std::map<std::string, FunctionInfo> funcs = {
-        {"SIN",  {1, [](Core&, const std::vector<double>& args) { return std::sin(args[0]); }}},
-        {"COS",  {1, [](Core&, const std::vector<double>& args) { return std::cos(args[0]); }}},
-        {"SQRT", {1, [](Core&, const std::vector<double>& args) { return std::sqrt(args[0]); }}},
-        {"MIN",  {2, [](Core&, const std::vector<double>& args) { return std::min(args[0], args[1]); }}},
-        {"MAX",  {2, [](Core&, const std::vector<double>& args) { return std::max(args[0], args[1]); }}},
-        {"RND",  {0, [](Core&, const std::vector<double>&) { return (double)rand() / RAND_MAX; }}},
-        {"ABS",  {1, [](Core&, const std::vector<double>& args) { return std::abs(args[0]); }}},
-        {"LOW",  {1, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] & 0xFF); }}},
-        {"HIGH", {1, [](Core&, const std::vector<double>& args) { return (double)(((int)args[0] >> 8) & 0xFF); }}},
-        {"WORD", {2, [](Core&, const std::vector<double>& args) { return (double)((((int)args[0] & 0xFF) << 8) | ((int)args[1] & 0xFF)); }}},
-        {"BIT",  {2, [](Core&, const std::vector<double>& args) { return (double)(((int)args[1] >> (int)args[0]) & 1); }}}
+        {"SIN",  {1, [](Core&, const std::vector<Value>& args) { return std::sin(args[0].as_number()); }}},
+        {"COS",  {1, [](Core&, const std::vector<Value>& args) { return std::cos(args[0].as_number()); }}},
+        {"SQRT", {1, [](Core&, const std::vector<Value>& args) { return std::sqrt(args[0].as_number()); }}},
+        {"MIN",  {2, [](Core&, const std::vector<Value>& args) { return std::min(args[0].as_number(), args[1].as_number()); }}},
+        {"MAX",  {2, [](Core&, const std::vector<Value>& args) { return std::max(args[0].as_number(), args[1].as_number()); }}},
+        {"RND",  {0, [](Core&, const std::vector<Value>&) { return (double)rand() / RAND_MAX; }}},
+        {"ABS",  {1, [](Core&, const std::vector<Value>& args) { return std::abs(args[0].as_number()); }}},
+        {"LOW",  {1, [](Core&, const std::vector<Value>& args) { return (double)((int)args[0].as_number() & 0xFF); }}},
+        {"HIGH", {1, [](Core&, const std::vector<Value>& args) { return (double)(((int)args[0].as_number() >> 8) & 0xFF); }}},
+        {"WORD", {2, [](Core&, const std::vector<Value>& args) { return (double)((((int)args[0].as_number() & 0xFF) << 8) | ((int)args[1].as_number() & 0xFF)); }}},
+        {"BIT",  {2, [](Core&, const std::vector<Value>& args) { return (double)(((int)args[1].as_number() >> (int)args[0].as_number()) & 1); }}},
+        // New functions for strings and arrays
+        {"STR",  {1, [](Core&, const std::vector<Value>& args) { return args[0].as_string(); }}},
+        {"VAL",  {1, [](Core&, const std::vector<Value>& args) { 
+                    try { return std::stod(args[0].as_string()); } catch(...) { return 0.0; } 
+                }}},
+        {"LEN",  {1, [](Core&, const std::vector<Value>& args) { 
+                    if (args[0].is_string()) return (double)args[0].as_string().length();
+                    if (args[0].is_array()) return (double)args[0].as_array().size();
+                    return 0.0;
+                }}},
+        {"ARRAY",{ -1, [](Core&, const std::vector<Value>& args) { return args; } }}, // Variable args
+        {"GET",  {2, [](Core&, const std::vector<Value>& args) { 
+                    if (args[0].is_array()) {
+                        size_t idx = (size_t)args[1].as_number();
+                        const auto& arr = args[0].as_array();
+                        if (idx < arr.size()) return arr[idx];
+                    }
+                    return Value(0.0);
+                }}}
+        ,{"ASM",  {1, [](Core& core, const std::vector<Value>& args) {
+            std::string code = args[0].as_string();
+            std::map<std::string, uint16_t> symbols;
+            for (const auto& [addr, name] : core.get_context().labels) {
+                symbols[name] = addr;
+            }
+            LineAssembler assembler;
+            std::vector<uint8_t> bytes;
+            uint16_t pc = core.get_cpu().get_PC();
+            assembler.assemble(code, symbols, pc, bytes);
+            std::vector<Value> res_arr;
+            for (uint8_t b : bytes) {
+                res_arr.push_back(Value((double)b));
+            }
+            return Value(res_arr);
+        }}}
     };
     return funcs;
 }
 
-double Evaluator::evaluate(const std::string& expression) {
-    if (expression.empty()) return 0.0;
+// NOTE: Return type changed from double to Value
+Value Evaluator::evaluate(const std::string& expression) {
+    if (expression.empty()) return Value(0.0);
     auto tokens = tokenize(expression);
     auto rpn = shunting_yard(tokens);
     return execute_rpn(rpn);
 }
 
-void Evaluator::assign(const std::string& target_in, double value) {
+// NOTE: value type changed from double to Value
+void Evaluator::assign(const std::string& target_in, Value value) {
     std::string target = target_in;
     
     // 1. Czyszczenie: usuń spacje i zamień na wielkie litery
@@ -74,12 +121,20 @@ void Evaluator::assign(const std::string& target_in, double value) {
         std::string inner_expr = target.substr(1, target.size() - 2);
         
         // REKURENCJA: Oblicz adres docelowy używając tego samego ewaluatora!
-        double address_dbl = evaluate(inner_expr);
+        double address_dbl = evaluate(inner_expr).as_number();
         uint16_t address = static_cast<uint16_t>(address_dbl);
         
         // Zapisz do pamięci (Z80 jest 8-bitowe, więc bierzemy modulo 256)
-        uint8_t byte_val = static_cast<uint8_t>(static_cast<int>(value) & 0xFF);
-        m_core.get_memory().poke(address, byte_val);
+        if (value.is_array()) {
+            const auto& arr = value.as_array();
+            for (size_t i = 0; i < arr.size(); ++i) {
+                uint8_t byte_val = static_cast<uint8_t>(static_cast<int>(arr[i].as_number()) & 0xFF);
+                m_core.get_memory().poke(address + i, byte_val);
+            }
+        } else {
+            uint8_t byte_val = static_cast<uint8_t>(static_cast<int>(value.as_number()) & 0xFF);
+            m_core.get_memory().poke(address, byte_val);
+        }
         return;
     }
 
@@ -94,6 +149,19 @@ std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
     
     while (i < expr.length()) {
         if (std::isspace(expr[i])) { i++; continue; }
+
+        // String literals
+        if (expr[i] == '"') {
+            i++;
+            std::string str_val;
+            while (i < expr.length() && expr[i] != '"') {
+                str_val += expr[i];
+                i++;
+            }
+            if (i < expr.length()) i++;
+            tokens.push_back({TokenType::NUMBER, Value(str_val)}); // Reusing NUMBER as LITERAL
+            continue;
+        }
 
         // Obsługa literałów binarnych (np. %10101010)
         if (expr[i] == '%' && i + 1 < expr.length() && (expr[i+1] == '0' || expr[i+1] == '1')) {
@@ -116,7 +184,7 @@ std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
                 }
                 try {
                     unsigned long val = std::stoul(bin_str, nullptr, 2);
-                    tokens.push_back({TokenType::NUMBER, static_cast<double>(val)});
+                    tokens.push_back({TokenType::NUMBER, Value(static_cast<double>(val))});
                     continue;
                 } catch (...) {}
             }
@@ -152,6 +220,8 @@ std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
         if (expr[i] == '[') { tokens.push_back({TokenType::LBRACKET}); i++; continue; }
         if (expr[i] == ']') { tokens.push_back({TokenType::RBRACKET}); i++; continue; }
         if (expr[i] == ',') { tokens.push_back({TokenType::COMMA}); i++; continue; }
+        if (expr[i] == '{') { tokens.push_back({TokenType::LBRACE}); i++; continue; }
+        if (expr[i] == '}') { tokens.push_back({TokenType::RBRACE}); i++; continue; }
 
         {
             std::string word;
@@ -175,19 +245,15 @@ std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
                     // Try to resolve as symbol or register
                     try {
                         double val = resolve_symbol(word); // Use original case for labels
-                        tokens.push_back({TokenType::NUMBER, val});
+                        tokens.push_back({TokenType::NUMBER, Value(val)});
                         continue;
                     } catch (...) { /* Not a symbol/register, try as number below */ }
 
-                    // Sprawdzamy czy to hex/prefixy (te zwracają uint16_t, rzutujemy na double)
-                    // Jeśli to czysty decimal z kropką (np. "2.5"), parse_address tego nie obsłuży standardowo,
-                    // ale zakładamy, że na razie wprowadzamy adresy/inty.
-                    // Dla pełnego wsparcia float w input (np. "2.5") można tu dodać std::stod.
-                    try {
-                        tokens.push_back({TokenType::NUMBER, static_cast<double>(m_core.parse_address(word))}); 
-                    } catch(...) {
-                        // Fallback dla prostych floatów w stringu, jeśli parse_address rzuci wyjątek
-                        try { tokens.push_back({TokenType::NUMBER, std::stod(word)}); } catch(...) { throw std::runtime_error("Unknown token: " + word); }
+                    double d_val;
+                    if (Strings::parse_double(word, d_val)) {
+                        tokens.push_back({TokenType::NUMBER, Value(d_val)});
+                    } else {
+                        throw std::runtime_error("Unknown token: " + word);
                     }
                 }
             } else {
@@ -202,6 +268,8 @@ std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
 std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>& tokens) {
     std::vector<Token> output_queue;
     std::stack<Token> operator_stack;
+    std::stack<int> arg_counts; // Stos liczników elementów dla zagnieżdżonych tablic
+    TokenType last_type = TokenType::OPERATOR; // Do wykrywania pustych tablic {}
 
     for (const auto& token : tokens) {
         switch (token.type) {
@@ -212,9 +280,13 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
                 operator_stack.push(token);
                 break;
             case TokenType::COMMA:
-                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN) {
+                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN && operator_stack.top().type != TokenType::LBRACE) {
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
+                }
+                // Jeśli jesteśmy wewnątrz tablicy, inkrementujemy licznik elementów
+                if (!operator_stack.empty() && operator_stack.top().type == TokenType::LBRACE) {
+                    if (!arg_counts.empty()) arg_counts.top()++;
                 }
                 break;
             case TokenType::OPERATOR:
@@ -229,6 +301,10 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
             case TokenType::LPAREN:
             case TokenType::LBRACKET:
                 operator_stack.push(token);
+                break;
+            case TokenType::LBRACE:
+                operator_stack.push(token);
+                arg_counts.push(1); // Zakładamy 1 element, chyba że zaraz będzie }
                 break;
             case TokenType::RPAREN:
                 while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN) {
@@ -250,7 +326,27 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
                 static const Token peek_token = {TokenType::OPERATOR, 0, "@", &get_operators().at("@")};
                 output_queue.push_back(peek_token); 
                 break;
+            case TokenType::RBRACE:
+                // Obsługa pustej tablicy {}
+                if (last_type == TokenType::LBRACE) {
+                    if (!arg_counts.empty()) arg_counts.top() = 0;
+                }
+
+                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LBRACE) {
+                    output_queue.push_back(operator_stack.top());
+                    operator_stack.pop();
+                }
+                if (!operator_stack.empty()) operator_stack.pop(); // Zdejmij LBRACE
+                
+                int count = 0;
+                if (!arg_counts.empty()) {
+                    count = arg_counts.top();
+                    arg_counts.pop();
+                }
+                output_queue.push_back({TokenType::ARRAY_BUILD, Value((double)count)});
+                break;
         }
+        last_type = token.type;
     }
     while (!operator_stack.empty()) {
         output_queue.push_back(operator_stack.top());
@@ -260,8 +356,8 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
 }
 
 // --- RPN Execution (Double Logic) ---
-double Evaluator::execute_rpn(const std::vector<Token>& rpn) {
-    std::vector<double> stack; // Stos double!
+Value Evaluator::execute_rpn(const std::vector<Token>& rpn) {
+    std::vector<Value> stack; // Stos Value!
 
     for (const auto& token : rpn) {
         if (token.type == TokenType::NUMBER) {
@@ -273,7 +369,7 @@ double Evaluator::execute_rpn(const std::vector<Token>& rpn) {
             
             if (stack.size() < args_needed) throw std::runtime_error("Stack underflow op");
             
-            std::vector<double> args;
+            std::vector<Value> args;
             for(int k=0; k<args_needed; ++k) {
                 args.push_back(stack.back());
                 stack.pop_back();
@@ -285,9 +381,10 @@ double Evaluator::execute_rpn(const std::vector<Token>& rpn) {
         else if (token.type == TokenType::FUNCTION) {
             const auto* info = token.func_info;
             int args_needed = info->num_args;
+            if (info->num_args == -1) args_needed = stack.size(); // Variable args support (simple)
             if (stack.size() < args_needed) throw std::runtime_error("Stack underflow func");
 
-            std::vector<double> args;
+            std::vector<Value> args;
             for(int k=0; k<args_needed; ++k) {
                 args.push_back(stack.back());
                 stack.pop_back();
@@ -296,8 +393,20 @@ double Evaluator::execute_rpn(const std::vector<Token>& rpn) {
             
             stack.push_back(info->apply(m_core, args));
         }
+        else if (token.type == TokenType::ARRAY_BUILD) {
+            int count = static_cast<int>(token.value.as_number());
+            if (stack.size() < (size_t)count) throw std::runtime_error("Stack underflow array build");
+            
+            std::vector<Value> elements;
+            for(int k=0; k<count; ++k) {
+                elements.push_back(stack.back());
+                stack.pop_back();
+            }
+            std::reverse(elements.begin(), elements.end());
+            stack.push_back(Value(elements));
+        }
     }
-    return stack.empty() ? 0.0 : stack.back();
+    return stack.empty() ? Value(0.0) : stack.back();
 }
 
 bool Evaluator::is_register(const std::string& name) {
@@ -349,11 +458,11 @@ double Evaluator::resolve_symbol(const std::string& name) {
 }
 
 // Przyjmujemy double, rzutujemy na uint16_t
-void Evaluator::set_register_value(const std::string& name, double val_dbl) {
+void Evaluator::set_register_value(const std::string& name, Value val_in) {
     auto& cpu = m_core.get_cpu();
     
     // Rzutujemy double na uint16_t (ucinamy część ułamkową)
-    uint16_t val = static_cast<uint16_t>(val_dbl);
+    uint16_t val = static_cast<uint16_t>(val_in.as_number());
 
     // --- Rejestry 16-bitowe (Proste przypisanie) ---
     if (name == "PC") cpu.set_PC(val);
