@@ -18,6 +18,8 @@ const std::map<std::string, Evaluator::OperatorInfo>& Evaluator::get_operators()
         {"@",   {100, false, true,  [](Core& core, const std::vector<double>& args) { 
                     return (double)core.get_memory().read((uint16_t)args[0]); 
                 }}},
+        {"++",  {100, false, true,  [](Core&, const std::vector<double>& args) { return args[0] + 1; }}},
+        {"--",  {100, false, true,  [](Core&, const std::vector<double>& args) { return args[0] - 1; }}},
         {"*",   {90, true,  false, [](Core&, const std::vector<double>& args) { return args[0] * args[1]; }}},
         {"/",   {90, true,  false, [](Core&, const std::vector<double>& args) { return (args[1] != 0) ? args[0] / args[1] : 0; }}},
         {"%",   {90, true,  false, [](Core&, const std::vector<double>& args) { return std::fmod(args[0], args[1]); }}},
@@ -42,7 +44,9 @@ const std::map<std::string, Evaluator::FunctionInfo>& Evaluator::get_functions()
         {"RND",  {0, [](Core&, const std::vector<double>&) { return (double)rand() / RAND_MAX; }}},
         {"ABS",  {1, [](Core&, const std::vector<double>& args) { return std::abs(args[0]); }}},
         {"LOW",  {1, [](Core&, const std::vector<double>& args) { return (double)((int)args[0] & 0xFF); }}},
-        {"HIGH", {1, [](Core&, const std::vector<double>& args) { return (double)(((int)args[0] >> 8) & 0xFF); }}}
+        {"HIGH", {1, [](Core&, const std::vector<double>& args) { return (double)(((int)args[0] >> 8) & 0xFF); }}},
+        {"WORD", {2, [](Core&, const std::vector<double>& args) { return (double)((((int)args[0] & 0xFF) << 8) | ((int)args[1] & 0xFF)); }}},
+        {"BIT",  {2, [](Core&, const std::vector<double>& args) { return (double)(((int)args[1] >> (int)args[0]) & 1); }}}
     };
     return funcs;
 }
@@ -90,6 +94,33 @@ std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
     
     while (i < expr.length()) {
         if (std::isspace(expr[i])) { i++; continue; }
+
+        // Obsługa literałów binarnych (np. %10101010)
+        if (expr[i] == '%' && i + 1 < expr.length() && (expr[i+1] == '0' || expr[i+1] == '1')) {
+            bool expect_value = false;
+            if (tokens.empty()) {
+                expect_value = true;
+            } else {
+                TokenType t = tokens.back().type;
+                if (t == TokenType::OPERATOR || t == TokenType::LPAREN || t == TokenType::LBRACKET || t == TokenType::COMMA || t == TokenType::FUNCTION) {
+                    expect_value = true;
+                }
+            }
+
+            if (expect_value) {
+                std::string bin_str;
+                i++; // Pomiń '%'
+                while (i < expr.length() && (expr[i] == '0' || expr[i] == '1')) {
+                    bin_str += expr[i];
+                    i++;
+                }
+                try {
+                    unsigned long val = std::stoul(bin_str, nullptr, 2);
+                    tokens.push_back({TokenType::NUMBER, static_cast<double>(val)});
+                    continue;
+                } catch (...) {}
+            }
+        }
 
         std::string matched_op;
         for (const auto& pair : ops_map) {

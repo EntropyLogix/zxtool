@@ -370,8 +370,10 @@ std::vector<std::string> CodeView::render() {
             std::string s = ss.str();
             size_t len = Strings::ansi_len(s);
             int pad = m_width - (int)len;
-            if (pad > 0)
+            if (pad > 0) {
+                if (is_pc) s += Terminal::BG_DARK_GRAY;
                 s += std::string(pad, ' ');
+            }
             s += Terminal::RESET; 
             if (lines_count < m_rows) { lines_out.push_back(s); lines_count++; }
         } else
@@ -462,6 +464,73 @@ void Debugger::cont() {
     }
 }
 
+void Debugger::run_until_return() {
+    m_prev_state = m_core.get_cpu().save_state();
+    while (true) {
+        if (check_breakpoints(m_core.get_cpu().get_PC())) {
+            log("Breakpoint hit!");
+            return;
+        }
+        
+        uint16_t pc = m_core.get_cpu().get_PC();
+        uint8_t opcode = m_core.get_memory().peek(pc);
+        bool is_ret = false;
+        int instr_len = 1;
+
+        if (opcode == 0xC9 || (opcode & 0xC7) == 0xC0) {
+            is_ret = true;
+        } else if (opcode == 0xED) {
+            uint8_t op2 = m_core.get_memory().peek(pc + 1);
+            if (op2 == 0x45 || op2 == 0x4D) {
+                is_ret = true;
+                instr_len = 2;
+            }
+        }
+        
+        record_history(pc);
+        m_core.get_cpu().step();
+        
+        if (is_ret) {
+            uint16_t pc_after = m_core.get_cpu().get_PC();
+            if (pc_after != pc + instr_len) {
+                m_last_pc = pc;
+                m_has_history = true;
+                m_pc_moved = true;
+                return;
+            }
+        }
+        
+        m_last_pc = pc;
+        m_has_history = true;
+        m_pc_moved = true;
+    }
+}
+
+void Debugger::run_to(uint16_t addr) {
+    auto it = std::find_if(m_breakpoints.begin(), m_breakpoints.end(), 
+        [addr](const Breakpoint& b){ return b.addr == addr; });
+    
+    bool existed = (it != m_breakpoints.end());
+    bool was_enabled = false;
+    
+    if (existed) {
+        was_enabled = it->enabled;
+        it->enabled = true;
+    } else {
+        add_breakpoint(addr);
+    }
+    
+    cont();
+    
+    if (existed) {
+        auto it2 = std::find_if(m_breakpoints.begin(), m_breakpoints.end(), 
+            [addr](const Breakpoint& b){ return b.addr == addr; });
+        if (it2 != m_breakpoints.end()) it2->enabled = was_enabled;
+    } else {
+        remove_breakpoint(addr);
+    }
+}
+
 void Dashboard::run() {
     setup_replxx();
     m_repl.history_load("zxtool_history.txt");
@@ -483,7 +552,7 @@ void Dashboard::run() {
             std::stringstream ss(input);
             std::string cmd;
             ss >> cmd;
-            if (cmd == "s" || cmd == "step" || cmd == "n" || cmd == "next" || cmd == "c" || cmd == "continue") {
+            if (cmd == "s" || cmd == "step" || cmd == "n" || cmd == "next" || cmd == "g" || cmd == "go") {
                 m_last_command = input;
             } else {
                 m_last_command.clear();
@@ -531,6 +600,115 @@ static std::string preprocess_expr(const std::string& input) {
     return result;
 }
 
+void Dashboard::perform_assignment(const std::string& lhs_in, const std::string& rhs_in) {
+    std::string lhs = preprocess_expr(lhs_in);
+    std::string rhs = preprocess_expr(rhs_in);
+    try {
+        Evaluator eval(m_debugger.get_core());
+        double val = eval.evaluate(rhs); 
+        uint16_t val16 = static_cast<uint16_t>(val);
+
+        std::string target = lhs;
+        target.erase(std::remove_if(target.begin(), target.end(), ::isspace), target.end());
+        std::string target_upper = target;
+        std::transform(target_upper.begin(), target_upper.end(), target_upper.begin(), ::toupper);
+
+        // 1. Rejestr?
+        if (Evaluator::is_register(target_upper)) {
+            eval.assign(target, val); // Evaluator handles registers
+            
+            if (target_upper == "PC") {
+                auto& core = m_debugger.get_core();
+                core.get_profiler().reset();
+                core.get_analyzer().parse_code(val16, 0, &core.get_code_map(), false, true);
+                log("PC changed. History reset and static analysis performed.");
+                m_auto_follow = true;
+                update_code_view();
+            }
+            
+            std::stringstream out;
+            out << "Assigned " << Terminal::HI_YELLOW << Strings::hex16(val16) << Terminal::RESET
+                << " to " << Terminal::CYAN << target_upper << Terminal::RESET;
+            log(out.str());
+        }
+        // 2. Pamięć?
+        else if (target.front() == '[' && target.back() == ']') {
+            eval.assign(target, val); // Evaluator handles memory
+            std::stringstream out;
+            out << "Assigned " << Terminal::HI_YELLOW << Strings::hex8((uint8_t)val16) << Terminal::RESET
+                << " to memory " << Terminal::CYAN << target << Terminal::RESET;
+            log(out.str());
+        }
+        // 3. Symbol
+        else {
+            // Check for valid symbol name
+            if (isdigit(target[0])) {
+                    log(Terminal::RED + "Error: Symbol name cannot start with a digit." + Terminal::RESET);
+            } else {
+                auto result = m_debugger.get_core().get_context().add_or_update_symbol(target, val16);
+                
+                if (result.result == Context::SymbolResult::Created) {
+                    log(Terminal::MAGENTA + "Defined NEW Symbol '" + target + "' = " + Strings::hex16(val16) + Terminal::RESET);
+                    
+                    // Fuzzy match check
+                    for (const auto& [addr, name] : m_debugger.get_core().get_context().labels) {
+                        if (name != target && levenshtein_distance(target, name) <= 1) {
+                            log(Terminal::YELLOW + "Warning: Did you mean '" + name + "'?" + Terminal::RESET);
+                        }
+                    }
+                } else {
+                    log(Terminal::YELLOW + "UPDATED Symbol '" + target + "': " + 
+                        Strings::hex16(result.old_address) + " -> " + Strings::hex16(val16) + Terminal::RESET);
+                }
+                // Force refresh code view to show new label
+                update_code_view();
+            }
+        }
+        
+        if (m_auto_follow && target_upper != "PC") update_code_view();
+    } catch (const std::exception& e) {
+        log(std::string(Terminal::RED) + "Error: " + e.what() + Terminal::RESET);
+    }
+}
+
+void Dashboard::perform_find(uint16_t start_addr, const std::vector<uint8_t>& pattern) {
+    if (pattern.empty()) {
+        log("No pattern to search.");
+        return;
+    }
+    
+    m_last_pattern = pattern;
+    auto& mem = m_debugger.get_core().get_memory();
+    
+    uint32_t addr = start_addr;
+    size_t scanned = 0;
+    
+    // Przeszukaj całą przestrzeń adresową (64KB), zawijając się
+    while (scanned < 0x10000) {
+        uint16_t cur = (uint16_t)(addr & 0xFFFF);
+        bool match = true;
+        for (size_t i = 0; i < pattern.size(); ++i) {
+            if (mem.read((uint16_t)(cur + i)) != pattern[i]) {
+                match = false;
+                break;
+            }
+        }
+        
+        if (match) {
+            m_last_found_addr = cur;
+            m_mem_view_addr = cur;
+            m_focus = FOCUS_MEMORY;
+            log("Found at " + Strings::hex16(cur));
+            return;
+        }
+        
+        addr++;
+        scanned++;
+    }
+    
+    log("Pattern not found.");
+}
+
 void Dashboard::handle_command(const std::string& input) {
         std::stringstream ss(input);
         std::string cmd;
@@ -545,14 +723,61 @@ void Dashboard::handle_command(const std::string& input) {
             m_debugger.next(); 
             if (m_auto_follow) update_code_view();
         }
-        else if (cmd == "c" || cmd == "continue") { 
-            log("Running...");
-            print_dashboard();
-            m_debugger.cont(); 
+        else if (cmd == "g" || cmd == "go" || cmd == "cont" || cmd == "continue") { 
+            std::string arg;
+            if (ss >> arg) {
+                try {
+                    std::string expr = preprocess_expr(arg);
+                    Evaluator eval(m_debugger.get_core());
+                    uint16_t addr = static_cast<uint16_t>(eval.evaluate(expr));
+                    log("Running to " + Strings::hex16(addr) + "...");
+                    print_dashboard();
+                    m_debugger.run_to(addr);
+                } catch(...) { log("Invalid address."); }
+            } else {
+                log("Running...");
+                print_dashboard();
+                m_debugger.cont(); 
+            }
             if (m_auto_follow) update_code_view();
         }
+        else if (cmd == "ret") {
+            log("Running until return...");
+            print_dashboard();
+            m_debugger.run_until_return();
+            if (m_auto_follow) update_code_view();
+        }
+        else if (cmd == "r" || cmd == "reset") {
+            m_debugger.get_core().get_cpu().reset();
+            log("CPU Reset. PC=0000");
+            m_auto_follow = true;
+            update_code_view();
+        }
+        else if (cmd == "irq") {
+            uint8_t data = 0xFF;
+            std::string arg;
+            if (ss >> arg) {
+                try {
+                    data = static_cast<uint8_t>(m_debugger.get_core().parse_address(arg));
+                } catch(...) {}
+            }
+            m_debugger.get_core().get_cpu().request_interrupt(data);
+            log("IRQ requested.");
+        }
+        else if (cmd == "nmi") {
+            m_debugger.get_core().get_cpu().request_NMI();
+            log("NMI requested.");
+        }
+        else if (cmd == "di") {
+            m_debugger.get_core().get_cpu().exec_DI();
+            log("Interrupts disabled.");
+        }
+        else if (cmd == "ei") {
+            m_debugger.get_core().get_cpu().exec_EI();
+            log("Interrupts enabled.");
+        }
         else if (cmd == "q" || cmd == "quit") { m_running = false; }
-        else if (cmd == "h" || cmd == "help") { print_help(); }
+        else if (cmd == "help") { print_help(); }
         else if (cmd == "lines") {
             std::string type; int n;
             if (ss >> type >> n && n > 0) {
@@ -606,6 +831,122 @@ void Dashboard::handle_command(const std::string& input) {
             if(ss>>arg) { 
                 try { m_debugger.remove_watch(m_debugger.get_core().parse_address(arg)); }
                 catch(...) { log("Invalid address."); }
+            }
+        }
+        else if (cmd == "m" || cmd == "mem") {
+            std::string arg;
+            if (ss >> arg) {
+                try {
+                    std::string expr = preprocess_expr(arg);
+                    Evaluator eval(m_debugger.get_core());
+                    m_mem_view_addr = static_cast<uint16_t>(eval.evaluate(expr));
+                    log("Memory view moved to " + Strings::hex16(m_mem_view_addr));
+                } catch(...) { log("Invalid address."); }
+            } else log("Usage: m <addr>");
+        }
+        else if (cmd == "l" || cmd == "list") {
+            std::string arg;
+            if (ss >> arg) {
+                try {
+                    std::string expr = preprocess_expr(arg);
+                    Evaluator eval(m_debugger.get_core());
+                    m_code_view_addr = static_cast<uint16_t>(eval.evaluate(expr));
+                    m_auto_follow = false;
+                    log("Code view moved to " + Strings::hex16(m_code_view_addr));
+                } catch(...) { log("Invalid address."); }
+            } else log("Usage: l <addr>");
+        }
+        else if (cmd == "find" || cmd == "/") {
+            std::vector<std::string> args;
+            std::string temp;
+            while (ss >> temp) args.push_back(temp);
+            
+            if (args.empty()) {
+                // Find Next
+                if (m_last_pattern.empty()) {
+                    log("No previous search pattern.");
+                } else {
+                    perform_find(m_last_found_addr + 1, m_last_pattern);
+                }
+            } else {
+                // New Search
+                uint16_t start_addr = m_mem_view_addr; // Domyślnie od kursora pamięci
+                std::vector<uint8_t> pattern;
+                size_t pattern_start_idx = 0;
+                
+                // Heurystyka: Czy pierwszy argument to bajt wzorca czy adres?
+                // Jeśli ma <= 2 znaki i jest hexem, to bajt. W przeciwnym razie (np. HL, 8000) to adres.
+                bool first_is_byte = false;
+                if (args[0].length() <= 2 && std::all_of(args[0].begin(), args[0].end(), [](unsigned char c){ return std::isxdigit(c); })) {
+                    first_is_byte = true;
+                }
+                
+                if (!first_is_byte) {
+                    // Traktuj pierwszy argument jako adres startowy
+                    try {
+                        std::string expr = preprocess_expr(args[0]);
+                        Evaluator eval(m_debugger.get_core());
+                        start_addr = static_cast<uint16_t>(eval.evaluate(expr));
+                        pattern_start_idx = 1;
+                    } catch (...) {
+                        log("Invalid address: " + args[0]);
+                        return;
+                    }
+                }
+                
+                for (size_t i = pattern_start_idx; i < args.size(); ++i) {
+                    try {
+                        pattern.push_back(static_cast<uint8_t>(std::stoul(args[i], nullptr, 16)));
+                    } catch (...) {
+                        log("Invalid byte: " + args[i]);
+                        return;
+                    }
+                }
+                
+                if (pattern.empty()) {
+                    log("No pattern specified.");
+                } else {
+                    perform_find(start_addr, pattern);
+                }
+            }
+        }
+        else if (cmd == "asm") {
+            std::string arg;
+            std::getline(ss, arg);
+            size_t first = arg.find_first_not_of(" \t");
+            if (first != std::string::npos) {
+                arg = arg.substr(first);
+                if (arg.size() >= 2 && arg.front() == '"' && arg.back() == '"') {
+                    arg = arg.substr(1, arg.size() - 2);
+                }
+            } else {
+                arg.clear();
+            }
+
+            if (arg.empty()) {
+                log("Usage: asm \"<instruction>\"");
+            } else {
+                try {
+                    uint16_t pc = m_debugger.get_core().get_cpu().get_PC();
+                    LineAssembler assembler;
+                    std::vector<uint8_t> bytes;
+                    std::map<std::string, uint16_t> symbols;
+                    for (const auto& [addr, name] : m_debugger.get_core().get_context().labels) {
+                        symbols[name] = addr;
+                    }
+                    assembler.assemble(arg, symbols, pc, bytes);
+                    std::stringstream out;
+                    out << "Assembled '" << Terminal::HI_WHITE << arg << Terminal::RESET << "' (ORG " << Terminal::CYAN << Strings::hex16(pc) << Terminal::RESET << "): ";
+                    out << Terminal::HI_YELLOW;
+                    for (size_t i = 0; i < bytes.size(); ++i) {
+                        if (i > 0) out << " ";
+                        out << Strings::hex8(bytes[i]);
+                    }
+                    out << Terminal::RESET << " (" << bytes.size() << " bytes)";
+                    log(out.str());
+                } catch (const std::exception& e) {
+                    log(std::string("Assembly Error: ") + e.what());
+                }
             }
         }
         else if (cmd == "f" || cmd == "follow") {
@@ -795,6 +1136,160 @@ void Dashboard::handle_command(const std::string& input) {
                 }
             } else log("Usage: undef <symbol_name>");
         }
+        else if (cmd == "c" || cmd == "comment" || cmd == ";") {
+            std::string first_arg;
+            if (ss >> first_arg) {
+                uint16_t addr = 0;
+                bool is_addr = false;
+                std::string expr = preprocess_expr(first_arg);
+                
+                try {
+                    Evaluator eval(m_debugger.get_core());
+                    double val = eval.evaluate(expr);
+                    addr = static_cast<uint16_t>(val);
+                    is_addr = true;
+                } catch (...) {
+                    is_addr = false;
+                }
+
+                std::string rest;
+                std::getline(ss, rest);
+                std::string comment;
+
+                if (is_addr) {
+                    comment = rest;
+                } else {
+                    addr = m_debugger.get_core().get_cpu().get_PC();
+                    comment = first_arg + rest;
+                }
+
+                size_t first = comment.find_first_not_of(" \t");
+                if (first == std::string::npos) {
+                    comment.clear();
+                } else {
+                    size_t last = comment.find_last_not_of(" \t");
+                    comment = comment.substr(first, (last - first + 1));
+                }
+
+                auto& ctx = m_debugger.get_core().get_analyzer().context;
+                if (comment.empty()) {
+                    if (ctx.metadata.count(addr)) ctx.metadata[addr].inline_comment.clear();
+                    log("Comment removed at " + Strings::hex16(addr));
+                } else {
+                    ctx.metadata[addr].inline_comment = comment;
+                    log("Comment added at " + Strings::hex16(addr) + ": " + comment);
+                }
+                update_code_view();
+            } else {
+                uint16_t addr = m_debugger.get_core().get_cpu().get_PC();
+                auto& ctx = m_debugger.get_core().get_analyzer().context;
+                if (ctx.metadata.count(addr)) ctx.metadata[addr].inline_comment.clear();
+                log("Comment removed at " + Strings::hex16(addr));
+                update_code_view();
+            }
+        }
+        else if (cmd == "h" || cmd == "header") {
+            std::string first_arg;
+            if (ss >> first_arg) {
+                uint16_t addr = 0;
+                bool is_addr = false;
+                std::string expr = preprocess_expr(first_arg);
+                
+                try {
+                    Evaluator eval(m_debugger.get_core());
+                    double val = eval.evaluate(expr);
+                    addr = static_cast<uint16_t>(val);
+                    is_addr = true;
+                } catch (...) {
+                    is_addr = false;
+                }
+
+                std::string rest;
+                std::getline(ss, rest);
+                std::string comment;
+
+                if (is_addr) {
+                    comment = rest;
+                } else {
+                    addr = m_debugger.get_core().get_cpu().get_PC();
+                    comment = first_arg + rest;
+                }
+
+                size_t first = comment.find_first_not_of(" \t");
+                if (first == std::string::npos) {
+                    comment.clear();
+                } else {
+                    size_t last = comment.find_last_not_of(" \t");
+                    comment = comment.substr(first, (last - first + 1));
+                }
+
+                auto& ctx = m_debugger.get_core().get_analyzer().context;
+                if (comment.empty()) {
+                    if (ctx.metadata.count(addr)) ctx.metadata[addr].block_description.clear();
+                    log("Header removed at " + Strings::hex16(addr));
+                } else {
+                    ctx.metadata[addr].block_description = comment;
+                    log("Header added at " + Strings::hex16(addr) + ": " + comment);
+                }
+                update_code_view();
+            } else {
+                uint16_t addr = m_debugger.get_core().get_cpu().get_PC();
+                auto& ctx = m_debugger.get_core().get_analyzer().context;
+                if (ctx.metadata.count(addr)) ctx.metadata[addr].block_description.clear();
+                log("Header removed at " + Strings::hex16(addr));
+                update_code_view();
+            }
+        }
+        else if (cmd == "set") {
+            std::string args;
+            std::getline(ss, args);
+            size_t eq_pos = args.find('=');
+            if (eq_pos != std::string::npos) {
+                perform_assignment(args.substr(0, eq_pos), args.substr(eq_pos + 1));
+            } else {
+                size_t first = args.find_first_not_of(" \t");
+                if (first == std::string::npos) {
+                    log("Usage: set <target> <expression>");
+                } else {
+                    std::string target;
+                    std::string expr;
+                    
+                    if (args[first] == '[') {
+                        int depth = 0;
+                        size_t pos = first;
+                        bool found = false;
+                        while (pos < args.length()) {
+                            if (args[pos] == '[') depth++;
+                            else if (args[pos] == ']') {
+                                depth--;
+                                if (depth == 0) { found = true; break; }
+                            }
+                            pos++;
+                        }
+                        if (found) {
+                            target = args.substr(first, pos - first + 1);
+                            if (pos + 1 < args.length()) expr = args.substr(pos + 1);
+                        } else {
+                             target = args.substr(first); // Fallback (broken bracket)
+                        }
+                    } else {
+                        size_t space = args.find_first_of(" \t", first);
+                        if (space == std::string::npos) target = args.substr(first);
+                        else {
+                            target = args.substr(first, space - first);
+                            expr = args.substr(space + 1);
+                        }
+                    }
+                    
+                    size_t expr_start = expr.find_first_not_of(" \t");
+                    if (expr_start != std::string::npos) expr = expr.substr(expr_start);
+                    else expr.clear();
+
+                    if (expr.empty()) log("Usage: set <target> <expression>");
+                    else perform_assignment(target, expr);
+                }
+            }
+        }
         else {
             size_t eq_pos = input.find('=');
             bool is_assignment = (eq_pos != std::string::npos);
@@ -810,75 +1305,22 @@ void Dashboard::handle_command(const std::string& input) {
             if (is_assignment) {
                 std::string lhs = input.substr(0, eq_pos);
                 std::string rhs = input.substr(eq_pos + 1);
-                lhs = preprocess_expr(lhs);
-                rhs = preprocess_expr(rhs);
-                try {
-                    Evaluator eval(m_debugger.get_core());
-                    double val = eval.evaluate(rhs); 
-                    uint16_t val16 = static_cast<uint16_t>(val);
-
-                    std::string target = lhs;
-                    target.erase(std::remove_if(target.begin(), target.end(), ::isspace), target.end());
-                    std::string target_upper = target;
-                    std::transform(target_upper.begin(), target_upper.end(), target_upper.begin(), ::toupper);
-
-                    // 1. Rejestr?
-                    if (Evaluator::is_register(target_upper)) {
-                        eval.assign(target, val); // Evaluator handles registers
-                        
-                        if (target_upper == "PC") {
-                            auto& core = m_debugger.get_core();
-                            core.get_profiler().reset();
-                            core.get_analyzer().parse_code(val16, 0, &core.get_code_map(), false, true);
-                            log("PC changed. History reset and static analysis performed.");
-                            m_auto_follow = true;
-                            update_code_view();
-                        }
-                        
-                        std::stringstream out;
-                        out << "Assigned " << Terminal::HI_YELLOW << Strings::hex16(val16) << Terminal::RESET
-                            << " to " << Terminal::CYAN << target_upper << Terminal::RESET;
-                        log(out.str());
-                    }
-                    // 2. Pamięć?
-                    else if (target.front() == '[' && target.back() == ']') {
-                        eval.assign(target, val); // Evaluator handles memory
-                        std::stringstream out;
-                        out << "Assigned " << Terminal::HI_YELLOW << Strings::hex8((uint8_t)val16) << Terminal::RESET
-                            << " to memory " << Terminal::CYAN << target << Terminal::RESET;
-                        log(out.str());
-                    }
-                    // 3. Symbol
-                    else {
-                        // Check for valid symbol name
-                        if (isdigit(target[0])) {
-                             log(Terminal::RED + "Error: Symbol name cannot start with a digit." + Terminal::RESET);
-                        } else {
-                            auto result = m_debugger.get_core().get_context().add_or_update_symbol(target, val16);
-                            
-                            if (result.result == Context::SymbolResult::Created) {
-                                log(Terminal::MAGENTA + "Defined NEW Symbol '" + target + "' = " + Strings::hex16(val16) + Terminal::RESET);
-                                
-                                // Fuzzy match check
-                                for (const auto& [addr, name] : m_debugger.get_core().get_context().labels) {
-                                    if (name != target && levenshtein_distance(target, name) <= 1) {
-                                        log(Terminal::YELLOW + "Warning: Did you mean '" + name + "'?" + Terminal::RESET);
-                                    }
-                                }
-                            } else {
-                                log(Terminal::YELLOW + "UPDATED Symbol '" + target + "': " + 
-                                    Strings::hex16(result.old_address) + " -> " + Strings::hex16(val16) + Terminal::RESET);
-                            }
-                            // Force refresh code view to show new label
-                            update_code_view();
-                        }
-                    }
-                    
-                    if (m_auto_follow && target_upper != "PC") update_code_view();
-                } catch (const std::exception& e) {
-                    log(std::string(Terminal::RED) + "Error: " + e.what() + Terminal::RESET);
-                }
+                perform_assignment(lhs, rhs);
             } else {
+                std::string trimmed = input;
+                trimmed.erase(std::remove_if(trimmed.begin(), trimmed.end(), ::isspace), trimmed.end());
+                if (trimmed.length() > 2) {
+                    if (trimmed.substr(trimmed.length()-2) == "++") {
+                        std::string t = trimmed.substr(0, trimmed.length()-2);
+                        perform_assignment(t, t + "++");
+                        return;
+                    }
+                    if (trimmed.substr(trimmed.length()-2) == "--") {
+                        std::string t = trimmed.substr(0, trimmed.length()-2);
+                        perform_assignment(t, t + "--");
+                        return;
+                    }
+                }
                 log("Unknown command.");
             }
         }
@@ -927,23 +1369,39 @@ void Dashboard::print_help() {
         m_output_buffer << " [EXECUTION]\n";
         m_output_buffer << "   s, step [n]            Execute instructions (default 1)\n";
         m_output_buffer << "   n, next                Step over subroutine\n";
-        m_output_buffer << "   c, continue            Continue execution\n\n";
-        m_output_buffer << " [SYSTEM]\n";
-        m_output_buffer << "   h, help                Show this message\n";
-        m_output_buffer << "   lines <type> <n>       Set lines (code/mem/stack)\n";
-        m_output_buffer << "   toggle <panel>         Toggle panel (mem/regs/code/stack/status)\n";
+        m_output_buffer << "   g, go [addr]           Continue execution (optional: to address)\n";
+        m_output_buffer << "   ret                    Run until return\n";
+        m_output_buffer << "   r, reset               Reset CPU\n";
+        m_output_buffer << "   irq [val]              Request IRQ (default $FF)\n";
+        m_output_buffer << "   nmi                    Request NMI\n";
+        m_output_buffer << "   di                     Disable Interrupts\n";
+        m_output_buffer << "   ei                     Enable Interrupts\n\n";
+        m_output_buffer << " [DATA & MEMORY]\n";
+        m_output_buffer << "   data, byte <addr> [n]  Mark as data bytes\n";
+        m_output_buffer << "   code <addr> [n]        Mark as code instructions\n";
+        m_output_buffer << "   set <tgt> [=] <val>    Set value (e.g. set HL 10, set [HL] 5)\n";
+        m_output_buffer << "   <reg>=<val>            Quick set (e.g. A=10, HL=DE)\n";
+        m_output_buffer << "   asm \"<instr>\"          Assemble instruction (e.g. asm \"LD A, 10\")\n";
+        m_output_buffer << "   <reg>++ / <reg>--      Increment/Decrement register\n";
+        m_output_buffer << "   ? <expr>               Evaluate (supports +, -, *, /, %, &, |, ^, <<, >>)\n\n";
+        m_output_buffer << " [DEBUGGING]\n";
         m_output_buffer << "   b, break <addr>        Set breakpoint\n";
         m_output_buffer << "   d, delete <addr>       Delete breakpoint\n";
         m_output_buffer << "   w, watch <addr>        Add watch address\n";
         m_output_buffer << "   u, unwatch <addr>      Remove watch\n";
-        m_output_buffer << "   f, follow              Center view on PC\n";
-        m_output_buffer << "   data <addr> [n]        Mark as data\n";
-        m_output_buffer << "   code <addr> [n]        Mark as code\n";
-        m_output_buffer << "   ? <expr>               Evaluate expression\n";
-        m_output_buffer << "   <reg>=<val>            Set register value\n";
-        m_output_buffer << "   [<addr>]=<val>         Set memory value\n";
-        m_output_buffer << "   symbols, sym [filter]  Show loaded symbols (e.g. start*)\n";
-        m_output_buffer << "   undef <sym>            Remove symbol (alias: del, kill)\n";
+        m_output_buffer << "   symbols, sym [filter]  List symbols (use * for all, /a for addr sort)\n";
+        m_output_buffer << "   undef, del <sym>       Remove symbol definition\n";
+        m_output_buffer << "   c, ; [addr] <text>     Add inline comment (current PC if addr omitted)\n";
+        m_output_buffer << "   h, header [addr] <txt> Add block header/description\n\n";
+        m_output_buffer << " [NAVIGATION]\n";
+        m_output_buffer << "   m, mem <addr>          Move memory view\n";
+        m_output_buffer << "   l, list <addr>         Move code view\n";
+        m_output_buffer << "   find, / [addr] <bytes> Find pattern (e.g. / CD 05, / HL CD 05)\n";
+        m_output_buffer << "   f, follow              Center view on PC\n\n";
+        m_output_buffer << " [SYSTEM]\n";
+        m_output_buffer << "   help                   Show this message\n";
+        m_output_buffer << "   lines <panel> <n>      Set lines (code/mem/stack)\n";
+        m_output_buffer << "   toggle <panel>         Toggle panel (mem/regs/code/stack/status)\n";
         m_output_buffer << "   q, quit                Exit debugger\n";
 }
 
@@ -1079,8 +1537,8 @@ void Dashboard::print_output_buffer() {
 
 void Dashboard::print_footer() {
         const struct { const char* k; const char* n; } cmds[] = {
-            {"s", "tep"}, {"n", "ext"}, {"c", "ontinue"},
-            {"b", "reak"}, {"w", "atch"}, {"h", "elp"}, {"q", "uit"}
+            {"c", "omment"}, {"g", "o"}, {"s", "tep"}, {"n", "ext"},
+            {"r", "eset"}, {"h", "eader"}, {"q", "uit"}
         };
         for (const auto& c : cmds) {
             std::cout << Terminal::GRAY << "[" << Terminal::HI_WHITE << Terminal::BOLD << c.k << Terminal::RESET << Terminal::GRAY << "]" << c.n << " " << Terminal::RESET;

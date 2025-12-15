@@ -94,9 +94,14 @@ uint16_t Core::parse_address(const std::string& addr_str) {
         std::string s = addr_str;
         if (s.empty()) return 0;
 
-        // Decimal prefix '#' (e.g. #100 -> 100)
+        // Binary prefix '%'
+        if (s[0] == '%') {
+             return (uint16_t)std::stoul(s.substr(1), nullptr, 2);
+        }
+
+        // Hex prefix '#' (Ghidra style)
         if (s[0] == '#') {
-            return (uint16_t)std::stoul(s.substr(1), nullptr, 10);
+            return (uint16_t)std::stoul(s.substr(1), nullptr, 16);
         }
 
         // Remove 0x prefix if present
@@ -108,12 +113,12 @@ uint16_t Core::parse_address(const std::string& addr_str) {
             return (uint16_t)std::stoul(s.substr(1), nullptr, 16);
         }
         // Handle H suffix
-        if ((s.back() == 'h' || s.back() == 'H')) {
+        if (s.size() > 1 && (s.back() == 'h' || s.back() == 'H')) {
              return (uint16_t)std::stoul(s.substr(0, s.size()-1), nullptr, 16);
         }
         
-        // Default to HEX (standard for addresses)
-        return (uint16_t)std::stoul(s, nullptr, 16);
+        // Default to DECIMAL
+        return (uint16_t)std::stoul(s, nullptr, 10);
     } catch (const std::exception& e) {
         throw std::runtime_error("Invalid address format '" + addr_str + "': " + e.what());
     }

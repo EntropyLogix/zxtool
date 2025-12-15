@@ -111,6 +111,8 @@ public:
     void step(int n);
     void next();
     void cont();
+    void run_until_return();
+    void run_to(uint16_t addr);
 
 private:
     Core& m_core;
@@ -167,9 +169,14 @@ private:
     void print_columns(const std::vector<std::string>& left, const std::vector<std::string>& right, size_t left_width);
     void print_output_buffer();
     void log(const std::string& msg) { m_output_buffer << msg << "\n"; }
+    void perform_assignment(const std::string& lhs, const std::string& rhs);
+    void perform_find(uint16_t start_addr, const std::vector<uint8_t>& pattern);
     uint16_t find_prev_instruction_pc(uint16_t target_addr);
     uint16_t get_pc_window_start(uint16_t pc, int lines);
     void update_code_view();
+
+    std::vector<uint8_t> m_last_pattern;
+    uint16_t m_last_found_addr = 0;
 };
 
 class DebugEngine : public Engine {

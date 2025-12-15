@@ -1,8 +1,10 @@
 #ifndef __CORE_H__
 #define __CORE_H__
 
-#include "Memory.h"
+#define Z80_ENABLE_EXEC_API
 #include "Z80.h"
+
+#include "Memory.h"
 #include "Analyzer.h"
 #include "Assembler.h"
 #include "Z80Analyze.h"
