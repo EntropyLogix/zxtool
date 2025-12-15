@@ -174,6 +174,7 @@ private:
     uint16_t find_prev_instruction_pc(uint16_t target_addr);
     uint16_t get_pc_window_start(uint16_t pc, int lines);
     void update_code_view();
+    std::vector<uint8_t> assemble_code(const std::string& code, uint16_t pc);
 
     std::vector<uint8_t> m_last_pattern;
     uint16_t m_last_found_addr = 0;

@@ -600,9 +600,191 @@ static std::string preprocess_expr(const std::string& input) {
     return result;
 }
 
+static double eval_number(Core& core, const std::string& arg) {
+    std::string expr = preprocess_expr(arg);
+    Evaluator eval(core);
+    return eval.evaluate(expr);
+}
+static uint16_t eval_addr(Core& core, const std::string& arg) {
+    return static_cast<uint16_t>(eval_number(core, arg));
+}
+
+std::vector<uint8_t> Dashboard::assemble_code(const std::string& code_in, uint16_t pc) {
+    std::string code = code_in;
+    size_t pos = 0;
+    while ((pos = code.find("\\\\", pos)) != std::string::npos) {
+        code.replace(pos, 2, "\n");
+        pos += 1;
+    }
+
+    LineAssembler assembler;
+    std::vector<uint8_t> bytes;
+    std::map<std::string, uint16_t> symbols;
+    for (const auto& [addr, name] : m_debugger.get_core().get_context().labels) {
+        symbols[name] = addr;
+    }
+    assembler.assemble(code, symbols, pc, bytes);
+    return bytes;
+}
+
 void Dashboard::perform_assignment(const std::string& lhs_in, const std::string& rhs_in) {
+    auto invalidate_area = [&](uint16_t start, size_t length) {
+        auto& map = m_debugger.get_core().get_code_map();
+        for (size_t i = 0; i < length; ++i) {
+            map[(uint16_t)(start + i)] &= ~(Z80Analyzer<Memory>::FLAG_CODE_START | Z80Analyzer<Memory>::FLAG_CODE_INTERIOR);
+        }
+        // Clear tail of overwritten instructions
+        uint16_t tail = (uint16_t)(start + length);
+        while (map[tail] & Z80Analyzer<Memory>::FLAG_CODE_INTERIOR) {
+            map[tail] &= ~(Z80Analyzer<Memory>::FLAG_CODE_START | Z80Analyzer<Memory>::FLAG_CODE_INTERIOR);
+            tail++;
+            if (tail == start) break;
+        }
+    };
+
+    // Check for asm(...) in raw rhs_in first to avoid preprocessing messing up assembly syntax (e.g. $)
+    std::string rhs_trimmed_raw = rhs_in;
+    size_t first_raw = rhs_trimmed_raw.find_first_not_of(" \t");
+    if (first_raw != std::string::npos) {
+        size_t last_raw = rhs_trimmed_raw.find_last_not_of(" \t");
+        rhs_trimmed_raw = rhs_trimmed_raw.substr(first_raw, (last_raw - first_raw + 1));
+    }
+
+    if (rhs_trimmed_raw.size() >= 5 && rhs_trimmed_raw.substr(0, 4) == "asm(" && rhs_trimmed_raw.back() == ')') {
+        std::string lhs = preprocess_expr(lhs_in);
+        std::string target = lhs;
+        target.erase(std::remove_if(target.begin(), target.end(), ::isspace), target.end());
+
+        if (target.size() < 2 || target.front() != '[' || target.back() != ']') {
+             log(Terminal::RED + "Error: asm() assignment only supported for memory targets (e.g. [HL])." + Terminal::RESET);
+             return;
+        }
+
+        try {
+            // 1. Calculate Start Address
+            std::string addr_expr = target.substr(1, target.size() - 2);
+            Evaluator eval(m_debugger.get_core());
+            uint16_t start_addr = static_cast<uint16_t>(eval.evaluate(addr_expr));
+            
+            // 2. Extract instruction
+            size_t open_paren = rhs_trimmed_raw.find('(');
+            size_t close_paren = rhs_trimmed_raw.rfind(')');
+            std::string content = rhs_trimmed_raw.substr(open_paren + 1, close_paren - open_paren - 1);
+            
+            // Trim content
+            size_t c_first = content.find_first_not_of(" \t");
+            if (c_first != std::string::npos) {
+                size_t c_last = content.find_last_not_of(" \t");
+                content = content.substr(c_first, (c_last - c_first + 1));
+            }
+
+            // Remove quotes if present
+            if (content.size() >= 2 && ((content.front() == '"' && content.back() == '"') || (content.front() == '\'' && content.back() == '\''))) {
+                content = content.substr(1, content.size() - 2);
+            }
+
+            // 3. Assemble
+            std::vector<uint8_t> bytes = assemble_code(content, start_addr);
+
+            if (bytes.empty()) {
+                log(Terminal::RED + "Error: Assembly produced no bytes." + Terminal::RESET);
+                return;
+            }
+
+            // 4. Write to Memory
+            uint16_t current_addr = start_addr;
+            for (uint8_t byte_val : bytes) {
+                m_debugger.get_core().get_memory().write(current_addr, byte_val);
+                current_addr++;
+            }
+            invalidate_area(start_addr, bytes.size());
+            
+            std::stringstream out;
+            out << "Patched " << Terminal::CYAN << Strings::hex16(start_addr) << Terminal::RESET << " with ";
+            out << Terminal::HI_YELLOW;
+            for (size_t i = 0; i < bytes.size(); ++i) {
+                if (i > 0) out << " ";
+                out << Strings::hex8(bytes[i]);
+            }
+            out << Terminal::RESET << " (" << content << ")";
+            log(out.str());
+            
+            // Re-analyze code to update CodeMap flags
+            m_debugger.get_core().get_analyzer().parse_code(start_addr, 0, &m_debugger.get_core().get_code_map(), false, true);
+
+            if (m_auto_follow) update_code_view();
+        } catch (const std::exception& e) {
+            log(std::string(Terminal::RED) + "Error: " + e.what() + Terminal::RESET);
+        }
+        return;
+    }
+
     std::string lhs = preprocess_expr(lhs_in);
     std::string rhs = preprocess_expr(rhs_in);
+
+    // Check for block initialization: { ... }
+    std::string rhs_trimmed = rhs;
+    size_t first = rhs_trimmed.find_first_not_of(" \t");
+    if (first != std::string::npos) {
+        size_t last = rhs_trimmed.find_last_not_of(" \t");
+        rhs_trimmed = rhs_trimmed.substr(first, (last - first + 1));
+    }
+
+    if (rhs_trimmed.size() >= 2 && rhs_trimmed.front() == '{' && rhs_trimmed.back() == '}') {
+        std::string target = lhs;
+        target.erase(std::remove_if(target.begin(), target.end(), ::isspace), target.end());
+        
+        if (target.size() < 2 || target.front() != '[' || target.back() != ']') {
+             log(Terminal::RED + "Error: Block initialization only supported for memory targets (e.g. [HL])." + Terminal::RESET);
+             return;
+        }
+
+        try {
+            // 1. Calculate Start Address
+            std::string addr_expr = target.substr(1, target.size() - 2);
+            Evaluator eval(m_debugger.get_core());
+            uint16_t start_addr = static_cast<uint16_t>(eval.evaluate(addr_expr));
+            
+            // 2. Parse Byte List
+            std::string list_content = rhs_trimmed.substr(1, rhs_trimmed.size() - 2);
+            std::vector<std::string> elements;
+            std::string current;
+            int paren_level = 0;
+            for (char c : list_content) {
+                if (c == ',' && paren_level == 0) {
+                    elements.push_back(current);
+                    current.clear();
+                } else {
+                    if (c == '(') paren_level++;
+                    if (c == ')') paren_level--;
+                    current += c;
+                }
+            }
+            if (!current.empty() || elements.empty()) elements.push_back(current);
+
+            // 3. Write to Memory
+            uint16_t current_addr = start_addr;
+            for (const auto& el : elements) {
+                if (el.find_first_not_of(" \t") == std::string::npos) continue;
+                double val = eval.evaluate(el);
+                uint8_t byte_val = static_cast<uint8_t>(static_cast<int>(val));
+                m_debugger.get_core().get_memory().write(current_addr, byte_val);
+                current_addr++;
+            }
+            
+            invalidate_area(start_addr, current_addr - start_addr);
+            log("Written " + std::to_string(current_addr - start_addr) + " bytes to " + Strings::hex16(start_addr));
+            
+            // Re-analyze code to update CodeMap flags (handle new instruction lengths)
+            m_debugger.get_core().get_analyzer().parse_code(start_addr, 0, &m_debugger.get_core().get_code_map(), false, true);
+
+            if (m_auto_follow) update_code_view();
+        } catch (const std::exception& e) {
+            log(std::string(Terminal::RED) + "Error: " + e.what() + Terminal::RESET);
+        }
+        return;
+    }
+
     try {
         Evaluator eval(m_debugger.get_core());
         double val = eval.evaluate(rhs); 
@@ -633,7 +815,16 @@ void Dashboard::perform_assignment(const std::string& lhs_in, const std::string&
         }
         // 2. Pamięć?
         else if (target.front() == '[' && target.back() == ']') {
-            eval.assign(target, val); // Evaluator handles memory
+            // Manual assignment to capture address for re-analysis and avoid double evaluation side-effects
+            std::string addr_expr = target.substr(1, target.size() - 2);
+            uint16_t addr = static_cast<uint16_t>(eval.evaluate(addr_expr));
+            m_debugger.get_core().get_memory().write(addr, (uint8_t)val16);
+            
+            invalidate_area(addr, 1);
+
+            // Re-analyze code to update CodeMap flags
+            m_debugger.get_core().get_analyzer().parse_code(addr, 0, &m_debugger.get_core().get_code_map(), false, true);
+
             std::stringstream out;
             out << "Assigned " << Terminal::HI_YELLOW << Strings::hex8((uint8_t)val16) << Terminal::RESET
                 << " to memory " << Terminal::CYAN << target << Terminal::RESET;
@@ -715,7 +906,13 @@ void Dashboard::handle_command(const std::string& input) {
         ss >> cmd;
 
         if (cmd == "s" || cmd == "step") { 
-            int n=1; ss >> n; if(ss.fail()) n=1; 
+            int n=1; 
+            std::string arg;
+            std::getline(ss, arg);
+            if (!arg.empty()) {
+                try { n = static_cast<int>(eval_number(m_debugger.get_core(), arg)); } catch(...) {}
+            }
+            if (n < 1) n = 1;
             m_debugger.step(n); 
             if (m_auto_follow) update_code_view();
         }
@@ -727,9 +924,7 @@ void Dashboard::handle_command(const std::string& input) {
             std::string arg;
             if (ss >> arg) {
                 try {
-                    std::string expr = preprocess_expr(arg);
-                    Evaluator eval(m_debugger.get_core());
-                    uint16_t addr = static_cast<uint16_t>(eval.evaluate(expr));
+                    uint16_t addr = eval_addr(m_debugger.get_core(), arg);
                     log("Running to " + Strings::hex16(addr) + "...");
                     print_dashboard();
                     m_debugger.run_to(addr);
@@ -758,7 +953,7 @@ void Dashboard::handle_command(const std::string& input) {
             std::string arg;
             if (ss >> arg) {
                 try {
-                    data = static_cast<uint8_t>(m_debugger.get_core().parse_address(arg));
+                    data = static_cast<uint8_t>(eval_addr(m_debugger.get_core(), arg));
                 } catch(...) {}
             }
             m_debugger.get_core().get_cpu().request_interrupt(data);
@@ -780,11 +975,17 @@ void Dashboard::handle_command(const std::string& input) {
         else if (cmd == "help") { print_help(); }
         else if (cmd == "lines") {
             std::string type; int n;
-            if (ss >> type >> n && n > 0) {
-                if (type == "code") m_code_rows = n;
-                else if (type == "mem") m_mem_rows = n;
-                else if (type == "stack") m_stack_rows = n;
-                else log("Usage: lines <code|mem|stack> <n>");
+            if (ss >> type) {
+                std::string arg;
+                std::getline(ss, arg);
+                try { n = static_cast<int>(eval_number(m_debugger.get_core(), arg)); } catch(...) { n = 0; }
+                
+                if (n > 0) {
+                    if (type == "code") m_code_rows = n;
+                    else if (type == "mem") m_mem_rows = n;
+                    else if (type == "stack") m_stack_rows = n;
+                    else log("Usage: lines <code|mem|stack> <n>");
+                } else log("Usage: lines <code|mem|stack> <n>");
             } else log("Usage: lines <code|mem|stack> <n>");
         }
         else if (cmd == "toggle") {
@@ -802,7 +1003,7 @@ void Dashboard::handle_command(const std::string& input) {
             std::string arg; 
             if(ss>>arg) { 
                 try { 
-                    m_debugger.add_breakpoint(m_debugger.get_core().parse_address(arg)); 
+                    m_debugger.add_breakpoint(eval_addr(m_debugger.get_core(), arg)); 
                     if (m_debugger.get_breakpoints().size() == 1) m_show_watch = true;
                     log("Breakpoint set."); 
                 }
@@ -812,7 +1013,7 @@ void Dashboard::handle_command(const std::string& input) {
         else if (cmd == "d" || cmd == "delete") {
             std::string arg; 
             if(ss>>arg) { 
-                try { m_debugger.remove_breakpoint(m_debugger.get_core().parse_address(arg)); }
+                try { m_debugger.remove_breakpoint(eval_addr(m_debugger.get_core(), arg)); }
                 catch(...) { log("Invalid address."); }
             }
         }
@@ -820,7 +1021,7 @@ void Dashboard::handle_command(const std::string& input) {
             std::string arg; 
             if(ss>>arg) { 
                 try { 
-                    m_debugger.add_watch(m_debugger.get_core().parse_address(arg)); 
+                    m_debugger.add_watch(eval_addr(m_debugger.get_core(), arg)); 
                     if (m_debugger.get_watches().size() == 1) m_show_watch = true;
                 }
                 catch(...) { log("Invalid address."); }
@@ -829,7 +1030,7 @@ void Dashboard::handle_command(const std::string& input) {
         else if (cmd == "u" || cmd == "unwatch") {
             std::string arg; 
             if(ss>>arg) { 
-                try { m_debugger.remove_watch(m_debugger.get_core().parse_address(arg)); }
+                try { m_debugger.remove_watch(eval_addr(m_debugger.get_core(), arg)); }
                 catch(...) { log("Invalid address."); }
             }
         }
@@ -837,9 +1038,7 @@ void Dashboard::handle_command(const std::string& input) {
             std::string arg;
             if (ss >> arg) {
                 try {
-                    std::string expr = preprocess_expr(arg);
-                    Evaluator eval(m_debugger.get_core());
-                    m_mem_view_addr = static_cast<uint16_t>(eval.evaluate(expr));
+                    m_mem_view_addr = eval_addr(m_debugger.get_core(), arg);
                     log("Memory view moved to " + Strings::hex16(m_mem_view_addr));
                 } catch(...) { log("Invalid address."); }
             } else log("Usage: m <addr>");
@@ -848,66 +1047,116 @@ void Dashboard::handle_command(const std::string& input) {
             std::string arg;
             if (ss >> arg) {
                 try {
-                    std::string expr = preprocess_expr(arg);
-                    Evaluator eval(m_debugger.get_core());
-                    m_code_view_addr = static_cast<uint16_t>(eval.evaluate(expr));
+                    m_code_view_addr = eval_addr(m_debugger.get_core(), arg);
                     m_auto_follow = false;
                     log("Code view moved to " + Strings::hex16(m_code_view_addr));
                 } catch(...) { log("Invalid address."); }
             } else log("Usage: l <addr>");
         }
         else if (cmd == "find" || cmd == "/") {
-            std::vector<std::string> args;
-            std::string temp;
-            while (ss >> temp) args.push_back(temp);
+            std::string args;
+            std::getline(ss, args);
             
-            if (args.empty()) {
+            // Trim leading whitespace
+            size_t first = args.find_first_not_of(" \t");
+            if (first == std::string::npos) {
                 // Find Next
                 if (m_last_pattern.empty()) {
                     log("No previous search pattern.");
                 } else {
                     perform_find(m_last_found_addr + 1, m_last_pattern);
                 }
-            } else {
-                // New Search
-                uint16_t start_addr = m_mem_view_addr; // Domyślnie od kursora pamięci
-                std::vector<uint8_t> pattern;
-                size_t pattern_start_idx = 0;
-                
-                // Heurystyka: Czy pierwszy argument to bajt wzorca czy adres?
-                // Jeśli ma <= 2 znaki i jest hexem, to bajt. W przeciwnym razie (np. HL, 8000) to adres.
-                bool first_is_byte = false;
-                if (args[0].length() <= 2 && std::all_of(args[0].begin(), args[0].end(), [](unsigned char c){ return std::isxdigit(c); })) {
-                    first_is_byte = true;
-                }
-                
-                if (!first_is_byte) {
-                    // Traktuj pierwszy argument jako adres startowy
-                    try {
-                        std::string expr = preprocess_expr(args[0]);
-                        Evaluator eval(m_debugger.get_core());
-                        start_addr = static_cast<uint16_t>(eval.evaluate(expr));
-                        pattern_start_idx = 1;
-                    } catch (...) {
-                        log("Invalid address: " + args[0]);
-                        return;
-                    }
-                }
-                
-                for (size_t i = pattern_start_idx; i < args.size(); ++i) {
-                    try {
-                        pattern.push_back(static_cast<uint8_t>(std::stoul(args[i], nullptr, 16)));
-                    } catch (...) {
-                        log("Invalid byte: " + args[i]);
-                        return;
-                    }
-                }
-                
-                if (pattern.empty()) {
-                    log("No pattern specified.");
+                return;
+            }
+            args = args.substr(first);
+            // Trim trailing whitespace
+            size_t last = args.find_last_not_of(" \t");
+            if (last != std::string::npos) args = args.substr(0, last + 1);
+
+            uint16_t start_addr = m_mem_view_addr;
+            std::string pattern_str = args;
+
+            // Check if starts with pattern
+            bool starts_with_pattern = (args[0] == '"' || args[0] == '{' || (args.size() >= 4 && args.substr(0, 4) == "asm("));
+            
+            if (!starts_with_pattern) {
+                size_t space_pos = args.find_first_of(" \t");
+                std::string addr_str;
+                if (space_pos == std::string::npos) {
+                    addr_str = args;
+                    pattern_str = "";
                 } else {
-                    perform_find(start_addr, pattern);
+                    addr_str = args.substr(0, space_pos);
+                    size_t p_start = args.find_first_not_of(" \t", space_pos);
+                    pattern_str = (p_start != std::string::npos) ? args.substr(p_start) : "";
                 }
+
+                try {
+                    start_addr = eval_addr(m_debugger.get_core(), addr_str);
+                } catch (...) {
+                    log("Invalid address or pattern format: " + addr_str);
+                    return;
+                }
+            }
+
+            if (pattern_str.empty()) {
+                 if (m_last_pattern.empty()) {
+                     log("No pattern specified.");
+                 } else {
+                     perform_find(start_addr, m_last_pattern);
+                 }
+                 return;
+            }
+
+            std::vector<uint8_t> pattern;
+            
+            try {
+                if (pattern_str.front() == '"' && pattern_str.back() == '"') {
+                    // String
+                    std::string content = pattern_str.substr(1, pattern_str.size() - 2);
+                    for (char c : content) pattern.push_back((uint8_t)c);
+                }
+                else if (pattern_str.front() == '{' && pattern_str.back() == '}') {
+                    // Block { v1, v2, ... }
+                    std::string content = pattern_str.substr(1, pattern_str.size() - 2);
+                    std::string current;
+                    int paren_level = 0;
+                    for (char c : content) {
+                        if (c == ',' && paren_level == 0) {
+                            if (!current.empty()) {
+                                pattern.push_back((uint8_t)eval_number(m_debugger.get_core(), current));
+                                current.clear();
+                            }
+                        } else {
+                            if (c == '(') paren_level++;
+                            if (c == ')') paren_level--;
+                            current += c;
+                        }
+                    }
+                    if (!current.empty()) pattern.push_back((uint8_t)eval_number(m_debugger.get_core(), current));
+                }
+                else if (pattern_str.size() >= 5 && pattern_str.substr(0, 4) == "asm(" && pattern_str.back() == ')') {
+                    // asm("...")
+                    std::string content = pattern_str.substr(4, pattern_str.size() - 5);
+                    if (content.size() >= 2 && ((content.front() == '"' && content.back() == '"') || (content.front() == '\'' && content.back() == '\''))) {
+                        content = content.substr(1, content.size() - 2);
+                    }
+                    std::vector<uint8_t> bytes = assemble_code(content, 0);
+                    pattern.insert(pattern.end(), bytes.begin(), bytes.end());
+                }
+                else {
+                    log("Invalid pattern format. Use \"string\", {bytes}, or asm(\"code\").");
+                    return;
+                }
+            } catch (const std::exception& e) {
+                log("Error parsing pattern: " + std::string(e.what()));
+                return;
+            }
+
+            if (pattern.empty()) {
+                log("Empty pattern.");
+            } else {
+                perform_find(start_addr, pattern);
             }
         }
         else if (cmd == "asm") {
@@ -928,13 +1177,7 @@ void Dashboard::handle_command(const std::string& input) {
             } else {
                 try {
                     uint16_t pc = m_debugger.get_core().get_cpu().get_PC();
-                    LineAssembler assembler;
-                    std::vector<uint8_t> bytes;
-                    std::map<std::string, uint16_t> symbols;
-                    for (const auto& [addr, name] : m_debugger.get_core().get_context().labels) {
-                        symbols[name] = addr;
-                    }
-                    assembler.assemble(arg, symbols, pc, bytes);
+                    std::vector<uint8_t> bytes = assemble_code(arg, pc);
                     std::stringstream out;
                     out << "Assembled '" << Terminal::HI_WHITE << arg << Terminal::RESET << "' (ORG " << Terminal::CYAN << Strings::hex16(pc) << Terminal::RESET << "): ";
                     out << Terminal::HI_YELLOW;
@@ -958,7 +1201,7 @@ void Dashboard::handle_command(const std::string& input) {
             std::string arg;
             if (ss >> arg) {
                 try {
-                    uint16_t addr = m_debugger.get_core().parse_address(arg);
+                    uint16_t addr = eval_addr(m_debugger.get_core(), arg);
                     int count = 1;
                     ss >> count;
                     auto& analyzer = m_debugger.get_core().get_analyzer();
@@ -974,7 +1217,7 @@ void Dashboard::handle_command(const std::string& input) {
             std::string arg;
             if (ss >> arg) {
                 try {
-                    uint16_t addr = m_debugger.get_core().parse_address(arg);
+                    uint16_t addr = eval_addr(m_debugger.get_core(), arg);
                     int count = 1;
                     ss >> count;
                     auto& analyzer = m_debugger.get_core().get_analyzer();
@@ -1032,7 +1275,7 @@ void Dashboard::handle_command(const std::string& input) {
             if (!filter.empty() && filter != "*") {
                 if (isdigit(filter[0]) || filter[0] == '$' || filter[0] == '#' || (filter.size() > 2 && filter[0] == '0' && tolower(filter[1]) == 'x')) {
                     try {
-                        target_addr = m_debugger.get_core().parse_address(filter);
+                        target_addr = eval_addr(m_debugger.get_core(), filter);
                         is_address = true;
                     } catch(...) {}
                 }
@@ -1144,9 +1387,7 @@ void Dashboard::handle_command(const std::string& input) {
                 std::string expr = preprocess_expr(first_arg);
                 
                 try {
-                    Evaluator eval(m_debugger.get_core());
-                    double val = eval.evaluate(expr);
-                    addr = static_cast<uint16_t>(val);
+                    addr = eval_addr(m_debugger.get_core(), first_arg);
                     is_addr = true;
                 } catch (...) {
                     is_addr = false;
@@ -1196,9 +1437,7 @@ void Dashboard::handle_command(const std::string& input) {
                 std::string expr = preprocess_expr(first_arg);
                 
                 try {
-                    Evaluator eval(m_debugger.get_core());
-                    double val = eval.evaluate(expr);
-                    addr = static_cast<uint16_t>(val);
+                    addr = eval_addr(m_debugger.get_core(), first_arg);
                     is_addr = true;
                 } catch (...) {
                     is_addr = false;

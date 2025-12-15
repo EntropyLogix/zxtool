@@ -190,6 +190,8 @@ std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
                         try { tokens.push_back({TokenType::NUMBER, std::stod(word)}); } catch(...) { throw std::runtime_error("Unknown token: " + word); }
                     }
                 }
+            } else {
+                throw std::runtime_error(std::string("Unexpected character: ") + c);
             }
         }
     }
