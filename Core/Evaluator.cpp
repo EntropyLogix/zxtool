@@ -86,11 +86,7 @@ const std::map<std::string, Evaluator::FunctionInfo>& Evaluator::get_functions()
             std::vector<uint8_t> bytes;
             uint16_t pc = core.get_cpu().get_PC();
             assembler.assemble(code, symbols, pc, bytes);
-            std::vector<Value> res_arr;
-            for (uint8_t b : bytes) {
-                res_arr.push_back(Value((double)b));
-            }
-            return Value(res_arr);
+            return Value(bytes);
         }}}
     };
     return funcs;
@@ -117,23 +113,30 @@ void Evaluator::assign(const std::string& target_in, Value value) {
 
     // 2. Przypadek Pamięci: [WYRAŻENIE] = WARTOŚĆ
     if (target.front() == '[' && target.back() == ']') {
-        // Wyciągnij to co jest w środku nawiasów, np. z "[HL+1]" wyciągnij "HL+1"
-        std::string inner_expr = target.substr(1, target.size() - 2);
+        Value dest_val = evaluate(target);
+        if (!dest_val.is_array()) 
+             throw std::runtime_error("Invalid assignment target.");
         
-        // REKURENCJA: Oblicz adres docelowy używając tego samego ewaluatora!
-        double address_dbl = evaluate(inner_expr).as_number();
-        uint16_t address = static_cast<uint16_t>(address_dbl);
-        
-        // Zapisz do pamięci (Z80 jest 8-bitowe, więc bierzemy modulo 256)
-        if (value.is_array()) {
-            const auto& arr = value.as_array();
-            for (size_t i = 0; i < arr.size(); ++i) {
-                uint8_t byte_val = static_cast<uint8_t>(static_cast<int>(arr[i].as_number()) & 0xFF);
-                m_core.get_memory().poke(address + i, byte_val);
+        const auto& dest_addrs = dest_val.as_array();
+        auto src_bytes = value.as_byte_block();
+
+        if (dest_addrs.empty()) return;
+
+        if (dest_addrs.size() == 1) {
+            // Block write to single address
+            uint16_t start_addr = (uint16_t)dest_addrs[0].as_number();
+            for (size_t i = 0; i < src_bytes.size(); ++i) {
+                m_core.get_memory().poke(start_addr + i, src_bytes[i]);
             }
         } else {
-            uint8_t byte_val = static_cast<uint8_t>(static_cast<int>(value.as_number()) & 0xFF);
-            m_core.get_memory().poke(address, byte_val);
+            // Multi-target write
+            if (src_bytes.size() != dest_addrs.size())
+                throw std::runtime_error("Source and destination size mismatch in assignment.");
+            
+            for (size_t i = 0; i < dest_addrs.size(); ++i) {
+                uint16_t addr = (uint16_t)dest_addrs[i].as_number();
+                m_core.get_memory().poke(addr, src_bytes[i]);
+            }
         }
         return;
     }
@@ -280,12 +283,12 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
                 operator_stack.push(token);
                 break;
             case TokenType::COMMA:
-                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN && operator_stack.top().type != TokenType::LBRACE) {
+                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN && operator_stack.top().type != TokenType::LBRACE && operator_stack.top().type != TokenType::LBRACKET) {
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
                 }
-                // Jeśli jesteśmy wewnątrz tablicy, inkrementujemy licznik elementów
-                if (!operator_stack.empty() && operator_stack.top().type == TokenType::LBRACE) {
+                // Jeśli jesteśmy wewnątrz tablicy lub listy adresów, inkrementujemy licznik elementów
+                if (!operator_stack.empty() && (operator_stack.top().type == TokenType::LBRACE || operator_stack.top().type == TokenType::LBRACKET)) {
                     if (!arg_counts.empty()) arg_counts.top()++;
                 }
                 break;
@@ -299,8 +302,11 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
                 operator_stack.push(token);
                 break;
             case TokenType::LPAREN:
+                operator_stack.push(token);
+                break;
             case TokenType::LBRACKET:
                 operator_stack.push(token);
+                arg_counts.push(1);
                 break;
             case TokenType::LBRACE:
                 operator_stack.push(token);
@@ -323,8 +329,12 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
                     operator_stack.pop();
                 }
                 if (!operator_stack.empty()) operator_stack.pop();
-                static const Token peek_token = {TokenType::OPERATOR, 0, "@", &get_operators().at("@")};
-                output_queue.push_back(peek_token); 
+                
+                {
+                    int count = 1;
+                    if (!arg_counts.empty()) { count = arg_counts.top(); arg_counts.pop(); }
+                    output_queue.push_back({TokenType::ARRAY_BUILD, Value((double)count)});
+                }
                 break;
             case TokenType::RBRACE:
                 // Obsługa pustej tablicy {}
