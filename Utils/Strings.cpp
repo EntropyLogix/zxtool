@@ -32,7 +32,8 @@ std::string Strings::hex16(uint16_t v) {
     return ss.str();
 }
 
-size_t Strings::ansi_len(const std::string& s) {
+size_t Strings::length(const std::string& s, bool visible) {
+    if (!visible) return s.length();
     size_t len = 0;
     bool in_esc = false;
     for (char c : s) {
@@ -43,13 +44,13 @@ size_t Strings::ansi_len(const std::string& s) {
     return len;
 }
 
-std::string Strings::pad_ansi(const std::string& s, size_t width, char fill) {
-    size_t vis = ansi_len(s);
+std::string Strings::padding(const std::string& s, size_t width, char fill) {
+    size_t vis = length(s);
     if (vis >= width) return s;
     return s + std::string(width - vis, fill);
 }
 
-bool Strings::is_number(const std::string& s, int32_t& out_value) {
+bool Strings::parse_integer(const std::string& s, int32_t& out_value) {
     std::string str = s;
     const char* whitespace = " \t";
     str.erase(0, str.find_first_not_of(whitespace));
@@ -99,7 +100,7 @@ bool Strings::is_number(const std::string& s, int32_t& out_value) {
 
 bool Strings::parse_double(const std::string& s, double& out_value) {
     int32_t i_val;
-    if (is_number(s, i_val)) {
+    if (parse_integer(s, i_val)) {
         out_value = static_cast<double>(i_val);
         return true;
     }

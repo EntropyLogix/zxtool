@@ -7,7 +7,6 @@
 #include <vector>
 #include <cctype>
 #include <algorithm>
-#include <regex>
 #ifdef _WIN32
     #include <windows.h>
 #else
@@ -329,7 +328,7 @@ std::vector<std::string> CodeView::render() {
         }
         
         std::string mn_str = mn_ss.str();
-        int mn_len = (int)Strings::ansi_len(mn_str);
+        int mn_len = (int)Strings::length(mn_str);
         if (mn_len > 15) {
              std::string clipped;
              int visible = 0;
@@ -351,8 +350,7 @@ std::vector<std::string> CodeView::render() {
              clipped += Terminal::RESET + "...";
              ss << clipped;
         } else {
-            ss << mn_str;
-            ss << std::string(15 - mn_len, ' ');
+            ss << Strings::padding(mn_str, 15);
         }
 
         // ZONE 5: Comment (35-79)
@@ -369,12 +367,8 @@ std::vector<std::string> CodeView::render() {
 
         if (m_width > 0) {
             std::string s = ss.str();
-            size_t len = Strings::ansi_len(s);
-            int pad = m_width - (int)len;
-            if (pad > 0) {
-                if (is_pc) s += Terminal::BG_DARK_GRAY;
-                s += std::string(pad, ' ');
-            }
+            if (is_pc) s += Terminal::BG_DARK_GRAY;
+            s = Strings::padding(s, m_width);
             s += Terminal::RESET; 
             if (lines_count < m_rows) { lines_out.push_back(s); lines_count++; }
         } else
@@ -599,15 +593,6 @@ static std::string preprocess_expr(const std::string& input) {
         }
     }
     return result;
-}
-
-static double eval_number(Core& core, const std::string& arg) {
-    std::string expr = preprocess_expr(arg);
-    Evaluator eval(core);
-    return eval.evaluate(expr).as_number();
-}
-static uint16_t eval_addr(Core& core, const std::string& arg) {
-    return static_cast<uint16_t>(eval_number(core, arg));
 }
 
 std::vector<uint8_t> Dashboard::assemble_code(const std::string& code_in, uint16_t pc) {
@@ -888,672 +873,6 @@ void Dashboard::perform_find(uint16_t start_addr, const std::vector<uint8_t>& pa
 }
 
 void Dashboard::handle_command(const std::string& input) {
-        std::stringstream ss(input);
-        std::string cmd;
-        ss >> cmd;
-
-        if (cmd == "s" || cmd == "step") { 
-            int n=1; 
-            std::string arg;
-            std::getline(ss, arg);
-            if (!arg.empty()) {
-                try { n = static_cast<int>(eval_number(m_debugger.get_core(), arg)); } catch(...) {}
-            }
-            if (n < 1) n = 1;
-            m_debugger.step(n); 
-            if (m_auto_follow) update_code_view();
-        }
-        else if (cmd == "n" || cmd == "next") { 
-            m_debugger.next(); 
-            if (m_auto_follow) update_code_view();
-        }
-        else if (cmd == "g" || cmd == "go" || cmd == "cont" || cmd == "continue") { 
-            std::string arg;
-            if (ss >> arg) {
-                try {
-                    uint16_t addr = eval_addr(m_debugger.get_core(), arg);
-                    log("Running to " + Strings::hex16(addr) + "...");
-                    print_dashboard();
-                    m_debugger.run_to(addr);
-                } catch(...) { log("Invalid address."); }
-            } else {
-                log("Running...");
-                print_dashboard();
-                m_debugger.cont(); 
-            }
-            if (m_auto_follow) update_code_view();
-        }
-        else if (cmd == "ret") {
-            log("Running until return...");
-            print_dashboard();
-            m_debugger.run_until_return();
-            if (m_auto_follow) update_code_view();
-        }
-        else if (cmd == "r" || cmd == "reset") {
-            m_debugger.get_core().get_cpu().reset();
-            log("CPU Reset. PC=0000");
-            m_auto_follow = true;
-            update_code_view();
-        }
-        else if (cmd == "irq") {
-            uint8_t data = 0xFF;
-            std::string arg;
-            if (ss >> arg) {
-                try {
-                    data = static_cast<uint8_t>(eval_addr(m_debugger.get_core(), arg));
-                } catch(...) {}
-            }
-            m_debugger.get_core().get_cpu().request_interrupt(data);
-            log("IRQ requested.");
-        }
-        else if (cmd == "nmi") {
-            m_debugger.get_core().get_cpu().request_NMI();
-            log("NMI requested.");
-        }
-        else if (cmd == "di") {
-            m_debugger.get_core().get_cpu().exec_DI();
-            log("Interrupts disabled.");
-        }
-        else if (cmd == "ei") {
-            m_debugger.get_core().get_cpu().exec_EI();
-            log("Interrupts enabled.");
-        }
-        else if (cmd == "q" || cmd == "quit") { m_running = false; }
-        else if (cmd == "help") { print_help(); }
-        else if (cmd == "lines") {
-            std::string type; int n;
-            if (ss >> type) {
-                std::string arg;
-                std::getline(ss, arg);
-                try { n = static_cast<int>(eval_number(m_debugger.get_core(), arg)); } catch(...) { n = 0; }
-                
-                if (n > 0) {
-                    if (type == "code") m_code_rows = n;
-                    else if (type == "mem") m_mem_rows = n;
-                    else if (type == "stack") m_stack_rows = n;
-                    else log("Usage: lines <code|mem|stack> <n>");
-                } else log("Usage: lines <code|mem|stack> <n>");
-            } else log("Usage: lines <code|mem|stack> <n>");
-        }
-        else if (cmd == "toggle") {
-            std::string panel;
-            if (ss >> panel) {
-                if (panel == "mem" || panel == "memory") m_show_mem = !m_show_mem;
-                else if (panel == "regs" || panel == "registers") m_show_regs = !m_show_regs;
-                else if (panel == "code") m_show_code = !m_show_code;
-                else if (panel == "stack") m_show_stack = !m_show_stack;
-                else if (panel == "status" || panel == "s") m_show_watch = !m_show_watch;
-                else log("Usage: toggle <mem|regs|code|stack|status>");
-            } else log("Usage: toggle <mem|regs|code|stack|status>");
-        }
-        else if (cmd == "b" || cmd == "break") {
-            std::string arg; 
-            if(ss>>arg) { 
-                try { 
-                    m_debugger.add_breakpoint(eval_addr(m_debugger.get_core(), arg)); 
-                    if (m_debugger.get_breakpoints().size() == 1) m_show_watch = true;
-                    log("Breakpoint set."); 
-                }
-                catch(...) { log("Invalid address."); }
-            }
-        }
-        else if (cmd == "d" || cmd == "delete") {
-            std::string arg; 
-            if(ss>>arg) { 
-                try { m_debugger.remove_breakpoint(eval_addr(m_debugger.get_core(), arg)); }
-                catch(...) { log("Invalid address."); }
-            }
-        }
-        else if (cmd == "w" || cmd == "watch") {
-            std::string arg; 
-            if(ss>>arg) { 
-                try { 
-                    m_debugger.add_watch(eval_addr(m_debugger.get_core(), arg)); 
-                    if (m_debugger.get_watches().size() == 1) m_show_watch = true;
-                }
-                catch(...) { log("Invalid address."); }
-            }
-        }
-        else if (cmd == "u" || cmd == "unwatch") {
-            std::string arg; 
-            if(ss>>arg) { 
-                try { m_debugger.remove_watch(eval_addr(m_debugger.get_core(), arg)); }
-                catch(...) { log("Invalid address."); }
-            }
-        }
-        else if (cmd == "m" || cmd == "mem") {
-            std::string arg;
-            if (ss >> arg) {
-                try {
-                    m_mem_view_addr = eval_addr(m_debugger.get_core(), arg);
-                    log("Memory view moved to " + Strings::hex16(m_mem_view_addr));
-                } catch(...) { log("Invalid address."); }
-            } else log("Usage: m <addr>");
-        }
-        else if (cmd == "l" || cmd == "list") {
-            std::string arg;
-            if (ss >> arg) {
-                try {
-                    m_code_view_addr = eval_addr(m_debugger.get_core(), arg);
-                    m_auto_follow = false;
-                    log("Code view moved to " + Strings::hex16(m_code_view_addr));
-                } catch(...) { log("Invalid address."); }
-            } else log("Usage: l <addr>");
-        }
-        else if (cmd == "find" || cmd == "/") {
-            std::string args;
-            std::getline(ss, args);
-            
-            // Trim leading whitespace
-            size_t first = args.find_first_not_of(" \t");
-            if (first == std::string::npos) {
-                // Find Next
-                if (m_last_pattern.empty()) {
-                    log("No previous search pattern.");
-                } else {
-                    perform_find(m_last_found_addr + 1, m_last_pattern);
-                }
-                return;
-            }
-            args = args.substr(first);
-            // Trim trailing whitespace
-            size_t last = args.find_last_not_of(" \t");
-            if (last != std::string::npos) args = args.substr(0, last + 1);
-
-            uint16_t start_addr = m_mem_view_addr;
-            std::string pattern_str = args;
-
-            // Check if starts with pattern
-            bool starts_with_pattern = (args[0] == '"' || args[0] == '{' || (args.size() >= 4 && args.substr(0, 4) == "asm("));
-            
-            if (!starts_with_pattern) {
-                size_t space_pos = args.find_first_of(" \t");
-                std::string addr_str;
-                if (space_pos == std::string::npos) {
-                    addr_str = args;
-                    pattern_str = "";
-                } else {
-                    addr_str = args.substr(0, space_pos);
-                    size_t p_start = args.find_first_not_of(" \t", space_pos);
-                    pattern_str = (p_start != std::string::npos) ? args.substr(p_start) : "";
-                }
-
-                try {
-                    start_addr = eval_addr(m_debugger.get_core(), addr_str);
-                } catch (...) {
-                    log("Invalid address or pattern format: " + addr_str);
-                    return;
-                }
-            }
-
-            if (pattern_str.empty()) {
-                 if (m_last_pattern.empty()) {
-                     log("No pattern specified.");
-                 } else {
-                     perform_find(start_addr, m_last_pattern);
-                 }
-                 return;
-            }
-
-            std::vector<uint8_t> pattern;
-            
-            try {
-                if (pattern_str.front() == '"' && pattern_str.back() == '"') {
-                    // String
-                    std::string content = pattern_str.substr(1, pattern_str.size() - 2);
-                    for (char c : content) pattern.push_back((uint8_t)c);
-                }
-                else if (pattern_str.front() == '{' && pattern_str.back() == '}') {
-                    // Block { v1, v2, ... }
-                    std::string content = pattern_str.substr(1, pattern_str.size() - 2);
-                    std::string current;
-                    int paren_level = 0;
-                    for (char c : content) {
-                        if (c == ',' && paren_level == 0) {
-                            if (!current.empty()) {
-                                pattern.push_back((uint8_t)eval_number(m_debugger.get_core(), current));
-                                current.clear();
-                            }
-                        } else {
-                            if (c == '(') paren_level++;
-                            if (c == ')') paren_level--;
-                            current += c;
-                        }
-                    }
-                    if (!current.empty()) pattern.push_back((uint8_t)eval_number(m_debugger.get_core(), current));
-                }
-                else if (pattern_str.size() >= 5 && pattern_str.substr(0, 4) == "asm(" && pattern_str.back() == ')') {
-                    // asm("...")
-                    std::string content = pattern_str.substr(4, pattern_str.size() - 5);
-                    if (content.size() >= 2 && ((content.front() == '"' && content.back() == '"') || (content.front() == '\'' && content.back() == '\''))) {
-                        content = content.substr(1, content.size() - 2);
-                    }
-                    std::vector<uint8_t> bytes = assemble_code(content, 0);
-                    pattern.insert(pattern.end(), bytes.begin(), bytes.end());
-                }
-                else {
-                    log("Invalid pattern format. Use \"string\", {bytes}, or asm(\"code\").");
-                    return;
-                }
-            } catch (const std::exception& e) {
-                log("Error parsing pattern: " + std::string(e.what()));
-                return;
-            }
-
-            if (pattern.empty()) {
-                log("Empty pattern.");
-            } else {
-                perform_find(start_addr, pattern);
-            }
-        }
-        else if (cmd == "asm") {
-            std::string arg;
-            std::getline(ss, arg);
-            size_t first = arg.find_first_not_of(" \t");
-            if (first != std::string::npos) {
-                arg = arg.substr(first);
-                if (arg.size() >= 2 && arg.front() == '"' && arg.back() == '"') {
-                    arg = arg.substr(1, arg.size() - 2);
-                }
-            } else {
-                arg.clear();
-            }
-
-            if (arg.empty()) {
-                log("Usage: asm \"<instruction>\"");
-            } else {
-                try {
-                    uint16_t pc = m_debugger.get_core().get_cpu().get_PC();
-                    std::vector<uint8_t> bytes = assemble_code(arg, pc);
-                    std::stringstream out;
-                    out << "Assembled '" << Terminal::HI_WHITE << arg << Terminal::RESET << "' (ORG " << Terminal::CYAN << Strings::hex16(pc) << Terminal::RESET << "): ";
-                    out << Terminal::HI_YELLOW;
-                    for (size_t i = 0; i < bytes.size(); ++i) {
-                        if (i > 0) out << " ";
-                        out << Strings::hex8(bytes[i]);
-                    }
-                    out << Terminal::RESET << " (" << bytes.size() << " bytes)";
-                    log(out.str());
-                } catch (const std::exception& e) {
-                    log(std::string("Assembly Error: ") + e.what());
-                }
-            }
-        }
-        else if (cmd == "f" || cmd == "follow") {
-            m_auto_follow = true;
-            update_code_view();
-            log("Auto-follow enabled.");
-        }
-        else if (cmd == "data" || cmd == "byte") {
-            std::string arg;
-            if (ss >> arg) {
-                try {
-                    uint16_t addr = eval_addr(m_debugger.get_core(), arg);
-                    int count = 1;
-                    ss >> count;
-                    auto& analyzer = m_debugger.get_core().get_analyzer();
-                    auto& map = m_debugger.get_core().get_code_map();
-                    for(int i=0; i<count; ++i) {
-                        analyzer.set_map_type(map, addr + i, Analyzer::TYPE_BYTE);
-                    }
-                    log("Marked as data.");
-                } catch(...) { log("Invalid address."); }
-            } else log("Usage: data <addr> [count]");
-        }
-        else if (cmd == "code") {
-            std::string arg;
-            if (ss >> arg) {
-                try {
-                    uint16_t addr = eval_addr(m_debugger.get_core(), arg);
-                    int count = 1;
-                    ss >> count;
-                    auto& analyzer = m_debugger.get_core().get_analyzer();
-                    auto& map = m_debugger.get_core().get_code_map();
-                    for(int i=0; i<count; ++i) {
-                        analyzer.set_map_type(map, addr + i, Analyzer::TYPE_CODE);
-                    }
-                    log("Marked as code.");
-                } catch(...) { log("Invalid address."); }
-            } else log("Usage: code <addr> [count]");
-        }
-        else if (cmd == "?" || cmd == "calc" || cmd == "eval") {
-            std::string expr;
-            std::getline(ss, expr);
-            expr = preprocess_expr(expr);
-            if (expr.empty()) {
-                log("Usage: ? <expression> (e.g. ? HL / 2)");
-            } else {
-                try {
-                    Evaluator eval(m_debugger.get_core());
-                    Value val = eval.evaluate(expr);
-                    
-                    if (val.is_number()) {
-                        double result = val.as_number();
-                        uint16_t as_int = static_cast<uint16_t>(result);
-                        
-                        std::stringstream out;
-                        out << Terminal::CYAN << expr << Terminal::RESET 
-                            << " = " << Terminal::HI_YELLOW << Strings::hex16(as_int) << Terminal::RESET
-                            << " (Dec: " << as_int;
-                        
-                        if (result != std::floor(result)) {
-                            out << ", Float: " << std::fixed << std::setprecision(2) << result;
-                        }
-                        out << ")";
-                        log(out.str());
-                    } else {
-                        log(val.as_string());
-                    }
-                } catch (const std::exception& e) {
-                    log(std::string(Terminal::RED) + "Eval Error: " + e.what() + Terminal::RESET);
-                }
-            }
-        }
-        else if (cmd == "symbols" || cmd == "sym") {
-            std::string arg;
-            std::string filter;
-            bool sort_by_addr = false;
-            
-            while(ss >> arg) {
-                if (arg == "/a") sort_by_addr = true;
-                else filter = arg;
-            }
-
-            // Metoda 2: Reverse Lookup / Nearest Symbol
-            // Check if filter looks like an address (starts with digit, $, # or 0x)
-            bool is_address = false;
-            uint16_t target_addr = 0;
-            if (!filter.empty() && filter != "*") {
-                if (isdigit(filter[0]) || filter[0] == '$' || filter[0] == '#' || (filter.size() > 2 && filter[0] == '0' && tolower(filter[1]) == 'x')) {
-                    try {
-                        target_addr = eval_addr(m_debugger.get_core(), filter);
-                        is_address = true;
-                    } catch(...) {}
-                }
-            }
-
-            if (is_address) {
-                auto pair = m_debugger.get_core().get_context().find_nearest_symbol(target_addr);
-                if (!pair.first.empty()) {
-                    int offset = target_addr - pair.second;
-                    std::stringstream out;
-                    out << "Symbol for " << Strings::hex16(target_addr) << ": " << Terminal::HI_YELLOW << pair.first << Terminal::RESET;
-                    if (offset > 0) out << " + " << offset;
-                    log(out.str());
-                } else {
-                    log("No symbol found near " + Strings::hex16(target_addr));
-                }
-                return;
-            }
-
-            auto& labels = m_debugger.get_core().get_context().labels;
-
-            // Case 1: sym (no arguments) -> Statistics only
-            if (filter.empty()) {
-                log("Total symbols loaded: " + std::to_string(labels.size()));
-                log("Use 'sym *' to list all, or 'sym <phrase>' to search.");
-                return;
-            }
-
-            // Metoda 1: Smart List
-            struct SymEntry { uint16_t addr; std::string name; };
-            std::vector<SymEntry> matches;
-
-            std::string filter_lower = filter;
-            std::transform(filter_lower.begin(), filter_lower.end(), filter_lower.begin(), ::tolower);
-            bool unlimited_output = (filter == "*");
-            bool match_any = (filter == "*");
-
-            for (const auto& [addr, name] : labels) {
-                if (match_any) {
-                    matches.push_back({addr, name});
-                } else {
-                    std::string name_lower = name;
-                    std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
-                    if (name_lower.find(filter_lower) != std::string::npos) {
-                        matches.push_back({addr, name});
-                    }
-                }
-            }
-
-            if (matches.empty()) {
-                log("No symbols found.");
-                return;
-            }
-
-            if (sort_by_addr) {
-                // Already sorted by address (std::map iteration order)
-            } else {
-                std::sort(matches.begin(), matches.end(), [](const SymEntry& a, const SymEntry& b) {
-                    if (a.name.length() != b.name.length())
-                        return a.name.length() < b.name.length();
-                    return a.name < b.name;
-                });
-            }
-
-            std::stringstream out;
-            out << "Found " << matches.size() << " symbols:\n";
-            
-            int col_width = 30;
-            int cols = 80 / col_width; // Assuming 80 chars width
-            if (cols < 1) cols = 1;
-
-            const size_t SYMBOL_LIST_LIMIT = 10;
-            size_t limit = unlimited_output ? matches.size() : SYMBOL_LIST_LIMIT;
-            size_t count = std::min(matches.size(), limit);
-
-            for (size_t i = 0; i < count; ++i) {
-                std::stringstream entry_ss;
-                entry_ss << matches[i].name << " (" << Strings::hex16(matches[i].addr) << ")";
-                std::string entry = entry_ss.str();
-                if (entry.length() > (size_t)col_width - 2) entry = entry.substr(0, col_width - 5) + "...";
-                
-                out << std::left << std::setw(col_width) << entry;
-                if ((i + 1) % cols == 0) out << "\n";
-            }
-            if (count % cols != 0) out << "\n";
-            
-            if (matches.size() > limit) {
-                out << "... and " << (matches.size() - limit) << " more.";
-            }
-            
-            log(out.str());
-        }
-        else if (cmd == "undef" || cmd == "del" || cmd == "kill") {
-            std::string arg;
-            if (ss >> arg) {
-                if (m_debugger.get_core().get_context().remove_symbol(arg)) {
-                    log(Terminal::GREEN + "Symbol '" + arg + "' removed." + Terminal::RESET);
-                    update_code_view(); // Refresh to remove label from view
-                } else {
-                    log(Terminal::RED + "Error: Symbol '" + arg + "' not found." + Terminal::RESET);
-                }
-            } else log("Usage: undef <symbol_name>");
-        }
-        else if (cmd == "c" || cmd == "comment" || cmd == ";") {
-            std::string first_arg;
-            if (ss >> first_arg) {
-                uint16_t addr = 0;
-                bool is_addr = false;
-                std::string expr = preprocess_expr(first_arg);
-                
-                try {
-                    addr = eval_addr(m_debugger.get_core(), first_arg);
-                    is_addr = true;
-                } catch (...) {
-                    is_addr = false;
-                }
-
-                std::string rest;
-                std::getline(ss, rest);
-                std::string comment;
-
-                if (is_addr) {
-                    comment = rest;
-                } else {
-                    addr = m_debugger.get_core().get_cpu().get_PC();
-                    comment = first_arg + rest;
-                }
-
-                size_t first = comment.find_first_not_of(" \t");
-                if (first == std::string::npos) {
-                    comment.clear();
-                } else {
-                    size_t last = comment.find_last_not_of(" \t");
-                    comment = comment.substr(first, (last - first + 1));
-                }
-
-                auto& ctx = m_debugger.get_core().get_analyzer().context;
-                if (comment.empty()) {
-                    if (ctx.metadata.count(addr)) ctx.metadata[addr].inline_comment.clear();
-                    log("Comment removed at " + Strings::hex16(addr));
-                } else {
-                    ctx.metadata[addr].inline_comment = comment;
-                    log("Comment added at " + Strings::hex16(addr) + ": " + comment);
-                }
-                update_code_view();
-            } else {
-                uint16_t addr = m_debugger.get_core().get_cpu().get_PC();
-                auto& ctx = m_debugger.get_core().get_analyzer().context;
-                if (ctx.metadata.count(addr)) ctx.metadata[addr].inline_comment.clear();
-                log("Comment removed at " + Strings::hex16(addr));
-                update_code_view();
-            }
-        }
-        else if (cmd == "h" || cmd == "header") {
-            std::string first_arg;
-            if (ss >> first_arg) {
-                uint16_t addr = 0;
-                bool is_addr = false;
-                std::string expr = preprocess_expr(first_arg);
-                
-                try {
-                    addr = eval_addr(m_debugger.get_core(), first_arg);
-                    is_addr = true;
-                } catch (...) {
-                    is_addr = false;
-                }
-
-                std::string rest;
-                std::getline(ss, rest);
-                std::string comment;
-
-                if (is_addr) {
-                    comment = rest;
-                } else {
-                    addr = m_debugger.get_core().get_cpu().get_PC();
-                    comment = first_arg + rest;
-                }
-
-                size_t first = comment.find_first_not_of(" \t");
-                if (first == std::string::npos) {
-                    comment.clear();
-                } else {
-                    size_t last = comment.find_last_not_of(" \t");
-                    comment = comment.substr(first, (last - first + 1));
-                }
-
-                auto& ctx = m_debugger.get_core().get_analyzer().context;
-                if (comment.empty()) {
-                    if (ctx.metadata.count(addr)) ctx.metadata[addr].block_description.clear();
-                    log("Header removed at " + Strings::hex16(addr));
-                } else {
-                    ctx.metadata[addr].block_description = comment;
-                    log("Header added at " + Strings::hex16(addr) + ": " + comment);
-                }
-                update_code_view();
-            } else {
-                uint16_t addr = m_debugger.get_core().get_cpu().get_PC();
-                auto& ctx = m_debugger.get_core().get_analyzer().context;
-                if (ctx.metadata.count(addr)) ctx.metadata[addr].block_description.clear();
-                log("Header removed at " + Strings::hex16(addr));
-                update_code_view();
-            }
-        }
-        else if (cmd == "set") {
-            std::string args;
-            std::getline(ss, args);
-            size_t eq_pos = args.find('=');
-            if (eq_pos != std::string::npos) {
-                perform_assignment(args.substr(0, eq_pos), args.substr(eq_pos + 1));
-            } else {
-                size_t first = args.find_first_not_of(" \t");
-                if (first == std::string::npos) {
-                    log("Usage: set <target> <expression>");
-                } else {
-                    std::string target;
-                    std::string expr;
-                    
-                    if (args[first] == '[') {
-                        int depth = 0;
-                        size_t pos = first;
-                        bool found = false;
-                        while (pos < args.length()) {
-                            if (args[pos] == '[') depth++;
-                            else if (args[pos] == ']') {
-                                depth--;
-                                if (depth == 0) { found = true; break; }
-                            }
-                            pos++;
-                        }
-                        if (found) {
-                            target = args.substr(first, pos - first + 1);
-                            if (pos + 1 < args.length()) expr = args.substr(pos + 1);
-                        } else {
-                             target = args.substr(first); // Fallback (broken bracket)
-                        }
-                    } else {
-                        size_t space = args.find_first_of(" \t", first);
-                        if (space == std::string::npos) target = args.substr(first);
-                        else {
-                            target = args.substr(first, space - first);
-                            expr = args.substr(space + 1);
-                        }
-                    }
-                    
-                    size_t expr_start = expr.find_first_not_of(" \t");
-                    if (expr_start != std::string::npos) expr = expr.substr(expr_start);
-                    else expr.clear();
-
-                    if (expr.empty()) log("Usage: set <target> <expression>");
-                    else perform_assignment(target, expr);
-                }
-            }
-        }
-        else {
-            size_t eq_pos = input.find('=');
-            bool is_assignment = (eq_pos != std::string::npos);
-
-            if (is_assignment) {
-                char next_char = (eq_pos + 1 < input.length()) ? input[eq_pos+1] : 0;
-                char prev_char = (eq_pos > 0) ? input[eq_pos-1] : 0;
-                if (next_char == '=' || prev_char == '>' || prev_char == '<' || prev_char == '!') {
-                    is_assignment = false; 
-                }
-            }
-
-            if (is_assignment) {
-                std::string lhs = input.substr(0, eq_pos);
-                std::string rhs = input.substr(eq_pos + 1);
-                perform_assignment(lhs, rhs);
-            } else {
-                std::string trimmed = input;
-                trimmed.erase(std::remove_if(trimmed.begin(), trimmed.end(), ::isspace), trimmed.end());
-                if (trimmed.length() > 2) {
-                    if (trimmed.substr(trimmed.length()-2) == "++") {
-                        std::string t = trimmed.substr(0, trimmed.length()-2);
-                        perform_assignment(t, t + "++");
-                        return;
-                    }
-                    if (trimmed.substr(trimmed.length()-2) == "--") {
-                        std::string t = trimmed.substr(0, trimmed.length()-2);
-                        perform_assignment(t, t + "--");
-                        return;
-                    }
-                }
-                log("Unknown command.");
-            }
-        }
 }
 
 void Dashboard::setup_replxx() {
@@ -1593,48 +912,6 @@ void Dashboard::setup_replxx() {
         m_repl.bind_key(replxx::Replxx::KEY::TAB, tab_handler);
         m_repl.bind_key(9, tab_handler);
 }
-
-void Dashboard::print_help() {
-        m_output_buffer << "\nAvailable Commands:\n";
-        m_output_buffer << " [EXECUTION]\n";
-        m_output_buffer << "   s, step [n]            Execute instructions (default 1)\n";
-        m_output_buffer << "   n, next                Step over subroutine\n";
-        m_output_buffer << "   g, go [addr]           Continue execution (optional: to address)\n";
-        m_output_buffer << "   ret                    Run until return\n";
-        m_output_buffer << "   r, reset               Reset CPU\n";
-        m_output_buffer << "   irq [val]              Request IRQ (default $FF)\n";
-        m_output_buffer << "   nmi                    Request NMI\n";
-        m_output_buffer << "   di                     Disable Interrupts\n";
-        m_output_buffer << "   ei                     Enable Interrupts\n\n";
-        m_output_buffer << " [DATA & MEMORY]\n";
-        m_output_buffer << "   data, byte <addr> [n]  Mark as data bytes\n";
-        m_output_buffer << "   code <addr> [n]        Mark as code instructions\n";
-        m_output_buffer << "   set <tgt> [=] <val>    Set value (e.g. set HL 10, set [HL] 5)\n";
-        m_output_buffer << "   <reg>=<val>            Quick set (e.g. A=10, HL=DE)\n";
-        m_output_buffer << "   asm \"<instr>\"          Assemble instruction (e.g. asm \"LD A, 10\")\n";
-        m_output_buffer << "   <reg>++ / <reg>--      Increment/Decrement register\n";
-        m_output_buffer << "   ? <expr>               Evaluate (supports +, -, *, /, %, &, |, ^, <<, >>)\n\n";
-        m_output_buffer << " [DEBUGGING]\n";
-        m_output_buffer << "   b, break <addr>        Set breakpoint\n";
-        m_output_buffer << "   d, delete <addr>       Delete breakpoint\n";
-        m_output_buffer << "   w, watch <addr>        Add watch address\n";
-        m_output_buffer << "   u, unwatch <addr>      Remove watch\n";
-        m_output_buffer << "   symbols, sym [filter]  List symbols (use * for all, /a for addr sort)\n";
-        m_output_buffer << "   undef, del <sym>       Remove symbol definition\n";
-        m_output_buffer << "   c, ; [addr] <text>     Add inline comment (current PC if addr omitted)\n";
-        m_output_buffer << "   h, header [addr] <txt> Add block header/description\n\n";
-        m_output_buffer << " [NAVIGATION]\n";
-        m_output_buffer << "   m, mem <addr>          Move memory view\n";
-        m_output_buffer << "   l, list <addr>         Move code view\n";
-        m_output_buffer << "   find, / [addr] <bytes> Find pattern (e.g. / CD 05, / HL CD 05)\n";
-        m_output_buffer << "   f, follow              Center view on PC\n\n";
-        m_output_buffer << " [SYSTEM]\n";
-        m_output_buffer << "   help                   Show this message\n";
-        m_output_buffer << "   lines <panel> <n>      Set lines (code/mem/stack)\n";
-        m_output_buffer << "   toggle <panel>         Toggle panel (mem/regs/code/stack/status)\n";
-        m_output_buffer << "   q, quit                Exit debugger\n";
-}
-
 
 void Dashboard::print_dashboard() {
         Terminal::clear();
@@ -1766,14 +1043,14 @@ void Dashboard::print_output_buffer() {
 }
 
 void Dashboard::print_footer() {
-        const struct { const char* k; const char* n; } cmds[] = {
-            {"c", "omment"}, {"g", "o"}, {"s", "tep"}, {"n", "ext"},
-            {"r", "eset"}, {"h", "eader"}, {"q", "uit"}
-        };
-        for (const auto& c : cmds) {
-            std::cout << Terminal::GRAY << "[" << Terminal::HI_WHITE << Terminal::BOLD << c.k << Terminal::RESET << Terminal::GRAY << "]" << c.n << " " << Terminal::RESET;
-        }
-        std::cout << "\n";
+    const struct { const char* k; const char* n; } cmds[] = {
+        {"c", "omment"}, {"g", "o"}, {"s", "tep"}, {"n", "ext"},
+        {"r", "eset"}, {"h", "eader"}, {"q", "uit"}
+    };
+    for (const auto& c : cmds) {
+        std::cout << Terminal::GRAY << "[" << Terminal::HI_WHITE << Terminal::BOLD << c.k << Terminal::RESET << Terminal::GRAY << "]" << c.n << " " << Terminal::RESET;
+    }
+    std::cout << "\n";
 }
 
 uint16_t Dashboard::find_prev_instruction_pc(uint16_t target_addr) {
@@ -1827,48 +1104,38 @@ uint16_t Dashboard::find_prev_instruction_pc(uint16_t target_addr) {
     return target_addr - 1;
 }
 
-uint16_t Dashboard::get_pc_window_start(uint16_t pc, int lines) {
-    uint16_t addr = pc;
-    for (int i = 0; i < lines; ++i) {
-        addr = find_prev_instruction_pc(addr);
-    }
-    return addr;
-}
-
 void Dashboard::update_code_view() {
     if (!m_auto_follow) return;
     uint16_t pc = m_debugger.get_core().get_cpu().get_PC();
     int offset = m_code_rows / 3;
-    m_code_view_addr = get_pc_window_start(pc, offset);
+    uint16_t addr = pc;
+    for (int i = 0; i < offset; ++i) {
+        addr = find_prev_instruction_pc(addr);
+    }
+    m_code_view_addr = addr;
 }
 
 void Dashboard::print_columns(const std::vector<std::string>& left, const std::vector<std::string>& right, size_t left_width) {
         size_t rows = std::max(left.size(), right.size());
-        static const std::regex ansi_regex("\x1B\\[[0-9;]*[mK]");
 
         for (size_t i = 0; i < rows; ++i) {
             std::string l = (i < left.size()) ? left[i] : "";
             bool has_bg = (l.find("[100m") != std::string::npos);
 
-            std::cout << l;
-            if (has_bg) std::cout << Terminal::BG_DARK_GRAY;
-            
             if (!right.empty()) {
-                std::string plain = std::regex_replace(l, ansi_regex, "");
-                size_t len = plain.length();
-                int padding = (int)left_width - (int)len;
-                if (padding < 0) padding = 0;
-                std::cout << std::string(padding, ' ');
+                std::string l_padded = l;
+                if (has_bg) l_padded += Terminal::BG_DARK_GRAY;
+                std::cout << Strings::padding(l_padded, left_width);
                 if (has_bg) std::cout << Terminal::RESET;
                 std::cout << Terminal::GRAY << " | " << Terminal::RESET;
                 if (i < right.size()) std::cout << " " << right[i];
             } else {
-                if (has_bg) std::cout << Terminal::RESET;
+                std::cout << l;
+                if (has_bg) std::cout << Terminal::BG_DARK_GRAY << Terminal::RESET;
             }
             std::cout << "\n";
         }
 }
-
 
 int DebugEngine::run() {
     if (!m_options.entryPointStr.empty()) {

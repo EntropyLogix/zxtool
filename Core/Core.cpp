@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
-#include <regex>
 
 namespace fs = std::filesystem;
 
@@ -55,38 +54,6 @@ void Core::reset() {
     m_context.labels.clear();
     m_context.metadata.clear();
     m_current_path_stack.clear();
-}
-
-void Core::print_symbols(const std::string& filter) {
-    if (m_context.labels.empty()) {
-        std::cout << "No symbols loaded." << std::endl;
-        return;
-    }
-
-    std::regex filter_regex;
-    bool use_regex = false;
-    if (!filter.empty()) {
-        try {
-            std::string regex_str;
-            for (char c : filter) {
-                if (c == '*') regex_str += ".*";
-                else if (c == '?') regex_str += ".";
-                else if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') regex_str += c;
-                else { regex_str += '\\'; regex_str += c; }
-            }
-            filter_regex = std::regex(regex_str, std::regex::icase);
-            use_regex = true;
-        } catch (...) {
-            std::cout << "Invalid filter expression." << std::endl;
-            return;
-        }
-    }
-
-    for (const auto& [addr, label] : m_context.labels) {
-        if (!use_regex || std::regex_match(label, filter_regex)) {
-            std::cout << Strings::format_hex(addr, 4) << " " << label << std::endl;
-        }
-    }
 }
 
 uint16_t Core::parse_address(const std::string& addr_str) {

@@ -165,7 +165,6 @@ private:
     void validate_focus();
     void handle_command(const std::string& input);
     void setup_replxx();
-    void print_help();
     void print_separator() { std::cout << Terminal::GRAY << std::string(80, '-') << Terminal::RESET << "\n"; }
     void print_dashboard();
     void print_footer();
@@ -173,7 +172,6 @@ private:
     void print_output_buffer();
     void log(const std::string& msg) { m_output_buffer << msg << "\n"; }
     uint16_t find_prev_instruction_pc(uint16_t target_addr);
-    uint16_t get_pc_window_start(uint16_t pc, int lines);
     void update_code_view();
     std::vector<uint8_t> assemble_code(const std::string& code_in, uint16_t pc);
     void perform_assignment(const std::string& lhs_in, const std::string& rhs_in);
