@@ -14,9 +14,9 @@
 std::string DebugView::format_header(const std::string& title, const std::string& extra) const {
     std::stringstream ss;
     if (m_has_focus)
-        ss << Terminal::COLOR_YELLOW << "[" << title << "]" << Terminal::RESET;
+        ss << m_theme.header_focus << "[" << title << "]" << Terminal::RESET;
     else
-        ss << Terminal::COLOR_GREEN << "[" << title << "]" << Terminal::RESET;
+        ss << m_theme.header_blur << "[" << title << "]" << Terminal::RESET;
     if (!extra.empty())
         ss << extra;
     return ss.str();
@@ -24,21 +24,21 @@ std::string DebugView::format_header(const std::string& title, const std::string
 
 std::vector<std::string> MemoryView::render() {
     std::vector<std::string> lines;
-    std::string sep = Terminal::COLOR_GRAY + std::string(80, '-') + Terminal::RESET;
+    std::string sep = m_theme.separator + std::string(80, '-') + Terminal::RESET;
     lines.push_back(sep);
     std::stringstream extra;
-    extra << Terminal::COLOR_CYAN << " View: " << Terminal::COLOR_HI_WHITE << Strings::hex16(m_start_addr) << Terminal::RESET;
+    extra << m_theme.label << " View: " << m_theme.value << Strings::hex16(m_start_addr) << Terminal::RESET;
     lines.push_back(format_header("MEMORY", extra.str()));
     lines.push_back(sep);
     auto& mem = m_core.get_memory();
     for (size_t i = 0; i < m_rows * 16; i += 16) {
         std::stringstream ss;
         uint16_t addr = m_start_addr + i;
-        ss << Terminal::COLOR_CYAN << Strings::hex16(addr) << Terminal::RESET << ": ";
+        ss << m_theme.address << Strings::hex16(addr) << Terminal::RESET << ": ";
         for (size_t j = 0; j < 16; ++j) {
             uint8_t b = mem.read(addr + j);
             if (b == 0)
-                ss << Terminal::COLOR_GRAY << "00" << Terminal::RESET;
+                ss << m_theme.value_dim << "00" << Terminal::RESET;
             else
                 ss << Strings::hex8(b);
             if (j == 7)
@@ -48,13 +48,13 @@ std::vector<std::string> MemoryView::render() {
             else
                 ss << " ";
         }
-        ss << Terminal::COLOR_GRAY << "|" << Terminal::RESET << " ";
+        ss << m_theme.separator << "|" << Terminal::RESET << " ";
         for (size_t j = 0; j < 16; ++j) {
             uint8_t val = mem.read(addr + j);
             if (std::isprint(val))
-                ss << Terminal::COLOR_HI_YELLOW << (char)val << Terminal::RESET;
+                ss << m_theme.highlight << (char)val << Terminal::RESET;
             else
-                ss << Terminal::COLOR_GRAY << "." << Terminal::RESET;
+                ss << m_theme.value_dim << "." << Terminal::RESET;
         }
         lines.push_back(ss.str());
     }
@@ -65,22 +65,22 @@ std::vector<std::string> RegisterView::render() {
     std::vector<std::string> lines;
     long long delta = (long long)m_tstates - m_prev.m_ticks;
     std::stringstream extra;
-    extra << Terminal::COLOR_GRAY << " T: " << Terminal::RESET << m_tstates;
+    extra << m_theme.value_dim << " T: " << Terminal::RESET << m_tstates;
     if (delta > 0)
-        extra << Terminal::COLOR_RED << " (+" << delta << ")" << Terminal::RESET;
+        extra << m_theme.error << " (+" << delta << ")" << Terminal::RESET;
     lines.push_back(format_header("REGS", extra.str()));
 
     auto& cpu = m_core.get_cpu();
     auto fmt_reg16 = [&](const std::string& l, uint16_t v, uint16_t pv) -> std::string {
         std::stringstream ss;
-        ss << Terminal::COLOR_CYAN << std::setw(3) << std::left << l << Terminal::RESET << ": " 
-            << (v != pv ? Terminal::COLOR_HI_YELLOW : Terminal::COLOR_GRAY) << Strings::hex16(v) << Terminal::RESET;
+        ss << m_theme.label << std::setw(3) << std::left << l << Terminal::RESET << ": " 
+            << (v != pv ? m_theme.highlight : m_theme.value_dim) << Strings::hex16(v) << Terminal::RESET;
         return ss.str();
     };
     auto fmt_reg8_compact = [&](const std::string& l, uint8_t v, uint8_t pv) -> std::string {
         std::stringstream ss;
-        ss << Terminal::COLOR_CYAN << l << Terminal::RESET << ":" 
-            << (v != pv ? Terminal::COLOR_HI_YELLOW : Terminal::COLOR_GRAY) << Strings::hex8(v) << Terminal::RESET;
+        ss << m_theme.label << l << Terminal::RESET << ":" 
+            << (v != pv ? m_theme.highlight : m_theme.value_dim) << Strings::hex8(v) << Terminal::RESET;
         return ss.str();
     };
 
@@ -110,16 +110,16 @@ std::vector<std::string> RegisterView::render() {
     ss.str(""); 
     ss << "  " << fmt_reg16("HL", cpu.get_HL(), m_prev.m_HL.w) 
        << "   " << fmt_reg16("HL'", cpu.get_HLp(), m_prev.m_HLp.w) 
-       << "   " << Terminal::COLOR_CYAN << "IM" << Terminal::RESET << ":" 
-       << (cpu.get_IRQ_mode() != m_prev.m_IRQ_mode ? Terminal::COLOR_HI_YELLOW : Terminal::COLOR_GRAY) << (int)cpu.get_IRQ_mode() << Terminal::RESET
-       << " " << (cpu.get_IFF1() ? (Terminal::COLOR_HI_GREEN + "EI") : (Terminal::COLOR_GRAY + "DI")) << Terminal::RESET;
+       << "   " << m_theme.label << "IM" << Terminal::RESET << ":" 
+       << (cpu.get_IRQ_mode() != m_prev.m_IRQ_mode ? m_theme.highlight : m_theme.value_dim) << (int)cpu.get_IRQ_mode() << Terminal::RESET
+       << " " << (cpu.get_IFF1() ? (m_theme.header_blur + "EI") : (m_theme.value_dim + "DI")) << Terminal::RESET;
     lines.push_back(ss.str());
 
     // Row 5: IX, IY, F
     ss.str(""); 
     ss << "  " << fmt_reg16("IX", cpu.get_IX(), m_prev.m_IX.w) 
        << "   " << fmt_reg16("IY", cpu.get_IY(), m_prev.m_IY.w) << "   "
-        << Terminal::COLOR_CYAN << std::setw(3) << std::left << "F" << Terminal::RESET << ": " << format_flags(cpu.get_AF() & 0xFF, m_prev.m_AF.w & 0xFF);
+        << m_theme.label << std::setw(3) << std::left << "F" << Terminal::RESET << ": " << format_flags(cpu.get_AF() & 0xFF, m_prev.m_AF.w & 0xFF);
     lines.push_back(ss.str());
     return lines;
 }
@@ -132,11 +132,11 @@ std::string RegisterView::format_flags(uint8_t f, uint8_t prev_f) {
         bool prev_bit = (prev_f >> i) & 1;
         char c = bit ? syms[7-i] : '-';
         if (bit != prev_bit)
-            ss << Terminal::COLOR_HI_YELLOW << Terminal::BOLD << c << Terminal::RESET;
+            ss << m_theme.highlight << Terminal::BOLD << c << Terminal::RESET;
         else if (bit)
-            ss << Terminal::COLOR_HI_WHITE << c << Terminal::RESET;
+            ss << m_theme.value << c << Terminal::RESET;
         else
-            ss << Terminal::COLOR_GRAY << c << Terminal::RESET;
+            ss << m_theme.value_dim << c << Terminal::RESET;
     }
     return ss.str();
 }
@@ -144,7 +144,7 @@ std::string RegisterView::format_flags(uint8_t f, uint8_t prev_f) {
 std::vector<std::string> StackView::render() {
     std::vector<std::string> lines;
     std::stringstream extra;
-    extra << Terminal::COLOR_CYAN << " (SP=" << Terminal::COLOR_HI_WHITE << Strings::hex16(m_core.get_cpu().get_SP()) << Terminal::COLOR_CYAN << ")" << Terminal::RESET;
+    extra << m_theme.label << " (SP=" << m_theme.value << Strings::hex16(m_core.get_cpu().get_SP()) << m_theme.label << ")" << Terminal::RESET;
     lines.push_back(format_header("STACK", extra.str()));
     for (int row=0; row<m_rows; ++row) {
         uint16_t addr = m_view_addr + row*2;
@@ -152,11 +152,11 @@ std::vector<std::string> StackView::render() {
         uint8_t h = m_core.get_memory().read(addr + 1);
         uint16_t val = l | (h << 8);
         std::stringstream ss;
-        ss << "  " << Terminal::COLOR_GRAY << Strings::hex16(addr) << Terminal::RESET << ": " << Terminal::COLOR_HI_WHITE << Strings::hex16(val) << Terminal::RESET;
+        ss << "  " << m_theme.value_dim << Strings::hex16(addr) << Terminal::RESET << ": " << m_theme.value << Strings::hex16(val) << Terminal::RESET;
         uint16_t temp_val = val;
         auto line = m_core.get_analyzer().parse_instruction(temp_val);
         if (!line.label.empty())
-            ss << Terminal::COLOR_HI_YELLOW << " (" << line.label << ")" << Terminal::RESET;
+            ss << m_theme.highlight << " (" << line.label << ")" << Terminal::RESET;
         lines.push_back(ss.str());
     }
     return lines;
@@ -171,7 +171,7 @@ std::vector<std::string> CodeView::render() {
         auto line = m_core.get_analyzer().parse_instruction(temp_hist);
         if (!line.mnemonic.empty()) {
             std::stringstream ss;
-            ss << "  " << Terminal::COLOR_GRAY << Strings::hex16((uint16_t)line.address) << ": ";
+            ss << "  " << m_theme.value_dim << Strings::hex16((uint16_t)line.address) << ": ";
             for(size_t i=0; i<std::min((size_t)4, line.bytes.size()); ++i)
                 ss << Strings::hex8(line.bytes[i]) << " ";
             for(size_t i=line.bytes.size(); i<4; ++i) ss << "   ";
@@ -227,32 +227,32 @@ std::vector<std::string> CodeView::render() {
                  std::stringstream desc_ss(desc);
                  std::string segment;
                  while(std::getline(desc_ss, segment, '\n')) {
-                     if (lines_count < m_rows) { lines_out.push_back(Terminal::COLOR_GRAY + segment + Terminal::RESET); lines_count++; }
+                     if (lines_count < m_rows) { lines_out.push_back(m_theme.value_dim + segment + Terminal::RESET); lines_count++; }
                  }
              }
         }
 
         // Podejście 1: Etykieta w osobnej linii
         if (!line.label.empty()) {
-            if (lines_count < m_rows) { lines_out.push_back(Terminal::COLOR_MAGENTA + line.label + ":" + Terminal::RESET); lines_count++; }
+            if (lines_count < m_rows) { lines_out.push_back(m_theme.label + line.label + ":" + Terminal::RESET); lines_count++; }
         }
 
         std::stringstream ss;
         bool is_pc = ((uint16_t)line.address == m_pc);
-        std::string bg = is_pc ? Terminal::COLOR_BG_DARK_GRAY : "";
+        std::string bg = is_pc ? m_theme.pc_bg : "";
         std::string rst = is_pc ? (Terminal::RESET + bg) : Terminal::RESET;
         
         // ZONE 1: Gutter (0-2)
         if (is_pc) 
-            ss << bg << Terminal::COLOR_HI_GREEN << Terminal::BOLD << ">  " << rst;
+            ss << bg << m_theme.header_blur << Terminal::BOLD << ">  " << rst;
         else
             ss << "   ";
 
         // ZONE 2: Address (3-8)
         if (is_pc)
-            ss << Terminal::COLOR_HI_WHITE << Terminal::BOLD << Strings::hex16((uint16_t)line.address) << rst << ": ";
+            ss << m_theme.pc_fg << Terminal::BOLD << Strings::hex16((uint16_t)line.address) << rst << ": ";
         else
-            ss << Terminal::COLOR_CYAN << Strings::hex16((uint16_t)line.address) << rst << ": ";
+            ss << m_theme.address << Strings::hex16((uint16_t)line.address) << rst << ": ";
 
         // ZONE 3: Hex (9-18)
         std::stringstream hex_ss;
@@ -265,7 +265,7 @@ std::vector<std::string> CodeView::render() {
             }
         }
         std::string hex_str = hex_ss.str();
-        ss << Terminal::COLOR_GRAY << hex_str << rst;
+        ss << m_theme.value_dim << hex_str << rst;
         int hex_len = (int)hex_str.length();
         int hex_pad = 9 - hex_len;
         if (hex_pad > 0) ss << std::string(hex_pad, ' ');
@@ -276,9 +276,9 @@ std::vector<std::string> CodeView::render() {
         // ZONE 4: Mnemonic (20-34)
         std::stringstream mn_ss;
         if (is_pc)
-            mn_ss << Terminal::BOLD << Terminal::COLOR_WHITE;
+            mn_ss << Terminal::BOLD << m_theme.pc_fg;
         else
-            mn_ss << Terminal::COLOR_BLUE;
+            mn_ss << m_theme.mnemonic;
         mn_ss << line.mnemonic << rst;
 
         if (!line.operands.empty()) {
@@ -290,7 +290,7 @@ std::vector<std::string> CodeView::render() {
                 const auto& op = line.operands[i];
                 bool is_num = (op.type == Operand::IMM8 || op.type == Operand::IMM16 || op.type == Operand::MEM_IMM16);
                 if (is_num)
-                    mn_ss << Terminal::COLOR_YELLOW;
+                    mn_ss << m_theme.operand_num;
                 switch (op.type) {
                     case Operand::REG8: case Operand::REG16: case Operand::CONDITION: mn_ss << op.s_val; break;
                     case Operand::IMM8: mn_ss << "$" << Strings::hex8(op.num_val); break;
@@ -342,13 +342,13 @@ std::vector<std::string> CodeView::render() {
                  if (cmt_full.length() > 45) {
                      cmt_full = cmt_full.substr(0, 42) + "...";
                  }
-                 ss << Terminal::COLOR_GREEN << cmt_full << Terminal::RESET;
+                 ss << m_theme.comment << cmt_full << Terminal::RESET;
              }
         }
 
         if (m_width > 0) {
             std::string s = ss.str();
-            if (is_pc) s += Terminal::COLOR_BG_DARK_GRAY;
+            if (is_pc) s += m_theme.pc_bg;
             s = Strings::padding(s, m_width);
             s += Terminal::RESET; 
             if (lines_count < m_rows) { lines_out.push_back(s); lines_count++; }
@@ -544,11 +544,11 @@ void Dashboard::print_dashboard() {
 
         if (m_show_watch) {
             print_separator();
-            std::cout << (m_focus == FOCUS_WATCH || m_focus == FOCUS_BREAKPOINTS ? Terminal::COLOR_YELLOW : Terminal::COLOR_GREEN) << "[STATUS]" << Terminal::RESET << "\n";
+            std::cout << (m_focus == FOCUS_WATCH || m_focus == FOCUS_BREAKPOINTS ? m_theme.header_focus : m_theme.header_blur) << "[STATUS]" << Terminal::RESET << "\n";
 
             std::stringstream ss;
             std::string label = " WATCH: ";
-            ss << Terminal::COLOR_CYAN << label << Terminal::RESET;
+            ss << m_theme.label << label << Terminal::RESET;
             
             const auto& watches = m_debugger.get_watches();
             std::vector<std::string> items;
@@ -568,19 +568,19 @@ void Dashboard::print_dashboard() {
             for (size_t i = 0; i < items.size(); ++i) {
                 std::string sep = first ? "" : ", ";
                 if (current_len + sep.length() + items[i].length() > (size_t)(max_len - 10)) {
-                    ss << Terminal::COLOR_GRAY << "... (+" << (items.size() - i) << ")" << Terminal::RESET;
+                    ss << m_theme.value_dim << "... (+" << (items.size() - i) << ")" << Terminal::RESET;
                     break;
                 }
-                ss << Terminal::COLOR_HI_WHITE << sep << items[i] << Terminal::RESET;
+                ss << m_theme.value << sep << items[i] << Terminal::RESET;
                 current_len += sep.length() + items[i].length();
                 first = false;
             }
-            if (items.empty()) ss << Terminal::COLOR_GRAY << "No items." << Terminal::RESET;
+            if (items.empty()) ss << m_theme.value_dim << "No items." << Terminal::RESET;
             std::cout << ss.str() << "\n";
             
             ss.str(""); ss.clear();
             label = " BREAK: ";
-            ss << Terminal::COLOR_RED << label << Terminal::RESET;
+            ss << m_theme.error << label << Terminal::RESET;
             
             const auto& breakpoints = m_debugger.get_breakpoints();
             items.clear();
@@ -598,14 +598,14 @@ void Dashboard::print_dashboard() {
             for (size_t i = 0; i < items.size(); ++i) {
                 std::string sep = first ? "" : ", ";
                 if (current_len + sep.length() + items[i].length() > (size_t)(max_len - 10)) {
-                    ss << Terminal::COLOR_GRAY << "... (+" << (items.size() - i) << ")" << Terminal::RESET;
+                    ss << m_theme.value_dim << "... (+" << (items.size() - i) << ")" << Terminal::RESET;
                     break;
                 }
-                ss << Terminal::COLOR_HI_WHITE << sep << items[i] << Terminal::RESET;
+                ss << m_theme.value << sep << items[i] << Terminal::RESET;
                 current_len += sep.length() + items[i].length();
                 first = false;
             }
-            if (items.empty()) ss << Terminal::COLOR_GRAY << "No items." << Terminal::RESET;
+            if (items.empty()) ss << m_theme.value_dim << "No items." << Terminal::RESET;
             std::cout << ss.str() << "\n";
             print_separator();
         }
@@ -619,7 +619,7 @@ void Dashboard::print_dashboard() {
 
 void Dashboard::print_output_buffer() {
     if (m_output_buffer.tellp() > 0) {
-        std::cout << Terminal::COLOR_HI_YELLOW << "[OUTPUT]" << Terminal::RESET << "\n";
+        std::cout << m_theme.highlight << "[OUTPUT]" << Terminal::RESET << "\n";
         std::cout << m_output_buffer.str();
         m_output_buffer.str("");
         m_output_buffer.clear();
@@ -632,7 +632,7 @@ void Dashboard::print_footer() {
         {"r", "eset"}, {"h", "eader"}, {"q", "uit"}
     };
     for (const auto& c : cmds) {
-        std::cout << Terminal::COLOR_GRAY << "[" << Terminal::COLOR_HI_WHITE << Terminal::BOLD << c.k << Terminal::RESET << Terminal::COLOR_GRAY << "]" << c.n << " " << Terminal::RESET;
+        std::cout << m_theme.value_dim << "[" << m_theme.value << Terminal::BOLD << c.k << Terminal::RESET << m_theme.value_dim << "]" << c.n << " " << Terminal::RESET;
     }
     std::cout << "\n";
 }
@@ -652,14 +652,14 @@ void Dashboard::print_columns(const std::vector<std::string>& left, const std::v
 
             if (!right.empty()) {
                 std::string l_padded = l;
-                if (has_bg) l_padded += Terminal::COLOR_BG_DARK_GRAY;
+                if (has_bg) l_padded += m_theme.pc_bg;
                 std::cout << Strings::padding(l_padded, left_width);
                 if (has_bg) std::cout << Terminal::RESET;
-                std::cout << Terminal::COLOR_GRAY << " | " << Terminal::RESET;
+                std::cout << m_theme.separator << " | " << Terminal::RESET;
                 if (row < right.size()) std::cout << " " << right[row];
             } else {
                 std::cout << l;
-                if (has_bg) std::cout << Terminal::COLOR_BG_DARK_GRAY << Terminal::RESET;
+                if (has_bg) std::cout << m_theme.pc_bg << Terminal::RESET;
             }
             std::cout << "\n";
         }

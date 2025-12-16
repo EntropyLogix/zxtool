@@ -14,9 +14,26 @@
 #include <algorithm>
 #include <iostream>
 
+struct Theme {
+    std::string header_focus = Terminal::rgb_fg(255, 215, 0); // Gold
+    std::string header_blur = Terminal::rgb_fg(0, 128, 0);    // Green
+    std::string separator = Terminal::rgb_fg(100, 100, 100);  // Gray
+    std::string address = Terminal::rgb_fg(0, 255, 255);      // Cyan
+    std::string value = Terminal::rgb_fg(255, 255, 255);      // White
+    std::string value_dim = Terminal::rgb_fg(100, 100, 100);  // Gray
+    std::string highlight = Terminal::rgb_fg(255, 255, 0);    // Yellow
+    std::string label = Terminal::rgb_fg(0, 255, 255);        // Cyan
+    std::string mnemonic = Terminal::rgb_fg(100, 149, 237);   // Cornflower Blue
+    std::string operand_num = Terminal::rgb_fg(255, 215, 0);  // Gold
+    std::string comment = Terminal::rgb_fg(0, 128, 0);        // Green
+    std::string pc_fg = Terminal::rgb_fg(40, 40, 40);      // White
+    std::string pc_bg = Terminal::rgb_bg(102, 102, 102);         // Dark Gray
+    std::string error = Terminal::rgb_fg(255, 0, 0);          // Red
+};
+
 class DebugView {
 public:
-    DebugView(Core& core) : m_core(core) {}
+    DebugView(Core& core, const Theme& theme) : m_core(core), m_theme(theme) {}
     virtual ~DebugView() = default;
     virtual std::vector<std::string> render() = 0;
     void set_focus(bool focus) { m_has_focus = focus; }
@@ -27,13 +44,14 @@ protected:
     std::string format_header(const std::string& title, const std::string& extra = "") const;
 
     Core& m_core;
+    const Theme& m_theme;
     bool m_has_focus = false;
     int m_rows = 0;
 };
 
 class MemoryView : public DebugView {
 public:
-    MemoryView(Core& core, int rows) : DebugView(core) { m_rows = rows; }
+    MemoryView(Core& core, int rows, const Theme& theme) : DebugView(core, theme) { m_rows = rows; }
     std::vector<std::string> render() override;
     void set_address(uint16_t addr) { m_start_addr = addr; }
     uint16_t get_address() const { return m_start_addr; }
@@ -44,7 +62,7 @@ private:
 
 class RegisterView : public DebugView {
 public:
-    RegisterView(Core& core) : DebugView(core) {}
+    RegisterView(Core& core, const Theme& theme) : DebugView(core, theme) {}
     std::vector<std::string> render() override;
     void set_state(const Core::CpuType::State& prev, uint64_t tstates) { m_prev = prev; m_tstates = tstates; }
 private:
@@ -55,7 +73,7 @@ private:
 
 class StackView : public DebugView {
 public:
-    StackView(Core& core, int rows) : DebugView(core) { m_rows = rows; }
+    StackView(Core& core, int rows, const Theme& theme) : DebugView(core, theme) { m_rows = rows; }
     std::vector<std::string> render() override;
     void set_address(uint16_t addr) { m_view_addr = addr; }
     uint16_t get_address() const { return m_view_addr; }
@@ -66,7 +84,7 @@ private:
 
 class CodeView : public DebugView {
 public:
-    CodeView(Core& core, int rows) : DebugView(core) { m_rows = rows; }
+    CodeView(Core& core, int rows, const Theme& theme) : DebugView(core, theme) { m_rows = rows; }
     std::vector<std::string> render() override;
     void set_address(uint16_t addr) { m_start_addr = addr; }
     uint16_t get_address() const { return m_start_addr; }
@@ -135,10 +153,10 @@ class Dashboard {
 public:
     Dashboard(Debugger& debugger, replxx::Replxx& repl) 
         : m_debugger(debugger), m_repl(repl)
-        , m_memory_view(debugger.get_core(), 4)
-        , m_register_view(debugger.get_core())
-        , m_stack_view(debugger.get_core(), 4)
-        , m_code_view(debugger.get_core(), 15)
+        , m_memory_view(debugger.get_core(), 4, m_theme)
+        , m_register_view(debugger.get_core(), m_theme)
+        , m_stack_view(debugger.get_core(), 4, m_theme)
+        , m_code_view(debugger.get_core(), 15, m_theme)
     {
         m_debugger.set_logger([this](const std::string& msg){ log(msg); });
     }
@@ -150,6 +168,7 @@ private:
 
     Debugger& m_debugger;
     replxx::Replxx& m_repl;
+    Theme m_theme;
     bool m_running = true;
     std::stringstream m_output_buffer;
     MemoryView m_memory_view;
