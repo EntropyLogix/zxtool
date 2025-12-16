@@ -1,15 +1,15 @@
 #include "DebugEngine.h"
-#include "../Core/Evaluator.h"
-#include <replxx.hxx>
+
 #include <iostream>
 #include <iomanip>
 #include <sstream>
 #include <vector>
 #include <cctype>
 #include <algorithm>
+#include <replxx.hxx>
+
 #include "../Utils/Strings.h"
 #include "../Utils/Terminal.h"
-#include "../Core/CodeMap.h"
 
 std::string DebugView::format_header(const std::string& title, const std::string& extra) const {
     std::stringstream ss;
@@ -27,13 +27,13 @@ std::vector<std::string> MemoryView::render() {
     std::string sep = m_theme.separator + std::string(80, '-') + Terminal::RESET;
     lines.push_back(sep);
     std::stringstream extra;
-    extra << m_theme.label << " View: " << m_theme.value << Strings::hex16(m_start_addr) << Terminal::RESET;
+    extra << m_theme.value_dim << " View: " << m_theme.value_dim << Strings::hex16(m_start_addr) << Terminal::RESET;
     lines.push_back(format_header("MEMORY", extra.str()));
     lines.push_back(sep);
     auto& mem = m_core.get_memory();
-    for (size_t i = 0; i < m_rows * 16; i += 16) {
+    for (int row = 0; row < m_rows; ++row) {
         std::stringstream ss;
-        uint16_t addr = m_start_addr + i;
+        uint16_t addr = m_start_addr + (row * 16);
         ss << m_theme.address << Strings::hex16(addr) << Terminal::RESET << ": ";
         for (size_t j = 0; j < 16; ++j) {
             uint8_t b = mem.read(addr + j);
@@ -73,53 +73,31 @@ std::vector<std::string> RegisterView::render() {
     auto& cpu = m_core.get_cpu();
     auto fmt_reg16 = [&](const std::string& l, uint16_t v, uint16_t pv) -> std::string {
         std::stringstream ss;
-        ss << m_theme.label << std::setw(3) << std::left << l << Terminal::RESET << ": " 
+        ss << m_theme.reg << std::setw(3) << std::left << l << Terminal::RESET << ": " 
             << (v != pv ? m_theme.highlight : m_theme.value_dim) << Strings::hex16(v) << Terminal::RESET;
         return ss.str();
     };
     auto fmt_reg8_compact = [&](const std::string& l, uint8_t v, uint8_t pv) -> std::string {
         std::stringstream ss;
-        ss << m_theme.label << l << Terminal::RESET << ":" 
+        ss << m_theme.reg << l << Terminal::RESET << ":" 
             << (v != pv ? m_theme.highlight : m_theme.value_dim) << Strings::hex8(v) << Terminal::RESET;
         return ss.str();
     };
 
     std::stringstream ss;
-    // Row 1: AF, AF', PC
-    ss << "  " << fmt_reg16("AF", cpu.get_AF(), m_prev.m_AF.w) 
-       << "   " << fmt_reg16("AF'", cpu.get_AFp(), m_prev.m_AFp.w) 
-       << "   " << fmt_reg16("PC", cpu.get_PC(), m_prev.m_PC.w);
+    ss << "  " << fmt_reg16("AF", cpu.get_AF(), m_prev.m_AF.w)  << "   " << fmt_reg16("AF'", cpu.get_AFp(), m_prev.m_AFp.w) << "   " << fmt_reg16("PC", cpu.get_PC(), m_prev.m_PC.w);
     lines.push_back(ss.str());
-
-    // Row 2: BC, BC', SP
-    ss.str(""); 
-    ss << "  " << fmt_reg16("BC", cpu.get_BC(), m_prev.m_BC.w) 
-       << "   " << fmt_reg16("BC'", cpu.get_BCp(), m_prev.m_BCp.w) 
-       << "   " << fmt_reg16("SP", cpu.get_SP(), m_prev.m_SP.w);
+    ss.str("");
+    ss << "  " << fmt_reg16("BC", cpu.get_BC(), m_prev.m_BC.w)  << "   " << fmt_reg16("BC'", cpu.get_BCp(), m_prev.m_BCp.w)  << "   " << fmt_reg16("SP", cpu.get_SP(), m_prev.m_SP.w);
     lines.push_back(ss.str());
-
-    // Row 3: DE, DE', I, R
     ss.str(""); 
-    ss << "  " << fmt_reg16("DE", cpu.get_DE(), m_prev.m_DE.w) 
-       << "   " << fmt_reg16("DE'", cpu.get_DEp(), m_prev.m_DEp.w) 
-       << "   " << fmt_reg8_compact("I", cpu.get_I(), m_prev.m_I) 
-       << " " << fmt_reg8_compact("R", cpu.get_R(), m_prev.m_R);
+    ss << "  " << fmt_reg16("DE", cpu.get_DE(), m_prev.m_DE.w)  << "   " << fmt_reg16("DE'", cpu.get_DEp(), m_prev.m_DEp.w)  << "   " << fmt_reg8_compact("I", cpu.get_I(), m_prev.m_I)  << " " << fmt_reg8_compact("R", cpu.get_R(), m_prev.m_R);
     lines.push_back(ss.str());
-
-    // Row 4: HL, HL', IM, IFF
     ss.str(""); 
-    ss << "  " << fmt_reg16("HL", cpu.get_HL(), m_prev.m_HL.w) 
-       << "   " << fmt_reg16("HL'", cpu.get_HLp(), m_prev.m_HLp.w) 
-       << "   " << m_theme.label << "IM" << Terminal::RESET << ":" 
-       << (cpu.get_IRQ_mode() != m_prev.m_IRQ_mode ? m_theme.highlight : m_theme.value_dim) << (int)cpu.get_IRQ_mode() << Terminal::RESET
-       << " " << (cpu.get_IFF1() ? (m_theme.header_blur + "EI") : (m_theme.value_dim + "DI")) << Terminal::RESET;
+    ss << "  " << fmt_reg16("HL", cpu.get_HL(), m_prev.m_HL.w)  << "   " << fmt_reg16("HL'", cpu.get_HLp(), m_prev.m_HLp.w)  << "   " << m_theme.reg << "IM" << Terminal::RESET << ":"  << (cpu.get_IRQ_mode() != m_prev.m_IRQ_mode ? m_theme.highlight : m_theme.value_dim) << (int)cpu.get_IRQ_mode() << Terminal::RESET << " " << (cpu.get_IFF1() ? (m_theme.header_blur + "EI") : (m_theme.value_dim + "DI")) << Terminal::RESET;
     lines.push_back(ss.str());
-
-    // Row 5: IX, IY, F
     ss.str(""); 
-    ss << "  " << fmt_reg16("IX", cpu.get_IX(), m_prev.m_IX.w) 
-       << "   " << fmt_reg16("IY", cpu.get_IY(), m_prev.m_IY.w) << "   "
-        << m_theme.label << std::setw(3) << std::left << "F" << Terminal::RESET << ": " << format_flags(cpu.get_AF() & 0xFF, m_prev.m_AF.w & 0xFF);
+    ss << "  " << fmt_reg16("IX", cpu.get_IX(), m_prev.m_IX.w)  << "   " << fmt_reg16("IY", cpu.get_IY(), m_prev.m_IY.w) << "   " << m_theme.reg << std::setw(3) << std::left << "F" << Terminal::RESET << ": " << format_flags(cpu.get_AF() & 0xFF, m_prev.m_AF.w & 0xFF);
     lines.push_back(ss.str());
     return lines;
 }
@@ -144,7 +122,7 @@ std::string RegisterView::format_flags(uint8_t f, uint8_t prev_f) {
 std::vector<std::string> StackView::render() {
     std::vector<std::string> lines;
     std::stringstream extra;
-    extra << m_theme.label << " (SP=" << m_theme.value << Strings::hex16(m_core.get_cpu().get_SP()) << m_theme.label << ")" << Terminal::RESET;
+    extra << m_theme.reg << " (SP=" << m_theme.value_dim << Strings::hex16(m_core.get_cpu().get_SP()) << m_theme.reg << ")" << Terminal::RESET;
     lines.push_back(format_header("STACK", extra.str()));
     for (int row=0; row<m_rows; ++row) {
         uint16_t addr = m_view_addr + row*2;
@@ -152,7 +130,7 @@ std::vector<std::string> StackView::render() {
         uint8_t h = m_core.get_memory().read(addr + 1);
         uint16_t val = l | (h << 8);
         std::stringstream ss;
-        ss << "  " << m_theme.value_dim << Strings::hex16(addr) << Terminal::RESET << ": " << m_theme.value << Strings::hex16(val) << Terminal::RESET;
+        ss << "  " << m_theme.value_dim << Strings::hex16(addr) << Terminal::RESET << ": " << m_theme.value_dim << Strings::hex16(val) << Terminal::RESET;
         uint16_t temp_val = val;
         auto line = m_core.get_analyzer().parse_instruction(temp_val);
         if (!line.label.empty())
@@ -176,9 +154,7 @@ std::vector<std::string> CodeView::render() {
                 ss << Strings::hex8(line.bytes[i]) << " ";
             for(size_t i=line.bytes.size(); i<4; ++i) ss << "   ";
             ss << " ";
-
             ss << std::left << std::setw(5) << line.mnemonic << " ";
-            
             if (!line.operands.empty()) {
                 using Operand = typename std::decay_t<decltype(line)>::Operand;
                 for (size_t i = 0; i < line.operands.size(); ++i) {
@@ -209,9 +185,9 @@ std::vector<std::string> CodeView::render() {
 
     while (lines_count < m_rows) {
         auto lines = m_core.get_analyzer().parse_code(temp_pc_iter, 1, code_map);
-        if (lines.empty()) break;
+        if (lines.empty())
+            break;
         const auto& line = lines[0];
-
         auto& ctx = m_core.get_analyzer().context;
         bool has_block_desc = ctx.metadata.count((uint16_t)line.address) && !ctx.metadata.at((uint16_t)line.address).block_description.empty();
         bool has_label = !line.label.empty();
@@ -309,30 +285,8 @@ std::vector<std::string> CodeView::render() {
         }
         
         std::string mn_str = mn_ss.str();
-        int mn_len = (int)Strings::length(mn_str);
-        if (mn_len > 15) {
-             std::string clipped;
-             int visible = 0;
-             bool in_ansi = false;
-             for (char c : mn_str) {
-                 if (c == '\x1B') in_ansi = true;
-                 if (in_ansi) {
-                     clipped += c;
-                     if (c == 'm' || c == 'K') in_ansi = false;
-                 } else {
-                     if (visible < 12) {
-                         clipped += c;
-                         visible++;
-                     } else {
-                         break;
-                     }
-                 }
-             }
-             clipped += Terminal::RESET + "...";
-             ss << clipped;
-        } else {
-            ss << Strings::padding(mn_str, 15);
-        }
+        // Truncate if too long, then pad if too short (or just right)
+        ss << Strings::padding(Strings::truncate(mn_str, 15), 15);
 
         // ZONE 5: Comment (35-79)
         if (ctx.metadata.count((uint16_t)line.address)) {

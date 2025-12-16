@@ -38,8 +38,10 @@ size_t Strings::length(const std::string& s, bool visible) {
     bool in_esc = false;
     for (char c : s) {
         if (c == '\033') in_esc = true;
-        else if (in_esc && c == 'm') in_esc = false;
-        else if (!in_esc) len++;
+        
+        if (in_esc) {
+            if (c == 'm' || c == 'K') in_esc = false;
+        } else len++;
     }
     return len;
 }
@@ -48,6 +50,29 @@ std::string Strings::padding(const std::string& s, size_t width, char fill) {
     size_t vis = length(s);
     if (vis >= width) return s;
     return s + std::string(width - vis, fill);
+}
+
+std::string Strings::truncate(const std::string& s, size_t width) {
+    if (length(s) <= width) return s;
+    
+    size_t target_len = (width > 3) ? width - 3 : 0;
+    std::string clipped;
+    size_t visible = 0;
+    bool in_esc = false;
+    for (char c : s) {
+        if (c == '\033') in_esc = true;
+        if (in_esc) {
+            clipped += c;
+            if (c == 'm' || c == 'K')
+                in_esc = false;
+        } else {
+            if (visible < target_len) {
+                clipped += c;
+                visible++;
+            } else break;
+        }
+    }
+    return clipped + "\033[0m...";
 }
 
 bool Strings::parse_integer(const std::string& s, int32_t& out_value) {

@@ -15,20 +15,21 @@
 #include <iostream>
 
 struct Theme {
-    std::string header_focus = Terminal::rgb_fg(255, 215, 0); // Gold
-    std::string header_blur = Terminal::rgb_fg(0, 128, 0);    // Green
-    std::string separator = Terminal::rgb_fg(100, 100, 100);  // Gray
-    std::string address = Terminal::rgb_fg(0, 255, 255);      // Cyan
-    std::string value = Terminal::rgb_fg(255, 255, 255);      // White
-    std::string value_dim = Terminal::rgb_fg(100, 100, 100);  // Gray
-    std::string highlight = Terminal::rgb_fg(255, 255, 0);    // Yellow
-    std::string label = Terminal::rgb_fg(0, 255, 255);        // Cyan
-    std::string mnemonic = Terminal::rgb_fg(100, 149, 237);   // Cornflower Blue
-    std::string operand_num = Terminal::rgb_fg(255, 215, 0);  // Gold
-    std::string comment = Terminal::rgb_fg(0, 128, 0);        // Green
-    std::string pc_fg = Terminal::rgb_fg(40, 40, 40);      // White
-    std::string pc_bg = Terminal::rgb_bg(102, 102, 102);         // Dark Gray
-    std::string error = Terminal::rgb_fg(255, 0, 0);          // Red
+    std::string header_focus = Terminal::rgb_fg(255, 255, 10);
+    std::string header_blur = Terminal::rgb_fg(109, 222, 111);
+    std::string separator = Terminal::rgb_fg(137, 137, 137);
+    std::string address = Terminal::rgb_fg(20, 208, 255);
+    std::string value = Terminal::rgb_fg(64, 64, 64);
+    std::string value_dim = Terminal::rgb_fg(255, 255, 255 );
+    std::string highlight = Terminal::rgb_fg(255, 241, 107);
+    std::string label = Terminal::rgb_fg(193, 24, 193);
+    std::string mnemonic = Terminal::rgb_fg(72, 127, 188);
+    std::string operand_num = Terminal::rgb_fg(142, 144, 63);
+    std::string reg = Terminal::rgb_fg(20, 208, 255);
+    std::string comment = Terminal::rgb_fg(78, 155, 156);
+    std::string pc_fg = Terminal::rgb_fg(220, 220, 220);
+    std::string pc_bg = Terminal::rgb_bg(102, 102, 102);
+    std::string error = Terminal::rgb_fg(255, 0, 0);
 };
 
 class DebugView {
@@ -186,7 +187,7 @@ private:
     void validate_focus();
     void handle_command(const std::string& input);
     void init();
-    void print_separator() { std::cout << Terminal::COLOR_GRAY << std::string(80, '-') << Terminal::RESET << "\n"; }
+    void print_separator() { std::cout << m_theme.separator << std::string(80, '-') << Terminal::RESET << "\n"; }
     void print_dashboard();
     void print_footer();
     void print_columns(const std::vector<std::string>& left, const std::vector<std::string>& right, size_t left_width);
