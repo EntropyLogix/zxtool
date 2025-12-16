@@ -14,6 +14,7 @@
 #endif
 #include "../Utils/Strings.h"
 #include "../Utils/Terminal.h"
+#include "../Core/CodeMap.h"
 
 static size_t levenshtein_distance(const std::string& s1, const std::string& s2) {
     const size_t m = s1.length();
@@ -628,20 +629,6 @@ std::vector<uint8_t> Dashboard::assemble_code(const std::string& code_in, uint16
 }
 
 void Dashboard::perform_assignment(const std::string& lhs_in, const std::string& rhs_in) {
-    auto invalidate_area = [&](uint16_t start, size_t length) {
-        auto& map = m_debugger.get_core().get_code_map();
-        for (size_t i = 0; i < length; ++i) {
-            map[(uint16_t)(start + i)] &= ~(Z80Analyzer<Memory>::FLAG_CODE_START | Z80Analyzer<Memory>::FLAG_CODE_INTERIOR);
-        }
-        // Clear tail of overwritten instructions
-        uint16_t tail = (uint16_t)(start + length);
-        while (map[tail] & Z80Analyzer<Memory>::FLAG_CODE_INTERIOR) {
-            map[tail] &= ~(Z80Analyzer<Memory>::FLAG_CODE_START | Z80Analyzer<Memory>::FLAG_CODE_INTERIOR);
-            tail++;
-            if (tail == start) break;
-        }
-    };
-
     // Check for asm(...) in raw rhs_in first to avoid preprocessing messing up assembly syntax (e.g. $)
     std::string rhs_trimmed_raw = rhs_in;
     size_t first_raw = rhs_trimmed_raw.find_first_not_of(" \t");
@@ -697,7 +684,7 @@ void Dashboard::perform_assignment(const std::string& lhs_in, const std::string&
                 m_debugger.get_core().get_memory().write(current_addr, byte_val);
                 current_addr++;
             }
-            invalidate_area(start_addr, bytes.size());
+            m_debugger.get_code_map().invalidate_region(start_addr, bytes.size());
             
             std::stringstream out;
             out << "Patched " << Terminal::CYAN << Strings::hex16(start_addr) << Terminal::RESET << " with ";
@@ -772,7 +759,7 @@ void Dashboard::perform_assignment(const std::string& lhs_in, const std::string&
                 current_addr++;
             }
             
-            invalidate_area(start_addr, current_addr - start_addr);
+            m_debugger.get_code_map().invalidate_region(start_addr, current_addr - start_addr);
             log("Written " + std::to_string(current_addr - start_addr) + " bytes to " + Strings::hex16(start_addr));
             
             // Re-analyze code to update CodeMap flags (handle new instruction lengths)
@@ -820,7 +807,7 @@ void Dashboard::perform_assignment(const std::string& lhs_in, const std::string&
             uint16_t addr = static_cast<uint16_t>(eval.evaluate(addr_expr).as_number());
             m_debugger.get_core().get_memory().write(addr, (uint8_t)val16);
             
-            invalidate_area(addr, 1);
+            m_debugger.get_code_map().invalidate_region(addr, 1);
 
             // Re-analyze code to update CodeMap flags
             m_debugger.get_core().get_analyzer().parse_code(addr, 0, &m_debugger.get_core().get_code_map(), false, true);

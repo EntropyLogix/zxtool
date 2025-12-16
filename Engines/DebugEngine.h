@@ -3,6 +3,7 @@
 
 #include "Engine.h"
 #include "../Core/Core.h"
+#include "../Core/CodeMap.h"
 #include "../Cmd/Options.h"
 #include "../Utils/Terminal.h"
 #include <replxx.hxx>
@@ -84,11 +85,12 @@ public:
         uint16_t pc;
     };
 
-    Debugger(Core& core) : m_core(core) { m_prev_state = m_core.get_cpu().save_state(); }
+    Debugger(Core& core) : m_core(core), m_code_map(core.get_code_map()) { m_prev_state = m_core.get_cpu().save_state(); }
     ~Debugger() = default;
 
     void set_logger(Logger logger) { m_logger = logger; }
     Core& get_core() { return m_core; }
+    CodeMap& get_code_map() { return m_code_map; }
     const std::vector<Breakpoint>& get_breakpoints() const { return m_breakpoints; }
     const std::vector<uint16_t>& get_watches() const { return m_watches; }
     const std::deque<HistoryItem>& get_execution_history() const { return m_execution_history; }
@@ -116,6 +118,7 @@ public:
 
 private:
     Core& m_core;
+    CodeMap& m_code_map;
     Logger m_logger;
     std::vector<Breakpoint> m_breakpoints;
     std::vector<uint16_t> m_watches;
@@ -169,12 +172,12 @@ private:
     void print_columns(const std::vector<std::string>& left, const std::vector<std::string>& right, size_t left_width);
     void print_output_buffer();
     void log(const std::string& msg) { m_output_buffer << msg << "\n"; }
-    void perform_assignment(const std::string& lhs, const std::string& rhs);
-    void perform_find(uint16_t start_addr, const std::vector<uint8_t>& pattern);
     uint16_t find_prev_instruction_pc(uint16_t target_addr);
     uint16_t get_pc_window_start(uint16_t pc, int lines);
     void update_code_view();
-    std::vector<uint8_t> assemble_code(const std::string& code, uint16_t pc);
+    std::vector<uint8_t> assemble_code(const std::string& code_in, uint16_t pc);
+    void perform_assignment(const std::string& lhs_in, const std::string& rhs_in);
+    void perform_find(uint16_t start_addr, const std::vector<uint8_t>& pattern);
 
     std::vector<uint8_t> m_last_pattern;
     uint16_t m_last_found_addr = 0;

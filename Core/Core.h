@@ -5,6 +5,7 @@
 #include "Z80.h"
 
 #include "Memory.h"
+#include "CodeMap.h"
 #include "Analyzer.h"
 #include "Assembler.h"
 #include "Z80Analyze.h"
@@ -31,7 +32,7 @@ public:
 
     Memory& get_memory() { return m_memory; }
     CpuType& get_cpu() { return m_cpu; }
-    Z80Analyzer<Memory>::CodeMap& get_code_map() { return m_code_map_data; }
+    CodeMap& get_code_map() { return m_code_map_data; }
     Z80Analyzer<Memory>::CodeMapProfiler& get_profiler() { return m_profiler; }
 
     Analyzer& get_analyzer() { return m_analyzer; }
@@ -48,7 +49,7 @@ public:
 
 private:
     Memory m_memory;
-    Z80Analyzer<Memory>::CodeMap m_code_map_data;
+    CodeMap m_code_map_data;
     Z80Analyzer<Memory>::CodeMapProfiler m_profiler;
     CpuType m_cpu;
     ToolAssembler m_assembler;

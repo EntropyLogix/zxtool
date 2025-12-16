@@ -15,7 +15,6 @@ class Context;
 class Analyzer : public Z80Analyzer<Memory> {
 public:
     // Używamy typów z klasy bazowej
-    using Z80Analyzer<Memory>::CodeMap;
     using Z80Analyzer<Memory>::CodeLine;
     using Z80Analyzer<Memory>::MapFlags;
 
