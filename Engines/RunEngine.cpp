@@ -24,7 +24,9 @@ int RunEngine::run() {
             } catch (...) {}
             ep = ep.substr(0, colon);
         }
-        m_cpu.set_PC(m_core.parse_address(ep));
+        int32_t val = 0;
+        Strings::parse_integer(ep, val);
+        m_cpu.set_PC((uint16_t)val);
     }
 
     if (runSteps > 0) {
@@ -41,12 +43,12 @@ int RunEngine::run() {
     }
 
     if (m_options.dumpRegs) {
-        std::cout << "PC: " << Strings::format_hex(m_cpu.get_PC(), 4) << " SP: " << Strings::format_hex(m_cpu.get_SP(), 4) << "\n";
-        std::cout << "AF: " << Strings::format_hex(m_cpu.get_AF(), 4) << " BC: " << Strings::format_hex(m_cpu.get_BC(), 4) << "\n";
-        std::cout << "DE: " << Strings::format_hex(m_cpu.get_DE(), 4) << " HL: " << Strings::format_hex(m_cpu.get_HL(), 4) << "\n";
-        std::cout << "AF': " << Strings::format_hex(m_cpu.get_AFp(), 4) << " BC': " << Strings::format_hex(m_cpu.get_BCp(), 4) << "\n";
-        std::cout << "DE': " << Strings::format_hex(m_cpu.get_DEp(), 4) << " HL': " << Strings::format_hex(m_cpu.get_HLp(), 4) << "\n";
-        std::cout << "IX: " << Strings::format_hex(m_cpu.get_IX(), 4) << " IY: " << Strings::format_hex(m_cpu.get_IY(), 4) << "\n";
+        std::cout << "PC: " << Strings::hex(m_cpu.get_PC()) << " SP: " << Strings::hex(m_cpu.get_SP()) << "\n";
+        std::cout << "AF: " << Strings::hex(m_cpu.get_AF()) << " BC: " << Strings::hex(m_cpu.get_BC()) << "\n";
+        std::cout << "DE: " << Strings::hex(m_cpu.get_DE()) << " HL: " << Strings::hex(m_cpu.get_HL()) << "\n";
+        std::cout << "AF': " << Strings::hex(m_cpu.get_AFp()) << " BC': " << Strings::hex(m_cpu.get_BCp()) << "\n";
+        std::cout << "DE': " << Strings::hex(m_cpu.get_DEp()) << " HL': " << Strings::hex(m_cpu.get_HLp()) << "\n";
+        std::cout << "IX: " << Strings::hex(m_cpu.get_IX()) << " IY: " << Strings::hex(m_cpu.get_IY()) << "\n";
         uint8_t f = m_cpu.get_AF() & 0xFF;
         std::cout << "Flags: " << ((f & 0x80) ? 'S' : '-') << ((f & 0x40) ? 'Z' : '-') << ((f & 0x20) ? '5' : '-') << ((f & 0x10) ? 'H' : '-')
                   << ((f & 0x08) ? '3' : '-') << ((f & 0x04) ? 'P' : '-') << ((f & 0x02) ? 'N' : '-') << ((f & 0x01) ? 'C' : '-') << "\n";
@@ -54,7 +56,7 @@ int RunEngine::run() {
 
     if (!m_options.dumpCodeStr.empty()) {
         auto print_line = [](const auto& line){
-            std::cout << Strings::format_hex(line.address, 4) << ": " << line.mnemonic;
+            std::cout << Strings::hex(line.address) << ": " << line.mnemonic;
             if (!line.operands.empty()) {
                 std::cout << " ";
                 using Operand = typename std::decay_t<decltype(line)>::Operand;
@@ -65,11 +67,11 @@ int RunEngine::run() {
                         case Operand::REG8: case Operand::REG16: case Operand::CONDITION:
                             std::cout << op.s_val; break;
                         case Operand::IMM8:
-                            std::cout << Strings::format_hex(op.num_val, 2); break;
+                            std::cout << Strings::hex((uint8_t)op.num_val); break;
                         case Operand::IMM16:
-                            std::cout << Strings::format_hex(op.num_val, 4); break;
+                            std::cout << Strings::hex((uint16_t)op.num_val); break;
                         case Operand::MEM_IMM16:
-                            std::cout << "(" << Strings::format_hex(op.num_val, 4) << ")"; break;
+                            std::cout << "(" << Strings::hex((uint16_t)op.num_val) << ")"; break;
                         case Operand::MEM_REG16:
                             std::cout << "(" << op.s_val << ")"; break;
                         case Operand::MEM_INDEXED:
@@ -85,7 +87,7 @@ int RunEngine::run() {
             for (const auto& block : m_core.get_blocks()) {
                 uint16_t addr = block.start_address;
                 uint16_t end_addr = addr + block.size;
-                std::cout << "--- Code Dump from " << Strings::format_hex(addr, 4) << " (" << std::dec << block.size << " bytes) ---\n";
+                std::cout << "--- Code Dump from " << Strings::hex(addr) << " (" << std::dec << block.size << " bytes) ---\n";
                 while (addr < end_addr) {
                     uint16_t temp_pc = addr;
                     auto line = m_analyzer.parse_instruction(temp_pc);
@@ -100,10 +102,14 @@ int RunEngine::run() {
             size_t count = 16;
             size_t colon_pos = m_options.dumpCodeStr.find(':');
             if (colon_pos != std::string::npos) {
-                addr = m_core.parse_address(m_options.dumpCodeStr.substr(0, colon_pos));
+                int32_t val = 0;
+                Strings::parse_integer(m_options.dumpCodeStr.substr(0, colon_pos), val);
+                addr = (uint16_t)val;
                 count = std::stoul(m_options.dumpCodeStr.substr(colon_pos + 1), nullptr, 0);
             } else {
-                addr = m_core.parse_address(m_options.dumpCodeStr);
+                int32_t val = 0;
+                Strings::parse_integer(m_options.dumpCodeStr, val);
+                addr = (uint16_t)val;
             }
             for (size_t i = 0; i < count; ++i) {
                 uint16_t temp_pc = addr;
@@ -121,11 +127,11 @@ int RunEngine::run() {
             for (const auto& block : m_core.get_blocks()) {
                 uint16_t addr = block.start_address;
                 size_t len = block.size;
-                std::cout << "--- Memory Dump from " << Strings::format_hex(addr, 4) << " (" << std::dec << len << " bytes) ---\n";
+                std::cout << "--- Memory Dump from " << Strings::hex(addr) << " (" << std::dec << len << " bytes) ---\n";
                 for (size_t i = 0; i < len; i += 16) {
-                    std::cout << Strings::format_hex((uint16_t)(addr + i), 4) << ": ";
+                    std::cout << Strings::hex((uint16_t)(addr + i)) << ": ";
                     for (size_t j = 0; j < 16; ++j) {
-                        if (i + j < len) std::cout << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << (int)m_memory.read(addr + i + j) << " ";
+                        if (i + j < len) std::cout << Strings::hex(m_memory.read(addr + i + j)) << " ";
                         else std::cout << "   ";
                     }
                     std::cout << " ";
@@ -147,18 +153,22 @@ int RunEngine::run() {
         size_t len = 256;
 
         if (colon_pos != std::string::npos) {
-            addr = m_core.parse_address(m_options.dumpMemStr.substr(0, colon_pos));
+            int32_t val = 0;
+            Strings::parse_integer(m_options.dumpMemStr.substr(0, colon_pos), val);
+            addr = (uint16_t)val;
             len = std::stoul(m_options.dumpMemStr.substr(colon_pos + 1), nullptr, 0);
         } else {
-            addr = m_core.parse_address(m_options.dumpMemStr);
+            int32_t val = 0;
+            Strings::parse_integer(m_options.dumpMemStr, val);
+            addr = (uint16_t)val;
         }
 
         std::cout << "File loaded successfully.\n";
-        std::cout << "--- Memory Dump from " << Strings::format_hex(addr, 4) << " (" << std::dec << len << " bytes) ---\n";
+        std::cout << "--- Memory Dump from " << Strings::hex(addr) << " (" << std::dec << len << " bytes) ---\n";
         for (size_t i = 0; i < len; i += 16) {
-            std::cout << Strings::format_hex((uint16_t)(addr + i), 4) << ": ";
+            std::cout << Strings::hex((uint16_t)(addr + i)) << ": ";
             for (size_t j = 0; j < 16; ++j) {
-                if (i + j < len) std::cout << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << (int)m_memory.read(addr + i + j) << " ";
+                if (i + j < len) std::cout << Strings::hex(m_memory.read(addr + i + j)) << " ";
                 else std::cout << "   ";
             }
             std::cout << " ";

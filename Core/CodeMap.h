@@ -1,9 +1,10 @@
 #ifndef __CODEMAP_H__
 #define __CODEMAP_H__
 
+#include "CoreIncludes.h"
+
 #include <vector>
 #include <cstdint>
-#include "Z80Analyze.h"
 #include "Memory.h"
 
 class CodeMap : public std::vector<uint8_t> {

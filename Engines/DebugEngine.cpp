@@ -7,9 +7,12 @@
 #include <cctype>
 #include <algorithm>
 #include <replxx.hxx>
+#include <map>
+#include <functional>
 
 #include "../Utils/Strings.h"
 #include "../Utils/Terminal.h"
+#include "../Core/Evaluator.h"
 
 std::string DebugView::format_header(const std::string& title, const std::string& extra) const {
     std::stringstream ss;
@@ -27,20 +30,20 @@ std::vector<std::string> MemoryView::render() {
     std::string sep = m_theme.separator + std::string(80, '-') + Terminal::RESET;
     lines.push_back(sep);
     std::stringstream extra;
-    extra << m_theme.value_dim << " View: " << m_theme.value_dim << Strings::hex16(m_start_addr) << Terminal::RESET;
+    extra << m_theme.value_dim << " View: " << m_theme.value_dim << Strings::hex(m_start_addr) << Terminal::RESET;
     lines.push_back(format_header("MEMORY", extra.str()));
     lines.push_back(sep);
     auto& mem = m_core.get_memory();
     for (int row = 0; row < m_rows; ++row) {
         std::stringstream ss;
         uint16_t addr = m_start_addr + (row * 16);
-        ss << m_theme.address << Strings::hex16(addr) << Terminal::RESET << ": ";
+        ss << m_theme.address << Strings::hex(addr) << Terminal::RESET << ": ";
         for (size_t j = 0; j < 16; ++j) {
             uint8_t b = mem.read(addr + j);
             if (b == 0)
                 ss << m_theme.value_dim << "00" << Terminal::RESET;
             else
-                ss << Strings::hex8(b);
+                ss << Strings::hex(b);
             if (j == 7)
                 ss << "  ";
             else if (j == 15)
@@ -74,13 +77,13 @@ std::vector<std::string> RegisterView::render() {
     auto fmt_reg16 = [&](const std::string& l, uint16_t v, uint16_t pv) -> std::string {
         std::stringstream ss;
         ss << m_theme.reg << std::setw(3) << std::left << l << Terminal::RESET << ": " 
-            << (v != pv ? m_theme.highlight : m_theme.value_dim) << Strings::hex16(v) << Terminal::RESET;
+            << (v != pv ? m_theme.highlight : m_theme.value_dim) << Strings::hex(v) << Terminal::RESET;
         return ss.str();
     };
     auto fmt_reg8_compact = [&](const std::string& l, uint8_t v, uint8_t pv) -> std::string {
         std::stringstream ss;
         ss << m_theme.reg << l << Terminal::RESET << ":" 
-            << (v != pv ? m_theme.highlight : m_theme.value_dim) << Strings::hex8(v) << Terminal::RESET;
+            << (v != pv ? m_theme.highlight : m_theme.value_dim) << Strings::hex(v) << Terminal::RESET;
         return ss.str();
     };
 
@@ -122,7 +125,7 @@ std::string RegisterView::format_flags(uint8_t f, uint8_t prev_f) {
 std::vector<std::string> StackView::render() {
     std::vector<std::string> lines;
     std::stringstream extra;
-    extra << m_theme.reg << " (SP=" << m_theme.value_dim << Strings::hex16(m_core.get_cpu().get_SP()) << m_theme.reg << ")" << Terminal::RESET;
+    extra << m_theme.reg << " (SP=" << m_theme.value_dim << Strings::hex(m_core.get_cpu().get_SP()) << m_theme.reg << ")" << Terminal::RESET;
     lines.push_back(format_header("STACK", extra.str()));
     for (int row=0; row<m_rows; ++row) {
         uint16_t addr = m_view_addr + row*2;
@@ -130,7 +133,7 @@ std::vector<std::string> StackView::render() {
         uint8_t h = m_core.get_memory().read(addr + 1);
         uint16_t val = l | (h << 8);
         std::stringstream ss;
-        ss << "  " << m_theme.value_dim << Strings::hex16(addr) << Terminal::RESET << ": " << m_theme.value_dim << Strings::hex16(val) << Terminal::RESET;
+        ss << "  " << m_theme.value_dim << Strings::hex(addr) << Terminal::RESET << ": " << m_theme.value_dim << Strings::hex(val) << Terminal::RESET;
         uint16_t temp_val = val;
         auto line = m_core.get_analyzer().parse_instruction(temp_val);
         if (!line.label.empty())
@@ -149,9 +152,9 @@ std::vector<std::string> CodeView::render() {
         auto line = m_core.get_analyzer().parse_instruction(temp_hist);
         if (!line.mnemonic.empty()) {
             std::stringstream ss;
-            ss << "  " << m_theme.value_dim << Strings::hex16((uint16_t)line.address) << ": ";
+            ss << "  " << m_theme.value_dim << Strings::hex((uint16_t)line.address) << ": ";
             for(size_t i=0; i<std::min((size_t)4, line.bytes.size()); ++i)
-                ss << Strings::hex8(line.bytes[i]) << " ";
+                ss << Strings::hex(line.bytes[i]) << " ";
             for(size_t i=line.bytes.size(); i<4; ++i) ss << "   ";
             ss << " ";
             ss << std::left << std::setw(5) << line.mnemonic << " ";
@@ -162,10 +165,10 @@ std::vector<std::string> CodeView::render() {
                     const auto& op = line.operands[i];
                     switch (op.type) {
                         case Operand::REG8: case Operand::REG16: case Operand::CONDITION: ss << op.s_val; break;
-                        case Operand::IMM8: ss << "$" << Strings::hex8(op.num_val); break;
-                        case Operand::IMM16: ss << "$" << Strings::hex16(op.num_val); break;
-                        case Operand::MEM_IMM16: ss << "($" << Strings::hex16(op.num_val) << ")"; break;
-                        case Operand::PORT_IMM8: ss << "($" << Strings::hex8(op.num_val) << ")"; break;
+                        case Operand::IMM8: ss << "$" << Strings::hex((uint8_t)op.num_val); break;
+                        case Operand::IMM16: ss << "$" << Strings::hex((uint16_t)op.num_val); break;
+                        case Operand::MEM_IMM16: ss << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
+                        case Operand::PORT_IMM8: ss << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
                         case Operand::MEM_REG16: ss << "(" << op.s_val << ")"; break;
                         case Operand::MEM_INDEXED: ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
                         case Operand::STRING: ss << "\"" << op.s_val << "\""; break;
@@ -226,18 +229,18 @@ std::vector<std::string> CodeView::render() {
 
         // ZONE 2: Address (3-8)
         if (is_pc)
-            ss << m_theme.pc_fg << Terminal::BOLD << Strings::hex16((uint16_t)line.address) << rst << ": ";
+            ss << m_theme.pc_fg << Terminal::BOLD << Strings::hex((uint16_t)line.address) << rst << ": ";
         else
-            ss << m_theme.address << Strings::hex16((uint16_t)line.address) << rst << ": ";
+            ss << m_theme.address << Strings::hex((uint16_t)line.address) << rst << ": ";
 
         // ZONE 3: Hex (9-18)
         std::stringstream hex_ss;
         if (line.bytes.size() > 3) {
-            hex_ss << Strings::hex8(line.bytes[0]) << " " << Strings::hex8(line.bytes[1]) << " ..";
+            hex_ss << Strings::hex(line.bytes[0]) << " " << Strings::hex(line.bytes[1]) << " ..";
         } else {
             for(size_t i=0; i<line.bytes.size(); ++i) {
                 if (i > 0) hex_ss << " ";
-                hex_ss << Strings::hex8(line.bytes[i]);
+                hex_ss << Strings::hex(line.bytes[i]);
             }
         }
         std::string hex_str = hex_ss.str();
@@ -269,10 +272,10 @@ std::vector<std::string> CodeView::render() {
                     mn_ss << m_theme.operand_num;
                 switch (op.type) {
                     case Operand::REG8: case Operand::REG16: case Operand::CONDITION: mn_ss << op.s_val; break;
-                    case Operand::IMM8: mn_ss << "$" << Strings::hex8(op.num_val); break;
-                    case Operand::IMM16: mn_ss << "$" << Strings::hex16(op.num_val); break;
-                    case Operand::MEM_IMM16: mn_ss << "($" << Strings::hex16(op.num_val) << ")"; break;
-                    case Operand::PORT_IMM8: mn_ss << "($" << Strings::hex8(op.num_val) << ")"; break;
+                    case Operand::IMM8: mn_ss << "$" << Strings::hex((uint8_t)op.num_val); break;
+                    case Operand::IMM16: mn_ss << "$" << Strings::hex((uint16_t)op.num_val); break;
+                    case Operand::MEM_IMM16: mn_ss << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
+                    case Operand::PORT_IMM8: mn_ss << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
                     case Operand::MEM_REG16: mn_ss << "(" << op.s_val << ")"; break;
                     case Operand::MEM_INDEXED: mn_ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
                     case Operand::STRING: mn_ss << "\"" << op.s_val << "\""; break;
@@ -362,7 +365,7 @@ void Debugger::next() {
 
         if (is_call || is_block) {
             uint16_t next_pc = temp_pc;
-            log("Stepping over... (Target: " + Strings::hex16(next_pc) + ")");
+            log("Stepping over... (Target: " + Strings::hex(next_pc) + ")");
             while (m_core.get_cpu().get_PC() != next_pc) {
                 if (check_breakpoints(m_core.get_cpu().get_PC())) break;
                 m_core.get_cpu().step();
@@ -415,6 +418,47 @@ void Dashboard::validate_focus() {
 }
 
 void Dashboard::handle_command(const std::string& input) {
+    std::stringstream ss(input);
+    std::string cmd;
+    ss >> cmd;
+    
+    std::string args;
+    std::getline(ss, args);
+    size_t first = args.find_first_not_of(" \t");
+    if (first != std::string::npos) args = args.substr(first);
+
+    static const auto eval_handler = [](Dashboard* d, const std::string& expr) {
+        try {
+            Evaluator eval(d->m_debugger.get_core());
+            Value val = eval.evaluate(expr);
+            d->m_output_buffer << expr << "\n";
+            if (val.is_number()) {
+                double v = val.number();
+                d->m_output_buffer << "Result: " << (int)v << " (" << Strings::hex((uint16_t)v) << ") %" << Strings::bin((uint16_t)v) << "\n";
+            } else if (val.is_register()) {
+                uint16_t v = val.reg().read(d->m_debugger.get_core().get_cpu());
+                d->m_output_buffer << "Register: " << val.reg().getName() << " = " << (int)v << " (";
+                if (val.reg().is_16bit()) {
+                    d->m_output_buffer << Strings::hex(v) << ") %" << Strings::bin(v);
+                } else {
+                    d->m_output_buffer << Strings::hex((uint8_t)v) << ") %" << Strings::bin((uint8_t)v);
+                }
+                d->m_output_buffer << "\n";
+            }
+        } catch (const std::exception& e) {
+            d->m_output_buffer << "Error: " << e.what() << "\n";
+        }
+    };
+
+    static const std::map<std::string, std::function<void(Dashboard*, const std::string&)>> commands = {
+        {"eval", eval_handler},
+        {"?", eval_handler}
+    };
+
+    auto it = commands.find(cmd);
+    if (it != commands.end()) {
+        it->second(this, args);
+    }
 }
 
 void Dashboard::init() {
@@ -511,7 +555,7 @@ void Dashboard::print_dashboard() {
                 std::stringstream item_ss;
                 auto pair = core.get_context().find_nearest_symbol(addr);
                 if (!pair.first.empty() && pair.second == addr) item_ss << pair.first;
-                else item_ss << Strings::hex16(addr);
+                else item_ss << Strings::hex(addr);
                 item_ss << "=" << (int)val;
                 items.push_back(item_ss.str());
             }
@@ -540,7 +584,7 @@ void Dashboard::print_dashboard() {
             items.clear();
             for (const auto& bp : breakpoints) {
                 std::stringstream item_ss;
-                item_ss << (bp.enabled ? "*" : "o") << Strings::hex16(bp.addr);
+                item_ss << (bp.enabled ? "*" : "o") << Strings::hex(bp.addr);
                 auto pair = core.get_context().find_nearest_symbol(bp.addr);
                 if (!pair.first.empty() && pair.second == bp.addr) item_ss << " (" << pair.first << ")";
                 items.push_back(item_ss.str());
@@ -586,7 +630,7 @@ void Dashboard::print_footer() {
         {"r", "eset"}, {"h", "eader"}, {"q", "uit"}
     };
     for (const auto& c : cmds) {
-        std::cout << m_theme.value_dim << "[" << m_theme.value << Terminal::BOLD << c.k << Terminal::RESET << m_theme.value_dim << "]" << c.n << " " << Terminal::RESET;
+        std::cout << m_theme.value_dim << "[" << Terminal::BOLD << c.k << Terminal::RESET << "]" << c.n << " " << Terminal::RESET;
     }
     std::cout << "\n";
 }
@@ -627,8 +671,10 @@ int DebugEngine::run() {
             if (colon != std::string::npos) {
                 ep = ep.substr(0, colon);
             }
-            uint16_t pc = m_core.parse_address(ep);
-            m_core.get_cpu().set_PC(pc);
+            int32_t val = 0;
+            if (Strings::parse_integer(ep, val)) {
+                m_core.get_cpu().set_PC((uint16_t)val);
+            } else { throw std::runtime_error("Invalid address format"); }
         } catch (const std::exception& e) {
             std::cerr << "Error parsing entry point: " << e.what() << "\n";
         }

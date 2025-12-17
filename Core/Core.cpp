@@ -40,7 +40,9 @@ void Core::load_input_files(const std::vector<std::string>& inputs) {
         size_t colon = input.find(':');
         if (colon != std::string::npos) {
             path = input.substr(0, colon);
-            address = parse_address(input.substr(colon + 1));
+            int32_t val = 0;
+            Strings::parse_integer(input.substr(colon + 1), val);
+            address = (uint16_t)val;
         }
         
         process_file(path, address);
@@ -54,41 +56,6 @@ void Core::reset() {
     m_context.labels.clear();
     m_context.metadata.clear();
     m_current_path_stack.clear();
-}
-
-uint16_t Core::parse_address(const std::string& addr_str) {
-    try {
-        std::string s = addr_str;
-        if (s.empty()) return 0;
-
-        // Binary prefix '%'
-        if (s[0] == '%') {
-             return (uint16_t)std::stoul(s.substr(1), nullptr, 2);
-        }
-
-        // Hex prefix '#' (Ghidra style)
-        if (s[0] == '#') {
-            return (uint16_t)std::stoul(s.substr(1), nullptr, 16);
-        }
-
-        // Remove 0x prefix if present
-        if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
-            return (uint16_t)std::stoul(s.substr(2), nullptr, 16);
-        }
-        // Handle $ prefix
-        if (s[0] == '$') {
-            return (uint16_t)std::stoul(s.substr(1), nullptr, 16);
-        }
-        // Handle H suffix
-        if (s.size() > 1 && (s.back() == 'h' || s.back() == 'H')) {
-             return (uint16_t)std::stoul(s.substr(0, s.size()-1), nullptr, 16);
-        }
-        
-        // Default to DECIMAL
-        return (uint16_t)std::stoul(s, nullptr, 10);
-    } catch (const std::exception& e) {
-        throw std::runtime_error("Invalid address format '" + addr_str + "': " + e.what());
-    }
 }
 
 void Core::process_file(const std::string& path, uint16_t address) {

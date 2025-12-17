@@ -3,33 +3,39 @@
 #include <iomanip>
 #include <type_traits>
 #include <charconv>
+#include <algorithm>
+#include <cctype>
 
-template <typename T>
-std::string Strings::format_hex(T value, int width) {
-    std::stringstream ss;
-    ss << "0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(width);
-    if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t>) {
-        ss << static_cast<unsigned int>(value);
-    } else {
-        ss << value;
-    }
-    return ss.str();
-}
-
-template std::string Strings::format_hex<uint16_t>(uint16_t, int);
-template std::string Strings::format_hex<int>(int, int);
-template std::string Strings::format_hex<uint8_t>(uint8_t, int);
-
-std::string Strings::hex8(uint8_t v) {
+std::string Strings::hex(uint8_t v) {
     std::stringstream ss;
     ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << (int)v;
     return ss.str();
 }
 
-std::string Strings::hex16(uint16_t v) {
+std::string Strings::hex(uint16_t v) {
     std::stringstream ss;
     ss << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << (int)v;
     return ss.str();
+}
+
+std::string Strings::bin(uint8_t v) {
+    char buffer[9];
+    buffer[8] = '\0';
+    for (int i = 0; i < 8; ++i) {
+        buffer[7 - i] = (v & 1) ? '1' : '0';
+        v >>= 1;
+    }
+    return std::string(buffer);
+}
+
+std::string Strings::bin(uint16_t v) {
+    char buffer[17];
+    buffer[16] = '\0';
+    for (int i = 0; i < 16; ++i) {
+        buffer[15 - i] = (v & 1) ? '1' : '0';
+        v >>= 1;
+    }
+    return std::string(buffer);
 }
 
 size_t Strings::length(const std::string& s, bool visible) {
@@ -143,4 +149,11 @@ bool Strings::parse_double(const std::string& s, double& out_value) {
     } catch (...) {
         return false;
     }
+}
+
+std::string Strings::upper(const std::string& s) {
+    std::string result = s;
+    std::transform(result.begin(), result.end(), result.begin(), 
+                   [](unsigned char c){ return std::toupper(c); });
+    return result;
 }

@@ -1,8 +1,9 @@
 #ifndef __MEMORY_H__
 #define __MEMORY_H__
 
-#define Z80_ENABLE_EXEC_API
-#include "Z80.h"
+#include "CoreIncludes.h"
+#include <vector>
+
 class Memory {
 public:
     Memory() {

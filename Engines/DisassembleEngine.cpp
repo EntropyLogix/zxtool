@@ -43,7 +43,7 @@ int DisassembleEngine::run() {
         } else {
             for (const auto& b : blocks) {
                 jobs.push_back({b.start_address, static_cast<uint32_t>(b.start_address + b.size), true, 0, 
-                    "--- Disassembly of " + b.description + " (" + Strings::format_hex(b.start_address, 4) + ") ---"});
+                    "--- Disassembly of " + b.description + " (" + Strings::hex(b.start_address) + ") ---"});
             }
         }
     } else {
@@ -56,9 +56,10 @@ int DisassembleEngine::run() {
                 try { count = std::stoul(ep.substr(colon + 1)); } catch (...) {}
                 ep = ep.substr(0, colon);
             }
-            try {
-                pc = m_core.parse_address(ep);
-            } catch (const std::exception& e) { std::cerr << "Invalid entry point: " << ep << " (" << e.what() << ")\n"; }
+            int32_t val = 0;
+            if (Strings::parse_integer(ep, val)) {
+                pc = (uint16_t)val;
+            } else { std::cerr << "Invalid entry point: " << ep << "\n"; }
         }
         if (has_steps) count = m_options.runSteps;
         jobs.push_back({pc, 0, false, count, ""});
@@ -94,10 +95,10 @@ int DisassembleEngine::run() {
                 using Operand = typename CodeLine::Operand;
                 using Type = typename CodeLine::Type;
 
-                out << Strings::format_hex(line.address, 4) << "  ";
+                out << Strings::hex(line.address) << "  ";
                 std::stringstream bytes_ss;
                 for (size_t i = 0; i < line.bytes.size() && i < 4; ++i) {
-                    bytes_ss << Strings::format_hex(line.bytes[i], 2) << " ";
+                    bytes_ss << Strings::hex(line.bytes[i]) << " ";
                 }
                 out << std::setfill(' ') << std::setw(13) << std::left << bytes_ss.str();
                 std::string label_part = line.label.empty() ? "" : (line.label + ":");
@@ -114,16 +115,16 @@ int DisassembleEngine::run() {
                                 out << op.s_val; 
                                 break;
                             case Operand::IMM8: 
-                                out << "$" << Strings::format_hex(op.num_val, 2); 
+                                out << "$" << Strings::hex((uint8_t)op.num_val); 
                                 break;
                             case Operand::IMM16: 
-                                out << "$" << Strings::format_hex(op.num_val, 4); 
+                                out << "$" << Strings::hex((uint16_t)op.num_val); 
                                 break;
                             case Operand::MEM_IMM16: 
-                                out << "($" << Strings::format_hex(op.num_val, 4) << ")"; 
+                                out << "($" << Strings::hex((uint16_t)op.num_val) << ")"; 
                                 break;
                             case Operand::PORT_IMM8: 
-                                out << "($" << Strings::format_hex(op.num_val, 2) << ")"; 
+                                out << "($" << Strings::hex((uint8_t)op.num_val) << ")"; 
                                 break;
                             case Operand::MEM_REG16: 
                                 out << "(" << op.s_val << ")"; 

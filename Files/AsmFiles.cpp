@@ -18,7 +18,7 @@ std::vector<typename ToolAssembler::BlockInfo> AsmFiles::assemble(const std::str
             if (!symbols.empty()) {
                 std::cout << "\nSymbols:" << std::endl;
                 for (const auto& pair : symbols) {
-                    std::cout << "  " << pair.first << ": " << Strings::format_hex(pair.second.value, 4) << std::endl;
+                    std::cout << "  " << pair.first << ": " << Strings::hex((uint16_t)pair.second.value) << std::endl;
                 }
             }
 
@@ -26,7 +26,7 @@ std::vector<typename ToolAssembler::BlockInfo> AsmFiles::assemble(const std::str
             if (!blocks.empty()) {
                 std::cout << "\nCode Blocks:" << std::endl;
                 for (const auto& block : blocks) {
-                    std::cout << "  Start: " << Strings::format_hex(block.start_address, 4)
+                    std::cout << "  Start: " << Strings::hex(block.start_address)
                               << ", Size: " << block.size << " bytes" << std::endl;
                 }
             }
@@ -35,10 +35,10 @@ std::vector<typename ToolAssembler::BlockInfo> AsmFiles::assemble(const std::str
             if (!listing.empty()) {
                 std::cout << "\nListing:" << std::endl;
                 for (const auto& line : listing) {
-                    std::cout << Strings::format_hex(line.address, 4) << "  ";
+                    std::cout << Strings::hex(line.address) << "  ";
                     std::string bytes_str;
                     for (uint8_t byte : line.bytes) {
-                        bytes_str += Strings::format_hex(byte, 2).substr(2) + " ";
+                        bytes_str += Strings::hex(byte) + " ";
                     }
                     std::cout << std::left << std::setw(12) << bytes_str;
                     std::cout << line.source_line.content << std::endl;

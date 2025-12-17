@@ -3,6 +3,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include "../Utils/Strings.h"
 
 AssembleEngine::AssembleEngine(Core& core, const Options& options)
     : m_core(core), m_options(options) {}
@@ -37,7 +38,7 @@ void AssembleEngine::save_bin(const std::string& outputFile, const std::vector<C
     }
 
     const auto& first_block = blocks.front();
-    std::cout << "Saving memory block to " << outputFile << " (Address: 0x" << std::hex << first_block.start_address << ", Size: " << std::dec << first_block.size << " bytes)" << std::endl;
+    std::cout << "Saving memory block to " << outputFile << " (Address: " << Strings::hex(first_block.start_address) << ", Size: " << std::dec << first_block.size << " bytes)" << std::endl;
 
     std::ofstream file(outputFile, std::ios::binary);
     for (uint16_t i = 0; i < first_block.size; ++i) {

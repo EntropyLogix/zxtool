@@ -1,7 +1,8 @@
-#ifndef __SMART_Z80_ANALYZE_H__
-#define __SMART_Z80_ANALYZE_H__
+#ifndef __ANALYZER_H__
+#define __ANALYZER_H__
 
-#include "Z80Analyze.h"
+#include "CoreIncludes.h"
+
 #include "Memory.h"
 #include <string>
 #include <vector>

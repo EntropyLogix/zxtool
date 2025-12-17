@@ -1,7 +1,8 @@
 #ifndef __CONTEXT_H__
 #define __CONTEXT_H__
 
-#include "Z80Analyze.h"
+#include "CoreIncludes.h"
+
 #include <map>
 #include <string>
 #include <cstdint>

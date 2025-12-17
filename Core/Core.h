@@ -1,20 +1,19 @@
 #ifndef __CORE_H__
 #define __CORE_H__
 
-#define Z80_ENABLE_EXEC_API
-#include "Z80.h"
+#include "CoreIncludes.h"
+
+#include <vector>
+#include <string>
+#include <filesystem>
 
 #include "Memory.h"
 #include "CodeMap.h"
 #include "Analyzer.h"
 #include "Assembler.h"
-#include "Z80Analyze.h"
-#include "Z80Assemble.h"
 #include "Context.h"
+
 #include "../Files/FileManager.h"
-#include <vector>
-#include <string>
-#include <filesystem>
 
 class Core : public IFileProvider {
 public:

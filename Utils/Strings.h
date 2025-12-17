@@ -6,12 +6,16 @@
 
 class Strings {
 public:
-    template <typename T> static std::string format_hex(T value, int width);
-    static std::string hex8(uint8_t v);
-    static std::string hex16(uint16_t v);
+    static std::string hex(uint8_t v);
+    static std::string hex(uint16_t v);
+    static std::string bin(uint8_t v);
+    static std::string bin(uint16_t v);
+
     static size_t length(const std::string& s, bool visible = true);
     static std::string padding(const std::string& s, size_t width, char fill = ' ');
     static std::string truncate(const std::string& s, size_t width);
+    static std::string upper(const std::string& s);
+
     static bool parse_integer(const std::string& s, int32_t& out_value);
     static bool parse_double(const std::string& s, double& out_value);
 };

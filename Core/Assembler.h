@@ -1,7 +1,8 @@
 #ifndef __ASSEMBLER_H__
 #define __ASSEMBLER_H__
 
-#include "Z80Assemble.h"
+#include "CoreIncludes.h"
+
 #include "Memory.h"
 #include <vector>
 #include <string>
