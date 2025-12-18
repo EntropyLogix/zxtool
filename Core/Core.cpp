@@ -53,8 +53,8 @@ void Core::reset() {
     m_cpu.reset();
     m_blocks.clear();
     m_profiler.reset();
-    m_context.labels.clear();
-    m_context.metadata.clear();
+    m_context.symbols.clear();
+    m_context.comments.clear();
     m_current_path_stack.clear();
 }
 

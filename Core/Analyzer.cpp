@@ -113,7 +113,8 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
             line.address = tmp; 
             line.type = CodeLine::Type::DATA; 
             line.mnemonic = "DEFM";
-            if (context.labels.count(tmp)) line.label = context.labels[tmp];
+            const Symbol* s = context.symbols.find(tmp);
+            if (s) line.label = s->getName();
             
             std::string txt;
             size_t count = 0;

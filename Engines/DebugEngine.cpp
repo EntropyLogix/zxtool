@@ -39,7 +39,7 @@ std::vector<std::string> MemoryView::render() {
         uint16_t addr = m_start_addr + (row * 16);
         ss << m_theme.address << Strings::hex(addr) << Terminal::RESET << ": ";
         for (size_t j = 0; j < 16; ++j) {
-            uint8_t b = mem.read(addr + j);
+            uint8_t b = mem.peek(addr + j);
             if (b == 0)
                 ss << m_theme.value_dim << "00" << Terminal::RESET;
             else
@@ -53,7 +53,7 @@ std::vector<std::string> MemoryView::render() {
         }
         ss << m_theme.separator << "|" << Terminal::RESET << " ";
         for (size_t j = 0; j < 16; ++j) {
-            uint8_t val = mem.read(addr + j);
+            uint8_t val = mem.peek(addr + j);
             if (std::isprint(val))
                 ss << m_theme.highlight << (char)val << Terminal::RESET;
             else
@@ -129,8 +129,8 @@ std::vector<std::string> StackView::render() {
     lines.push_back(format_header("STACK", extra.str()));
     for (int row=0; row<m_rows; ++row) {
         uint16_t addr = m_view_addr + row*2;
-        uint8_t l = m_core.get_memory().read(addr);
-        uint8_t h = m_core.get_memory().read(addr + 1);
+        uint8_t l = m_core.get_memory().peek(addr);
+        uint8_t h = m_core.get_memory().peek(addr + 1);
         uint16_t val = l | (h << 8);
         std::stringstream ss;
         ss << "  " << m_theme.value_dim << Strings::hex(addr) << Terminal::RESET << ": " << m_theme.value_dim << Strings::hex(val) << Terminal::RESET;
@@ -192,7 +192,8 @@ std::vector<std::string> CodeView::render() {
             break;
         const auto& line = lines[0];
         auto& ctx = m_core.get_analyzer().context;
-        bool has_block_desc = ctx.metadata.count((uint16_t)line.address) && !ctx.metadata.at((uint16_t)line.address).block_description.empty();
+        const Comment* block_cmt = ctx.comments.find((uint16_t)line.address, Comment::Type::Block);
+        bool has_block_desc = block_cmt && !block_cmt->getText().empty();
         bool has_label = !line.label.empty();
 
         // 1. Separacja wertykalna (Pusta linia przed nowym blokiem)
@@ -200,8 +201,8 @@ std::vector<std::string> CodeView::render() {
             if (lines_count < m_rows) { lines_out.push_back(""); lines_count++; }
         }
 
-        if (ctx.metadata.count((uint16_t)line.address)) {
-             const auto& desc = ctx.metadata.at((uint16_t)line.address).block_description;
+        if (block_cmt) {
+             const auto& desc = block_cmt->getText();
              if (!desc.empty()) {
                  std::stringstream desc_ss(desc);
                  std::string segment;
@@ -292,8 +293,9 @@ std::vector<std::string> CodeView::render() {
         ss << Strings::padding(Strings::truncate(mn_str, 15), 15);
 
         // ZONE 5: Comment (35-79)
-        if (ctx.metadata.count((uint16_t)line.address)) {
-             const auto& comment = ctx.metadata.at((uint16_t)line.address).inline_comment;
+        const Comment* inline_cmt = ctx.comments.find((uint16_t)line.address, Comment::Type::Inline);
+        if (inline_cmt) {
+             const auto& comment = inline_cmt->getText();
              if (!comment.empty()) {
                  std::string cmt_full = "; " + comment;
                  if (cmt_full.length() > 45) {
@@ -434,25 +436,42 @@ void Dashboard::handle_command(const std::string& input) {
             d->m_output_buffer << expr << "\n";
             if (val.is_number()) {
                 double v = val.number();
-                d->m_output_buffer << "Result: " << (int)v << " (" << Strings::hex((uint16_t)v) << ") %" << Strings::bin((uint16_t)v) << "\n";
+                d->m_output_buffer << "Result: " << (int)v << " ($" << Strings::hex((uint16_t)v) << ") %" << Strings::bin((uint16_t)v) << "\n";
             } else if (val.is_register()) {
                 uint16_t v = val.reg().read(d->m_debugger.get_core().get_cpu());
-                d->m_output_buffer << "Register: " << val.reg().getName() << " = " << (int)v << " (";
+                d->m_output_buffer << "Register: " << val.reg().getName() << " = " << (int)v << " ($";
                 if (val.reg().is_16bit()) {
                     d->m_output_buffer << Strings::hex(v) << ") %" << Strings::bin(v);
                 } else {
                     d->m_output_buffer << Strings::hex((uint8_t)v) << ") %" << Strings::bin((uint8_t)v);
                 }
                 d->m_output_buffer << "\n";
+            } else if (val.is_symbol()) {
+                uint16_t v = val.symbol().read();
+                d->m_output_buffer << "Symbol: " << val.symbol().getName() << " = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
+            } else if (val.is_address()) {
+                auto& mem = d->m_debugger.get_core().get_memory();
+                for (uint16_t addr : val.address()) {
+                    uint8_t v = mem.peek(addr);
+                    d->m_output_buffer << "[" << Strings::hex(addr) << "] = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
+                }
+            } else if (val.is_string()) {
+                d->m_output_buffer << "String: \"" << val.string() << "\"\n";
             }
         } catch (const std::exception& e) {
             d->m_output_buffer << "Error: " << e.what() << "\n";
         }
     };
 
+    static const auto quit_handler = [](Dashboard* d, const std::string&) {
+        d->m_running = false;
+    };
+
     static const std::map<std::string, std::function<void(Dashboard*, const std::string&)>> commands = {
         {"eval", eval_handler},
-        {"?", eval_handler}
+        {"?", eval_handler},
+        {"quit", quit_handler},
+        {"q", quit_handler}
     };
 
     auto it = commands.find(cmd);
@@ -551,7 +570,7 @@ void Dashboard::print_dashboard() {
             const auto& watches = m_debugger.get_watches();
             std::vector<std::string> items;
             for (uint16_t addr : watches) {
-                uint8_t val = core.get_memory().read(addr);
+                uint8_t val = core.get_memory().peek(addr);
                 std::stringstream item_ss;
                 auto pair = core.get_context().find_nearest_symbol(addr);
                 if (!pair.first.empty() && pair.second == addr) item_ss << pair.first;
@@ -630,7 +649,7 @@ void Dashboard::print_footer() {
         {"r", "eset"}, {"h", "eader"}, {"q", "uit"}
     };
     for (const auto& c : cmds) {
-        std::cout << m_theme.value_dim << "[" << c.k << "]" << c.n << " " << Terminal::RESET;
+        std::cout << m_theme.value << "[" << c.k << "]" << c.n << " " << Terminal::RESET;
     }
     std::cout << "\n";
 }

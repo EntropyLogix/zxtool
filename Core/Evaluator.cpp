@@ -7,6 +7,7 @@ Evaluator::Evaluator(Core& core) : m_core(core) {}
 
 static double get_val(Core& core, const Value& v) {
     if (v.is_register()) return v.reg().read(core.get_cpu());
+    if (v.is_symbol()) return v.symbol().read();
     return v.number();
 }
 
@@ -14,6 +15,14 @@ const std::map<std::string, Evaluator::OperatorInfo>& Evaluator::get_operators()
     static const std::map<std::string, OperatorInfo> ops = {
         {"_",   {100, false, true,  [](Core& c, const std::vector<Value>& args) { return -get_val(c, args[0]); }}},
         {"+",   {80, true,  false, [](Core& c, const std::vector<Value>& args) { 
+            if (args[0].is_string() || args[1].is_string()) {
+                auto to_str = [&](const Value& v) {
+                    if (v.is_string()) return v.string();
+                    double d = get_val(c, v);
+                    return (d == (long long)d) ? std::to_string((long long)d) : std::to_string(d);
+                };
+                return Value(to_str(args[0]) + to_str(args[1]));
+            }
             if (args[0].is_address() && args[1].is_address()) {
                 std::vector<uint16_t> res;
                 const auto& v1 = args[0].address();
@@ -169,6 +178,34 @@ bool Evaluator::parse_register(const std::string& word, std::vector<Token>& toke
     return false;
 }
 
+bool Evaluator::parse_symbol(const std::string& word, std::vector<Token>& tokens) {
+    const Symbol* s = m_core.get_context().symbols.find(word);
+    if (s) {
+        tokens.push_back({TokenType::SYMBOL, Value(*s), word});
+        return true;
+    }
+    return false;
+}
+
+bool Evaluator::parse_string(const std::string& expr, size_t& index, std::vector<Token>& tokens) {
+    char quote = expr[index];
+    if (quote == '"' || quote == '\'') {
+        size_t j = index + 1;
+        std::string s;
+        while (j < expr.length()) {
+            if (expr[j] == quote) {
+                tokens.push_back({TokenType::STRING, Value(s)});
+                index = j + 1;
+                return true;
+            }
+            s += expr[j];
+            j++;
+        }
+        throw std::runtime_error("Unterminated string literal");
+    }
+    return false;
+}
+
 bool Evaluator::parse_function(const std::string& word, std::vector<Token>& tokens) {
     std::string upper_word = Strings::upper(word);
     auto& funcs = get_functions();
@@ -188,6 +225,8 @@ std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
             i++;
             continue;
         }
+        if (parse_string(expr, i, tokens))
+            continue;
         if (parse_operator(expr, i, tokens))
             continue;
         if (parse_punctuation(expr, i, tokens))
@@ -200,6 +239,10 @@ std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
                 continue;
             }
             if (parse_register(word, tokens)) {
+                i = j;
+                continue;
+            }
+            if (parse_symbol(word, tokens)) {
                 i = j;
                 continue;
             }
@@ -224,6 +267,8 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
         switch (token.type) {
             case TokenType::NUMBER:
             case TokenType::REGISTER:
+            case TokenType::SYMBOL:
+            case TokenType::STRING:
                 output_queue.push_back(token);
                 break;
             case TokenType::FUNCTION:
@@ -331,6 +376,12 @@ Value Evaluator::execute_rpn(const std::vector<Token>& rpn) {
         else if (token.type == TokenType::REGISTER) {
             stack.push_back(token.value);
         }
+        else if (token.type == TokenType::SYMBOL) {
+            stack.push_back(token.value);
+        }
+        else if (token.type == TokenType::STRING) {
+            stack.push_back(token.value);
+        }
         else if (token.type == TokenType::OPERATOR) {
             const auto* info = token.op_info;
             int args_needed = info->is_unary ? 1 : 2;
@@ -369,10 +420,7 @@ Value Evaluator::execute_rpn(const std::vector<Token>& rpn) {
             }
             std::reverse(args.begin(), args.end());
             for (const auto& v : args) {
-                if (v.is_register())
-                    addrs.push_back(get_val(m_core, v));
-                else
-                    addrs.push_back((uint16_t)v.number());
+                addrs.push_back((uint16_t)get_val(m_core, v));
             }
             stack.push_back(Value(addrs));
         }

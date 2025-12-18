@@ -1,5 +1,6 @@
 #include "SymbolFile.h"
 #include "../Core/Core.h"
+#include "../Core/Symbol.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -39,9 +40,10 @@ void SymbolFile::load_sym(const std::string& filename) {
             if (valStr.back() == 'H' || valStr.back() == 'h')
                 valStr.pop_back();
             uint16_t addr = parse_hex_addr(valStr);
-            m_analyzer.context.add_label(addr, label);
+            Symbol symbol(label, addr, Symbol::Type::Constant);
+            m_analyzer.context.add_label(symbol.read(), symbol.getName());
             if (!comment.empty()) {
-                m_analyzer.context.add_inline_comment(addr, comment);
+                m_analyzer.context.add_inline_comment(symbol.read(), comment);
             }
         }
     }
@@ -54,8 +56,10 @@ void SymbolFile::load_map(const std::string& filename) {
         std::stringstream ss(line);
         ss >> addrStr >> label;
         uint16_t addr = parse_hex_addr(addrStr);
-        if (!label.empty())
-            m_analyzer.context.add_label(addr, label);
+        if (!label.empty()) {
+            Symbol symbol(label, addr, Symbol::Type::Label);
+            m_analyzer.context.add_label(symbol.read(), symbol.getName());
+        }
     }
 }
 

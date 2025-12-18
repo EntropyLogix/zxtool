@@ -4,6 +4,7 @@
 #include "CoreIncludes.h"
 
 #include "Core.h"
+#include "Symbol.h"
 #include "Register.h"
 #include <string>
 #include <vector>
@@ -18,20 +19,26 @@
 
 class Value {
 public:
-    enum class Type { Number, Register, Address };
+    enum class Type { Number, Register, Address, Symbol, String };
 
     Value() = default;
     Value(double d) : m_number(d), m_type(Type::Number) {}
     Value(int i) : m_number(i), m_type(Type::Number) {}
     Value(const Register& reg) : m_reg(reg), m_type(Type::Register) {}
+    Value(const Symbol& sym) : m_symbol(sym), m_type(Type::Symbol) {}
+    Value(const std::string& s) : m_string(s), m_type(Type::String) {}
     Value(const std::vector<uint16_t>& addrs) : m_address(addrs), m_type(Type::Address) {}
     
     bool is_number() const { return m_type == Type::Number; }
     bool is_register() const { return m_type == Type::Register; }
     bool is_address() const { return m_type == Type::Address; }
+    bool is_symbol() const { return m_type == Type::Symbol; }
+    bool is_string() const { return m_type == Type::String; }
     
     double number() const { return m_number; }
     const Register& reg() const { return m_reg; }
+    const Symbol& symbol() const { return m_symbol; }
+    const std::string& string() const { return m_string; }
     const std::vector<uint16_t>& address() const { return m_address; }
     
     operator double() const { return m_number; }
@@ -41,6 +48,8 @@ private:
     double m_number = 0.0;
     Register m_reg;
     std::vector<uint16_t> m_address;
+    Symbol m_symbol;
+    std::string m_string;
 };
 
 class Evaluator {
@@ -55,6 +64,8 @@ private:
         OPERATOR,   
         FUNCTION,
         REGISTER,
+        SYMBOL,
+        STRING,
         LPAREN,     
         RPAREN,     
         COMMA,
@@ -92,6 +103,8 @@ private:
     std::string parse_word(const std::string& expr, size_t& index);
     bool parse_number(const std::string& word, std::vector<Token>& tokens);
     bool parse_register(const std::string& word, std::vector<Token>& tokens);
+    bool parse_symbol(const std::string& word, std::vector<Token>& tokens);
+    bool parse_string(const std::string& expr, size_t& index, std::vector<Token>& tokens);
     bool parse_function(const std::string& word, std::vector<Token>& tokens);
 
     std::vector<Token> tokenize(const std::string& expression);

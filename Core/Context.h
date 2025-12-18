@@ -2,6 +2,8 @@
 #define __CONTEXT_H__
 
 #include "CoreIncludes.h"
+#include "Symbols.h"
+#include "Comments.h"
 
 #include <map>
 #include <string>
@@ -13,13 +15,8 @@
 // ---------------------------------------------------------
 class Context : public ILabels {
 public:
-    struct MetaInfo {
-        std::string block_description; // "D" - opis nad blokiem
-        std::string inline_comment;    // "C" - komentarz po instrukcji
-    };
-
-    std::map<uint16_t, std::string> labels;
-    std::map<uint16_t, MetaInfo> metadata;
+    Symbols symbols;
+    Comments comments;
 
     // --- ILabels Interface Implementation ---
     std::string get_label(uint16_t address) const override;
