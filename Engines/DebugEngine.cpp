@@ -630,7 +630,7 @@ void Dashboard::print_footer() {
         {"r", "eset"}, {"h", "eader"}, {"q", "uit"}
     };
     for (const auto& c : cmds) {
-        std::cout << m_theme.value_dim << "[" << Terminal::BOLD << c.k << Terminal::RESET << "]" << c.n << " " << Terminal::RESET;
+        std::cout << m_theme.value_dim << "[" << c.k << "]" << c.n << " " << Terminal::RESET;
     }
     std::cout << "\n";
 }

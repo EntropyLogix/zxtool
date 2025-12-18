@@ -5,20 +5,69 @@
 
 Evaluator::Evaluator(Core& core) : m_core(core) {}
 
+static double get_val(Core& core, const Value& v) {
+    if (v.is_register()) return v.reg().read(core.get_cpu());
+    return v.number();
+}
+
 const std::map<std::string, Evaluator::OperatorInfo>& Evaluator::get_operators() {
     static const std::map<std::string, OperatorInfo> ops = {
-        {"_",   {100, false, true,  [](Core&, const std::vector<Value>& args) { return -args[0].number(); }}},
-        {"+",   {80, true,  false, [](Core&, const std::vector<Value>& args) { return Value(args[0].number() + args[1].number()); }}},
-        {"-",   {80, true,  false, [](Core&, const std::vector<Value>& args) { return args[0].number() - args[1].number(); }}},
+        {"_",   {100, false, true,  [](Core& c, const std::vector<Value>& args) { return -get_val(c, args[0]); }}},
+        {"+",   {80, true,  false, [](Core& c, const std::vector<Value>& args) { 
+            if (args[0].is_address() && args[1].is_address()) {
+                std::vector<uint16_t> res;
+                const auto& v1 = args[0].address();
+                const auto& v2 = args[1].address();
+                size_t len = std::min(v1.size(), v2.size());
+                for(size_t i=0; i<len; ++i)
+                    res.push_back(v1[i] + v2[i]);
+                return Value(res);
+            }
+            if (args[0].is_address() || args[1].is_address()) {
+                std::vector<uint16_t> res;
+                if (args[0].is_address()) {
+                    double val = get_val(c, args[1]);
+                    for (auto a : args[0].address()) res.push_back(a + (int)val);
+                } else {
+                    double val = get_val(c, args[0]);
+                    for (auto a : args[1].address()) res.push_back((int)val + a);
+                }
+                return Value(res);
+            }
+            return Value(get_val(c, args[0]) + get_val(c, args[1])); 
+        }}},
+        {"-",   {80, true,  false, [](Core& c, const std::vector<Value>& args) { 
+            if (args[0].is_address() && args[1].is_address()) {
+                std::vector<uint16_t> res;
+                const auto& v1 = args[0].address();
+                const auto& v2 = args[1].address();
+                size_t len = std::min(v1.size(), v2.size());
+                for(size_t i=0; i<len; ++i) res.push_back(v1[i] - v2[i]);
+                return Value(res);
+            }
+            if (args[0].is_address() || args[1].is_address()) {
+                std::vector<uint16_t> res;
+                if (args[0].is_address()) {
+                    double val = get_val(c, args[1]);
+                    for (auto a : args[0].address()) res.push_back(a - (int)val);
+                } else {
+                    // Number - Address (not typical, but mathematically defined)
+                    double val = get_val(c, args[0]);
+                    for (auto a : args[1].address()) res.push_back((int)val - a);
+                }
+                return Value(res);
+            }
+            return Value(get_val(c, args[0]) - get_val(c, args[1])); 
+        }}},
     };
     return ops;
 }
 
 const std::map<std::string, Evaluator::FunctionInfo>& Evaluator::get_functions() {
     static const std::map<std::string, FunctionInfo> funcs = {
-        {"LOW",  {1, [](Core&, const std::vector<Value>& args) { return (double)((int)args[0].number() & 0xFF); }}},
-        {"HIGH", {1, [](Core&, const std::vector<Value>& args) { return (double)(((int)args[0].number() >> 8) & 0xFF); }}},
-        {"WORD", {2, [](Core&, const std::vector<Value>& args) { return (double)((((int)args[0].number() & 0xFF) << 8) | ((int)args[1].number() & 0xFF)); }}}
+        {"LOW",  {1, [](Core& c, const std::vector<Value>& args) { return (double)((int)get_val(c, args[0]) & 0xFF); }}},
+        {"HIGH", {1, [](Core& c, const std::vector<Value>& args) { return (double)(((int)get_val(c, args[0]) >> 8) & 0xFF); }}},
+        {"WORD", {2, [](Core& c, const std::vector<Value>& args) { return (double)((((int)get_val(c, args[0]) & 0xFF) << 8) | ((int)get_val(c, args[1]) & 0xFF)); }}}
     };
     return funcs;
 }
@@ -74,6 +123,12 @@ bool Evaluator::parse_punctuation(const std::string& expr, size_t& i, std::vecto
             break;
         case ',':
             type = TokenType::COMMA;
+            break;
+        case '[':
+            type = TokenType::LBRACKET;
+            break;
+        case ']':
+            type = TokenType::RBRACKET;
             break;
         default:
             return false;
@@ -163,6 +218,7 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
     std::vector<Token> output_queue;
     std::stack<Token> operator_stack;
     TokenType last_type = TokenType::OPERATOR;
+    std::stack<int> arg_counts;
 
     for (const auto& token : tokens) {
         switch (token.type) {
@@ -174,9 +230,12 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
                 operator_stack.push(token);
                 break;
             case TokenType::COMMA:
-                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN) {
+                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN && operator_stack.top().type != TokenType::LBRACKET) {
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
+                }
+                if (!operator_stack.empty() && operator_stack.top().type == TokenType::LBRACKET) {
+                    if (!arg_counts.empty()) arg_counts.top()++;
                 }
                 break;
             case TokenType::OPERATOR:
@@ -191,6 +250,40 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
             case TokenType::LPAREN:
                 operator_stack.push(token);
                 break;
+            case TokenType::LBRACKET:
+                // Implicit indexing operator if preceded by an operand
+                if (last_type == TokenType::NUMBER || last_type == TokenType::REGISTER || 
+                    last_type == TokenType::RPAREN || last_type == TokenType::RBRACKET) {
+                    
+                    static const OperatorInfo index_op = {110, true, false, [](Core& c, const std::vector<Value>& args) {
+                        std::vector<uint16_t> res;
+                        if (args[1].is_address()) {
+                            if (!args[0].is_register()) {
+                                throw std::runtime_error("Syntax error: Indexing allowed only on registers.");
+                            }
+                            double val = get_val(c, args[0]);
+                            for (auto a : args[1].address()) res.push_back((int)val + a);
+                        } else {
+                            throw std::runtime_error("Internal error: Invalid operands for indexing.");
+                        }
+                        return Value(res);
+                    }};
+
+                    Token op_token;
+                    op_token.type = TokenType::OPERATOR;
+                    op_token.op_info = &index_op;
+                    
+                    while (!operator_stack.empty() && operator_stack.top().type == TokenType::OPERATOR &&
+                           ((!op_token.op_info->left_assoc && operator_stack.top().op_info->precedence > op_token.op_info->precedence) ||
+                            (op_token.op_info->left_assoc && operator_stack.top().op_info->precedence >= op_token.op_info->precedence))) {
+                        output_queue.push_back(operator_stack.top());
+                        operator_stack.pop();
+                    }
+                    operator_stack.push(op_token);
+                }
+                operator_stack.push(token);
+                arg_counts.push(1);
+                break;
             case TokenType::RPAREN:
                 while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN) {
                     output_queue.push_back(operator_stack.top());
@@ -201,6 +294,22 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
                 }
+                break;
+            case TokenType::RBRACKET:
+                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LBRACKET) {
+                    output_queue.push_back(operator_stack.top());
+                    operator_stack.pop();
+                }
+                if (!operator_stack.empty())
+                    operator_stack.pop();
+                int count = 0;
+                if (!arg_counts.empty()) {
+                    count = arg_counts.top();
+                    arg_counts.pop();
+                }
+                if (last_type == TokenType::LBRACKET)
+                    count = 0;
+                output_queue.push_back({TokenType::LIST, Value(count)});
                 break;
         }
         last_type = token.type;
@@ -225,16 +334,14 @@ Value Evaluator::execute_rpn(const std::vector<Token>& rpn) {
         else if (token.type == TokenType::OPERATOR) {
             const auto* info = token.op_info;
             int args_needed = info->is_unary ? 1 : 2;
-            
-            if (stack.size() < args_needed) throw std::runtime_error("Stack underflow op");
-            
+            if (stack.size() < args_needed)
+                throw std::runtime_error("Not enough operands for operator: " + token.symbol);
             std::vector<Value> args;
             for(int k=0; k<args_needed; ++k) {
                 args.push_back(stack.back());
                 stack.pop_back();
             }
             std::reverse(args.begin(), args.end());
-            
             stack.push_back(info->apply(m_core, args));
         }
         else if (token.type == TokenType::FUNCTION) {
@@ -242,16 +349,32 @@ Value Evaluator::execute_rpn(const std::vector<Token>& rpn) {
             int args_needed = info->num_args;
             if (info->num_args == -1)
                 args_needed = stack.size();
-            if (stack.size() < args_needed) throw std::runtime_error("Stack underflow func");
-
+            if (stack.size() < args_needed)
+                throw std::runtime_error("Not enough arguments for function: " + token.symbol);
             std::vector<Value> args;
             for(int k=0; k<args_needed; ++k) {
                 args.push_back(stack.back());
                 stack.pop_back();
             }
             std::reverse(args.begin(), args.end());
-            
             stack.push_back(info->apply(m_core, args));
+        }
+        else if (token.type == TokenType::LIST) {
+            int count = (int)token.value.number();
+            std::vector<uint16_t> addrs;
+            std::vector<Value> args;
+            for(int k = 0; k < count; ++k) {
+                args.push_back(stack.back());
+                stack.pop_back();
+            }
+            std::reverse(args.begin(), args.end());
+            for (const auto& v : args) {
+                if (v.is_register())
+                    addrs.push_back(get_val(m_core, v));
+                else
+                    addrs.push_back((uint16_t)v.number());
+            }
+            stack.push_back(Value(addrs));
         }
     }
     return stack.empty() ? Value(0.0) : stack.back();

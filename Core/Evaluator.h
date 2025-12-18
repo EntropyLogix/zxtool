@@ -18,18 +18,21 @@
 
 class Value {
 public:
-    enum class Type { Number, Register };
+    enum class Type { Number, Register, Address };
 
     Value() = default;
     Value(double d) : m_number(d), m_type(Type::Number) {}
     Value(int i) : m_number(i), m_type(Type::Number) {}
     Value(const Register& reg) : m_reg(reg), m_type(Type::Register) {}
+    Value(const std::vector<uint16_t>& addrs) : m_address(addrs), m_type(Type::Address) {}
     
     bool is_number() const { return m_type == Type::Number; }
     bool is_register() const { return m_type == Type::Register; }
+    bool is_address() const { return m_type == Type::Address; }
     
     double number() const { return m_number; }
     const Register& reg() const { return m_reg; }
+    const std::vector<uint16_t>& address() const { return m_address; }
     
     operator double() const { return m_number; }
 
@@ -37,6 +40,7 @@ private:
     Type m_type = Type::Number;
     double m_number = 0.0;
     Register m_reg;
+    std::vector<uint16_t> m_address;
 };
 
 class Evaluator {
@@ -53,7 +57,10 @@ private:
         REGISTER,
         LPAREN,     
         RPAREN,     
-        COMMA
+        COMMA,
+        LBRACKET,
+        RBRACKET,
+        LIST
     };
 
     Core& m_core;
