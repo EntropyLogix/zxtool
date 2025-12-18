@@ -457,6 +457,22 @@ void Dashboard::handle_command(const std::string& input) {
                 }
             } else if (val.is_string()) {
                 d->m_output_buffer << "String: \"" << val.string() << "\"\n";
+            } else if (val.is_bytes()) {
+                d->m_output_buffer << "{ ";
+                const auto& bytes = val.bytes();
+                for (size_t i = 0; i < bytes.size(); ++i) {
+                    if (i > 0) d->m_output_buffer << ", ";
+                    d->m_output_buffer << "$" << Strings::hex(bytes[i]);
+                }
+                d->m_output_buffer << " }\n";
+            } else if (val.is_words()) {
+                d->m_output_buffer << "W{ ";
+                const auto& words = val.words();
+                for (size_t i = 0; i < words.size(); ++i) {
+                    if (i > 0) d->m_output_buffer << ", ";
+                    d->m_output_buffer << "$" << Strings::hex(words[i]);
+                }
+                d->m_output_buffer << " }\n";
             }
         } catch (const std::exception& e) {
             d->m_output_buffer << "Error: " << e.what() << "\n";
@@ -523,21 +539,73 @@ void Dashboard::handle_command(const std::string& input) {
             } else if (target.is_address()) {
                 auto& mem = d->m_debugger.get_core().get_memory();
                 const auto& addrs = target.address();
+                std::vector<std::pair<uint16_t, uint8_t>> writes;
                 
-                if (val.is_string()) {
+                if (val.is_words()) {
+                    const auto& words = val.words();
+                    if (addrs.empty()) {
+                        d->m_output_buffer << "Error: Target address list is empty.\n";
+                        return;
+                    }
+                    if (words.size() > addrs.size()) {
+                        d->m_output_buffer << "Warning: Source data larger than target address list. Continuing sequentially from last address (step 2).\n";
+                    }
+                    for (size_t i = 0; i < words.size(); ++i) {
+                        uint16_t addr;
+                        if (i < addrs.size()) {
+                            addr = addrs[i];
+                        } else {
+                            addr = addrs.back() + (uint16_t)((i - (addrs.size() - 1)) * 2);
+                        }
+                        mem.write(addr, words[i] & 0xFF);
+                        mem.write(addr + 1, words[i] >> 8);
+                        writes.push_back({addr, (uint8_t)(words[i] & 0xFF)});
+                        writes.push_back({(uint16_t)(addr + 1), (uint8_t)(words[i] >> 8)});
+                    }
+                } else if (val.is_bytes()) {
+                    const auto& bytes = val.bytes();
+                    if (addrs.empty()) {
+                        d->m_output_buffer << "Error: Target address list is empty.\n";
+                        return;
+                    }
+                    if (bytes.size() > addrs.size()) {
+                        d->m_output_buffer << "Warning: Source data larger than target address list. Continuing sequentially from last address.\n";
+                    }
+                    for (size_t i = 0; i < bytes.size(); ++i) {
+                        uint16_t addr;
+                        if (i < addrs.size()) {
+                            addr = addrs[i];
+                        } else {
+                            addr = addrs.back() + (uint16_t)(i - (addrs.size() - 1));
+                        }
+                        mem.write(addr, bytes[i]);
+                        writes.push_back({addr, bytes[i]});
+                    }
+                } else if (val.is_string()) {
                     const std::string& s = val.string();
                     for (uint16_t addr : addrs) {
                         for (size_t i = 0; i < s.length(); ++i) {
                             mem.write(addr + i, (uint8_t)s[i]);
+                            writes.push_back({(uint16_t)(addr + i), (uint8_t)s[i]});
                         }
                     }
-                    d->m_output_buffer << "Wrote string to " << addrs.size() << " location(s).\n";
                 } else {
                     uint8_t byte_val = (uint8_t)get_num(val);
                     for (uint16_t addr : addrs) {
                         mem.write(addr, byte_val);
+                        writes.push_back({addr, byte_val});
                     }
-                    d->m_output_buffer << "Wrote byte " << Strings::hex(byte_val) << " to " << addrs.size() << " location(s).\n";
+                }
+
+                d->m_output_buffer << "Written " << writes.size() << " byte(s):\n";
+                size_t limit = 8;
+                for (size_t i = 0; i < writes.size(); ++i) {
+                    if (i == limit && writes.size() > limit) {
+                        d->m_output_buffer << "  ... (" << (writes.size() - limit) << " more)\n";
+                        break;
+                    }
+                    d->m_output_buffer << "  [" << Strings::hex(writes[i].first) << "] = $" << Strings::hex(writes[i].second) 
+                                       << " (" << (std::isprint(writes[i].second) ? (char)writes[i].second : '.') << ")\n";
                 }
             } else {
                 d->m_output_buffer << "Error: Left side must be a register, symbol or address list (e.g. [addr]).\n";

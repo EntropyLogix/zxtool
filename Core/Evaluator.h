@@ -19,7 +19,7 @@
 
 class Value {
 public:
-    enum class Type { Number, Register, Address, Symbol, String };
+    enum class Type { Number, Register, Address, Symbol, String, Bytes, Words };
 
     Value() = default;
     Value(double d) : m_number(d), m_type(Type::Number) {}
@@ -28,18 +28,24 @@ public:
     Value(const Symbol& sym) : m_symbol(sym), m_type(Type::Symbol) {}
     Value(const std::string& s) : m_string(s), m_type(Type::String) {}
     Value(const std::vector<uint16_t>& addrs) : m_address(addrs), m_type(Type::Address) {}
+    Value(const std::vector<uint16_t>& words, bool) : m_words(words), m_type(Type::Words) {}
+    Value(const std::vector<uint8_t>& bytes) : m_bytes(bytes), m_type(Type::Bytes) {}
     
     bool is_number() const { return m_type == Type::Number; }
     bool is_register() const { return m_type == Type::Register; }
     bool is_address() const { return m_type == Type::Address; }
     bool is_symbol() const { return m_type == Type::Symbol; }
     bool is_string() const { return m_type == Type::String; }
+    bool is_bytes() const { return m_type == Type::Bytes; }
+    bool is_words() const { return m_type == Type::Words; }
     
     double number() const { return m_number; }
     const Register& reg() const { return m_reg; }
     const Symbol& symbol() const { return m_symbol; }
     const std::string& string() const { return m_string; }
     const std::vector<uint16_t>& address() const { return m_address; }
+    const std::vector<uint8_t>& bytes() const { return m_bytes; }
+    const std::vector<uint16_t>& words() const { return m_words; }
     
     operator double() const { return m_number; }
 
@@ -50,6 +56,8 @@ private:
     std::vector<uint16_t> m_address;
     Symbol m_symbol;
     std::string m_string;
+    std::vector<uint8_t> m_bytes;
+    std::vector<uint16_t> m_words;
 };
 
 class Evaluator {
@@ -60,6 +68,7 @@ public:
 
 private:
     enum class TokenType {
+        UNKNOWN,
         NUMBER,     
         OPERATOR,   
         FUNCTION,
@@ -71,7 +80,12 @@ private:
         COMMA,
         LBRACKET,
         RBRACKET,
-        LIST
+        LBRACE,
+        RBRACE,
+        ADDRESS,
+        BYTES,
+        WORDS,
+        LBRACE_W
     };
 
     Core& m_core;

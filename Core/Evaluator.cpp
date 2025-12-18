@@ -23,6 +23,18 @@ const std::map<std::string, Evaluator::OperatorInfo>& Evaluator::get_operators()
                 };
                 return Value(to_str(args[0]) + to_str(args[1]));
             }
+            if (args[0].is_bytes() && args[1].is_bytes()) {
+                std::vector<uint8_t> res = args[0].bytes();
+                const auto& v2 = args[1].bytes();
+                res.insert(res.end(), v2.begin(), v2.end());
+                return Value(res);
+            }
+            if (args[0].is_words() && args[1].is_words()) {
+                std::vector<uint16_t> res = args[0].words();
+                const auto& v2 = args[1].words();
+                res.insert(res.end(), v2.begin(), v2.end());
+                return Value(res, true);
+            }
             if (args[0].is_address() && args[1].is_address()) {
                 std::vector<uint16_t> res;
                 const auto& v1 = args[0].address();
@@ -139,6 +151,12 @@ bool Evaluator::parse_punctuation(const std::string& expr, size_t& i, std::vecto
         case ']':
             type = TokenType::RBRACKET;
             break;
+        case '{':
+            type = TokenType::LBRACE;
+            break;
+        case '}':
+            type = TokenType::RBRACE;
+            break;
         default:
             return false;
     }
@@ -225,6 +243,11 @@ std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
             i++;
             continue;
         }
+        if (expr[i] == 'W' && i + 1 < expr.length() && expr[i+1] == '{') {
+            tokens.push_back({TokenType::LBRACE_W});
+            i += 2;
+            continue;
+        }
         if (parse_string(expr, i, tokens))
             continue;
         if (parse_operator(expr, i, tokens))
@@ -275,11 +298,11 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
                 operator_stack.push(token);
                 break;
             case TokenType::COMMA:
-                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN && operator_stack.top().type != TokenType::LBRACKET) {
+                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN && operator_stack.top().type != TokenType::LBRACKET && operator_stack.top().type != TokenType::LBRACE && operator_stack.top().type != TokenType::LBRACE_W) {
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
                 }
-                if (!operator_stack.empty() && operator_stack.top().type == TokenType::LBRACKET) {
+                if (!operator_stack.empty() && (operator_stack.top().type == TokenType::LBRACKET || operator_stack.top().type == TokenType::LBRACE || operator_stack.top().type == TokenType::LBRACE_W)) {
                     if (!arg_counts.empty()) arg_counts.top()++;
                 }
                 break;
@@ -329,6 +352,14 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
                 operator_stack.push(token);
                 arg_counts.push(1);
                 break;
+            case TokenType::LBRACE:
+                operator_stack.push(token);
+                arg_counts.push(1);
+                break;
+            case TokenType::LBRACE_W:
+                operator_stack.push(token);
+                arg_counts.push(1);
+                break;
             case TokenType::RPAREN:
                 while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN) {
                     output_queue.push_back(operator_stack.top());
@@ -341,7 +372,7 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
                 }
                 break;
             case TokenType::RBRACKET:
-                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LBRACKET) {
+                {while (!operator_stack.empty() && operator_stack.top().type != TokenType::LBRACKET) {
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
                 }
@@ -354,7 +385,32 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
                 }
                 if (last_type == TokenType::LBRACKET)
                     count = 0;
-                output_queue.push_back({TokenType::LIST, Value(count)});
+                output_queue.push_back({TokenType::ADDRESS, Value(count)});
+                }
+                break;
+            case TokenType::RBRACE:
+                {while (!operator_stack.empty() && operator_stack.top().type != TokenType::LBRACE && operator_stack.top().type != TokenType::LBRACE_W) {
+                    output_queue.push_back(operator_stack.top());
+                    operator_stack.pop();
+                }
+                TokenType openType = TokenType::UNKNOWN;
+                if (!operator_stack.empty())
+                {
+                    openType = operator_stack.top().type;
+                    operator_stack.pop();
+                }
+                int count = 0;
+                if (!arg_counts.empty()) {
+                    count = arg_counts.top();
+                    arg_counts.pop();
+                }
+                if (last_type == openType)
+                    count = 0;
+                if (openType == TokenType::LBRACE)
+                    output_queue.push_back({TokenType::BYTES, Value(count)});
+                else if (openType == TokenType::LBRACE_W)
+                    output_queue.push_back({TokenType::WORDS, Value(count)});
+                }
                 break;
         }
         last_type = token.type;
@@ -410,7 +466,7 @@ Value Evaluator::execute_rpn(const std::vector<Token>& rpn) {
             std::reverse(args.begin(), args.end());
             stack.push_back(info->apply(m_core, args));
         }
-        else if (token.type == TokenType::LIST) {
+        else if (token.type == TokenType::ADDRESS) {
             int count = (int)token.value.number();
             std::vector<uint16_t> addrs;
             std::vector<Value> args;
@@ -423,6 +479,80 @@ Value Evaluator::execute_rpn(const std::vector<Token>& rpn) {
                 addrs.push_back((uint16_t)get_val(m_core, v));
             }
             stack.push_back(Value(addrs));
+        }
+        else if (token.type == TokenType::BYTES) {
+            int count = (int)token.value.number();
+            std::vector<uint8_t> bytes;
+            std::vector<Value> args;
+            for(int k = 0; k < count; ++k) {
+                args.push_back(stack.back());
+                stack.pop_back();
+            }
+            std::reverse(args.begin(), args.end());
+            for (const auto& v : args) {
+                if (v.is_address()) throw std::runtime_error("Syntax error: Mixing [] and {} is not allowed.");
+                
+                if (v.is_string()) {
+                    const std::string& s = v.string();
+                    bytes.insert(bytes.end(), s.begin(), s.end());
+                } else if (v.is_bytes()) {
+                    const auto& b = v.bytes();
+                    bytes.insert(bytes.end(), b.begin(), b.end());
+                } else if (v.is_words()) {
+                    for (uint16_t word : v.words()) {
+                        bytes.push_back(word & 0xFF);
+                        bytes.push_back(word >> 8);
+                    }
+                } else {
+                    double val = get_val(m_core, v);
+                    if (v.is_register() && v.reg().is_16bit()) {
+                        uint16_t w = (uint16_t)val;
+                        bytes.push_back(w & 0xFF);
+                        bytes.push_back(w >> 8);
+                    } else if (val >= -128 && val <= 255) {
+                        bytes.push_back((uint8_t)val);
+                    } else {
+                        uint16_t w = (uint16_t)val;
+                        bytes.push_back(w & 0xFF);
+                        bytes.push_back(w >> 8);
+                    }
+                }
+            }
+            stack.push_back(Value(bytes));
+        }
+        else if (token.type == TokenType::WORDS) {
+            int count = (int)token.value.number();
+            std::vector<uint16_t> words;
+            std::vector<Value> args;
+            for(int k = 0; k < count; ++k) {
+                args.push_back(stack.back());
+                stack.pop_back();
+            }
+            std::reverse(args.begin(), args.end());
+            for (const auto& v : args) {
+                if (v.is_address()) throw std::runtime_error("Syntax error: Mixing [] and W{} is not allowed.");
+                
+                if (v.is_string()) {
+                    const std::string& s = v.string();
+                    for (char c : s) words.push_back((uint16_t)(unsigned char)c);
+                } else if (v.is_bytes()) {
+                    const auto& b = v.bytes();
+                    for (size_t i = 0; i < b.size(); i += 2) {
+                        uint16_t word = b[i];
+                        if (i + 1 < b.size()) {
+                            word |= (uint16_t)b[i+1] << 8;
+                        }
+                        words.push_back(word);
+                    }
+                } else if (v.is_words()) {
+                    const auto& w = v.words();
+                    words.insert(words.end(), w.begin(), w.end());
+                } else {
+                    double val = get_val(m_core, v);
+                    words.push_back((uint16_t)val);
+                }
+            }
+            stack.push_back(Value(words, true));
         }
     }
     return stack.empty() ? Value(0.0) : stack.back();
