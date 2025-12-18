@@ -63,7 +63,7 @@ public:
     }
 
     template <typename TBus, typename TEvents, typename TDebugger>
-    void write(Z80<TBus, TEvents, TDebugger>& cpu, uint16_t value) {
+    void write(Z80<TBus, TEvents, TDebugger>& cpu, uint16_t value) const {
         if (m_name == "AF") cpu.set_AF(value);
         else if (m_name == "BC") cpu.set_BC(value);
         else if (m_name == "DE") cpu.set_DE(value);

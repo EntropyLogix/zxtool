@@ -467,11 +467,112 @@ void Dashboard::handle_command(const std::string& input) {
         d->m_running = false;
     };
 
+    static const auto set_handler = [](Dashboard* d, const std::string& args_str) {
+        std::string args = args_str;
+        size_t first = args.find_first_not_of(" \t");
+        if (first == std::string::npos) {
+            d->m_output_buffer << "Error: Missing arguments for set command.\n";
+            return;
+        }
+        args = args.substr(first);
+        
+        std::string lhs_str, rhs_str;
+        size_t eq_pos = args.find('=');
+        if (eq_pos != std::string::npos) {
+            lhs_str = args.substr(0, eq_pos);
+            rhs_str = args.substr(eq_pos + 1);
+        } else {
+            size_t space_pos = args.find_first_of(" \t");
+            if (space_pos != std::string::npos) {
+                lhs_str = args.substr(0, space_pos);
+                rhs_str = args.substr(space_pos + 1);
+            } else {
+                lhs_str = args;
+            }
+        }
+
+        if (lhs_str.empty() || rhs_str.empty()) {
+             d->m_output_buffer << "Error: Invalid syntax for set. Use: set <target> [=] <value>\n";
+             return;
+        }
+
+        try {
+            Evaluator eval(d->m_debugger.get_core());
+            Value target = eval.evaluate(lhs_str);
+            Value val = eval.evaluate(rhs_str);
+            
+            auto get_num = [&](const Value& v) -> double {
+                if (v.is_number()) return v.number();
+                if (v.is_register()) return (double)v.reg().read(d->m_debugger.get_core().get_cpu());
+                if (v.is_symbol()) return (double)v.symbol().read();
+                throw std::runtime_error("Expected number, register or symbol");
+            };
+
+            if (target.is_register()) {
+                uint16_t num = (uint16_t)get_num(val);
+                target.reg().write(d->m_debugger.get_core().get_cpu(), num);
+                d->m_output_buffer << "Set register " << target.reg().getName() << " to " << Strings::hex(num) << "\n";
+            } else if (target.is_symbol()) {
+                uint16_t num = (uint16_t)get_num(val);
+                std::string name = target.symbol().getName();
+                auto& ctx = d->m_debugger.get_core().get_context();
+                Symbol::Type type = target.symbol().getType();
+                ctx.symbols.remove(name);
+                ctx.symbols.add(Symbol(name, num, type));
+                d->m_output_buffer << "Set symbol " << name << " to " << Strings::hex(num) << "\n";
+            } else if (target.is_address()) {
+                auto& mem = d->m_debugger.get_core().get_memory();
+                const auto& addrs = target.address();
+                
+                if (val.is_string()) {
+                    const std::string& s = val.string();
+                    for (uint16_t addr : addrs) {
+                        for (size_t i = 0; i < s.length(); ++i) {
+                            mem.write(addr + i, (uint8_t)s[i]);
+                        }
+                    }
+                    d->m_output_buffer << "Wrote string to " << addrs.size() << " location(s).\n";
+                } else {
+                    uint8_t byte_val = (uint8_t)get_num(val);
+                    for (uint16_t addr : addrs) {
+                        mem.write(addr, byte_val);
+                    }
+                    d->m_output_buffer << "Wrote byte " << Strings::hex(byte_val) << " to " << addrs.size() << " location(s).\n";
+                }
+            } else {
+                d->m_output_buffer << "Error: Left side must be a register, symbol or address list (e.g. [addr]).\n";
+            }
+
+        } catch (const std::exception& e) {
+            d->m_output_buffer << "Error: " << e.what() << "\n";
+        }
+    };
+
+    static const auto undef_handler = [](Dashboard* d, const std::string& args_str) {
+        std::string args = args_str;
+        size_t first = args.find_first_not_of(" \t");
+        if (first == std::string::npos) {
+            d->m_output_buffer << "Error: Missing symbol name.\n";
+            return;
+        }
+        std::string name = args.substr(first);
+        size_t last = name.find_last_not_of(" \t");
+        if (last != std::string::npos) name = name.substr(0, last + 1);
+
+        if (d->m_debugger.get_core().get_context().remove_symbol(name)) {
+            d->m_output_buffer << "Symbol '" << name << "' removed.\n";
+        } else {
+            d->m_output_buffer << "Error: Symbol '" << name << "' not found.\n";
+        }
+    };
+
     static const std::map<std::string, std::function<void(Dashboard*, const std::string&)>> commands = {
         {"eval", eval_handler},
         {"?", eval_handler},
         {"quit", quit_handler},
-        {"q", quit_handler}
+        {"q", quit_handler},
+        {"set", set_handler},
+        {"undef", undef_handler}
     };
 
     auto it = commands.find(cmd);
