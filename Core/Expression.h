@@ -21,27 +21,29 @@ class Core;
 class Expression {
 public:
     enum class ErrorCode {
-        UNKNOWN_VARIABLE,
-        UNTERMINATED_STRING,
-        UNKNOWN_SYMBOL,
-        UNEXPECTED_CHARACTER,
-        NOT_ENOUGH_OPERANDS,
-        NOT_ENOUGH_ARGUMENTS,
-        MIXING_CONTAINERS,
-        INVALID_INDEXING,
+        LOOKUP_UNKNOWN_VARIABLE,
+        LOOKUP_UNKNOWN_SYMBOL,
+        SYNTAX_UNTERMINATED_STRING,
+        SYNTAX_UNEXPECTED_CHARACTER,
+        SYNTAX_MISMATCHED_PARENTHESES,
+        EVAL_NOT_ENOUGH_OPERANDS,
+        EVAL_NOT_ENOUGH_ARGUMENTS,
+        EVAL_MIXING_CONTAINERS,
+        EVAL_INVALID_INDEXING,
         INTERNAL_ERROR,
         GENERIC
     };
 
     class Error : public std::exception {
     public:
-        Error(ErrorCode code, const std::string& detail = "") : m_code(code), m_detail(detail) {}
+        Error(ErrorCode code, const std::string& detail = "");
         ErrorCode code() const { return m_code; }
         const std::string& detail() const { return m_detail; }
-        const char* what() const noexcept override { return "Expression Error"; }
+        const char* what() const noexcept override;
     private:
         ErrorCode m_code;
         std::string m_detail;
+        std::string m_message;
     };
 
     class Value {

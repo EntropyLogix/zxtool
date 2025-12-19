@@ -1,6 +1,7 @@
 #include "Application.h"
 #include <iostream>
 #include <memory>
+#include "Expression.h"
 #include "../Cmd/CommandLine.h"
 #include "../Cmd/Options.h"
 #include "../Engines/Engine.h"
@@ -48,6 +49,9 @@ int Application::run(CommandLine& commands) {
         if (engine) {
             return engine->run();
         }
+    } catch (const Expression::Error& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;

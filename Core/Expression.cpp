@@ -4,6 +4,51 @@
 #include "../Utils/Strings.h"
 #include <cctype>
 
+Expression::Error::Error(ErrorCode code, const std::string& detail) : m_code(code), m_detail(detail) {
+    switch (code) {
+        case ErrorCode::LOOKUP_UNKNOWN_VARIABLE:
+            m_message = "Unknown variable";
+            break;
+        case ErrorCode::LOOKUP_UNKNOWN_SYMBOL:
+            m_message = "Unknown symbol";
+            break;
+        case ErrorCode::SYNTAX_UNTERMINATED_STRING:
+            m_message = "Unterminated string";
+            break;
+        case ErrorCode::SYNTAX_UNEXPECTED_CHARACTER:
+            m_message = "Unexpected character";
+            break;
+        case ErrorCode::SYNTAX_MISMATCHED_PARENTHESES:
+            m_message = "Mismatched parentheses";
+            break;
+        case ErrorCode::EVAL_NOT_ENOUGH_OPERANDS:
+            m_message = "Not enough operands";
+            break;
+        case ErrorCode::EVAL_NOT_ENOUGH_ARGUMENTS:
+            m_message = "Not enough arguments";
+            break;
+        case ErrorCode::EVAL_MIXING_CONTAINERS:
+            m_message = "Mixing containers";
+            break;
+        case ErrorCode::EVAL_INVALID_INDEXING:
+            m_message = "Invalid indexing";
+            break;
+        case ErrorCode::INTERNAL_ERROR:
+            m_message = "Internal error";
+            break;
+        case ErrorCode::GENERIC: 
+        default:
+            m_message = "Expression error";
+            break;
+    }
+    if (!detail.empty())
+        m_message += " ( " + detail + " )";
+}
+
+const char* Expression::Error::what() const noexcept {
+    return m_message.c_str();
+}
+
 Expression::Expression(Core& core) : m_core(core) {}
 
 void Expression::syntax_error(ErrorCode code, const std::string& detail) {
@@ -255,7 +300,7 @@ bool Expression::parse_variable(const std::string& expr, size_t& index, std::vec
                 return true;
             }
         }
-        syntax_error(ErrorCode::UNKNOWN_VARIABLE, name);
+        syntax_error(ErrorCode::LOOKUP_UNKNOWN_VARIABLE, name);
     }
     return false;
 }
@@ -274,7 +319,7 @@ bool Expression::parse_string(const std::string& expr, size_t& index, std::vecto
             s += expr[j];
             j++;
         }
-            syntax_error(ErrorCode::UNTERMINATED_STRING);
+            syntax_error(ErrorCode::SYNTAX_UNTERMINATED_STRING);
     }
     return false;
 }
@@ -330,9 +375,9 @@ std::vector<Expression::Token> Expression::tokenize(const std::string& expr) {
                 i = j;
                 continue;
             }
-            syntax_error(ErrorCode::UNKNOWN_SYMBOL, word);
+            syntax_error(ErrorCode::LOOKUP_UNKNOWN_SYMBOL, word);
         }
-        syntax_error(ErrorCode::UNEXPECTED_CHARACTER, std::string(1, expr[i]));
+        syntax_error(ErrorCode::SYNTAX_UNEXPECTED_CHARACTER, std::string(1, expr[i]));
     }
     return tokens;
 }
@@ -382,12 +427,12 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                         std::vector<uint16_t> res;
                         if (args[1].is_address()) {
                             if (!args[0].is_register())
-                                syntax_error(ErrorCode::INVALID_INDEXING, "Indexing allowed only on registers.");
+                                syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "indexing allowed only on registers.");
                             double val = get_val(c, args[0]);
                             for (auto a : args[1].address())
                                 res.push_back((int)val + a);
                         } else
-                            syntax_error(ErrorCode::INTERNAL_ERROR, "Invalid operands for indexing.");
+                            syntax_error(ErrorCode::INTERNAL_ERROR, "invalid operands for indexing.");
                         return Value(res);
                     }};
                     Token op_token;
@@ -414,11 +459,15 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 break;
             case TokenType::RPAREN:
                 while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN) {
+                    if (operator_stack.top().type == TokenType::LBRACKET || operator_stack.top().type == TokenType::LBRACE || operator_stack.top().type == TokenType::LBRACE_W)
+                        syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, ")");
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
                 }
-                if (!operator_stack.empty())
-                    operator_stack.pop();
+                if (operator_stack.empty())
+                    syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, ")");
+                operator_stack.pop();
+
                 if (!operator_stack.empty() && operator_stack.top().type == TokenType::FUNCTION) {
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
@@ -426,11 +475,15 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 break;
             case TokenType::RBRACKET: {
                 while (!operator_stack.empty() && operator_stack.top().type != TokenType::LBRACKET) {
+                    if (operator_stack.top().type == TokenType::LPAREN || operator_stack.top().type == TokenType::LBRACE || operator_stack.top().type == TokenType::LBRACE_W)
+                        syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, "]");
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
                 }
-                if (!operator_stack.empty())
-                    operator_stack.pop();
+                if (operator_stack.empty())
+                    syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, "]");
+                operator_stack.pop();
+
                 int count = 0;
                 if (!arg_counts.empty()) {
                     count = arg_counts.top();
@@ -443,14 +496,17 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
             }
             case TokenType::RBRACE: {
                 while (!operator_stack.empty() && operator_stack.top().type != TokenType::LBRACE && operator_stack.top().type != TokenType::LBRACE_W) {
+                    if (operator_stack.top().type == TokenType::LPAREN || operator_stack.top().type == TokenType::LBRACKET)
+                        syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, "}");
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
                 }
-                TokenType openType = TokenType::UNKNOWN;
-                if (!operator_stack.empty()) {
-                    openType = operator_stack.top().type;
-                    operator_stack.pop();
-                }
+                if (operator_stack.empty())
+                    syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, "}");
+                
+                TokenType openType = operator_stack.top().type;
+                operator_stack.pop();
+
                 int count = 0;
                 if (!arg_counts.empty()) {
                     count = arg_counts.top();
@@ -468,6 +524,8 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
         last_type = token.type;
     }
     while (!operator_stack.empty()) {
+        if (operator_stack.top().type == TokenType::LPAREN || operator_stack.top().type == TokenType::LBRACKET || operator_stack.top().type == TokenType::LBRACE || operator_stack.top().type == TokenType::LBRACE_W)
+            syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, "Unclosed parenthesis/bracket");
         output_queue.push_back(operator_stack.top());
         operator_stack.pop();
     }
@@ -489,7 +547,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             const auto* info = token.op_info;
             int args_needed = info->is_unary ? 1 : 2;
             if (stack.size() < args_needed)
-                syntax_error(ErrorCode::NOT_ENOUGH_OPERANDS, token.symbol);
+                syntax_error(ErrorCode::EVAL_NOT_ENOUGH_OPERANDS, token.symbol);
             std::vector<Value> args;
             for(int k=0; k<args_needed; ++k) {
                 args.push_back(stack.back());
@@ -504,7 +562,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             if (info->num_args == -1)
                 args_needed = stack.size();
             if (stack.size() < args_needed)
-                syntax_error(ErrorCode::NOT_ENOUGH_ARGUMENTS, token.symbol);
+                syntax_error(ErrorCode::EVAL_NOT_ENOUGH_ARGUMENTS, token.symbol);
             std::vector<Value> args;
             for(int k=0; k<args_needed; ++k) {
                 args.push_back(stack.back());
@@ -537,7 +595,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             std::reverse(args.begin(), args.end());
             for (const auto& v : args) {
                 if (v.is_address())
-                    syntax_error(ErrorCode::MIXING_CONTAINERS);
+                    syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS);
                 if (v.is_string()) {
                     const std::string& s = v.string();
                     bytes.insert(bytes.end(), s.begin(), s.end());
@@ -577,7 +635,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             std::reverse(args.begin(), args.end());
             for (const auto& v : args) {
                 if (v.is_address())
-                    syntax_error(ErrorCode::MIXING_CONTAINERS);
+                    syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS);
                 
                 if (v.is_string()) {
                     const std::string& s = v.string();

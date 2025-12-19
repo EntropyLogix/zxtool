@@ -395,51 +395,55 @@ void Dashboard::handle_command(const std::string& input) {
     size_t first = args.find_first_not_of(" \t");
     if (first != std::string::npos) args = args.substr(first);
 
+    static const auto perform_eval = [](Dashboard* d, const std::string& expr) {
+        d->m_output_buffer << expr << "\n";
+        Expression eval(d->m_debugger.get_core());
+        Expression::Value val = eval.evaluate(expr);
+        if (val.is_number()) {
+            double v = val.number();
+            d->m_output_buffer << "Result: " << (int)v << " ($" << Strings::hex((uint16_t)v) << ") %" << Strings::bin((uint16_t)v) << "\n";
+        } else if (val.is_register()) {
+            uint16_t v = val.reg().read(d->m_debugger.get_core().get_cpu());
+            d->m_output_buffer << "Register: " << val.reg().getName() << " = " << (int)v << " ($";
+            if (val.reg().is_16bit()) {
+                d->m_output_buffer << Strings::hex(v) << ") %" << Strings::bin(v);
+            } else {
+                d->m_output_buffer << Strings::hex((uint8_t)v) << ") %" << Strings::bin((uint8_t)v);
+            }
+            d->m_output_buffer << "\n";
+        } else if (val.is_symbol()) {
+            uint16_t v = val.symbol().read();
+            d->m_output_buffer << "Symbol: " << val.symbol().getName() << " = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
+        } else if (val.is_address()) {
+            auto& mem = d->m_debugger.get_core().get_memory();
+            for (uint16_t addr : val.address()) {
+                uint8_t v = mem.peek(addr);
+                d->m_output_buffer << "[" << Strings::hex(addr) << "] = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
+            }
+        } else if (val.is_string()) {
+            d->m_output_buffer << "String: \"" << val.string() << "\"\n";
+        } else if (val.is_bytes()) {
+            d->m_output_buffer << "{ ";
+            const auto& bytes = val.bytes();
+            for (size_t i = 0; i < bytes.size(); ++i) {
+                if (i > 0) d->m_output_buffer << ", ";
+                d->m_output_buffer << "$" << Strings::hex(bytes[i]);
+            }
+            d->m_output_buffer << " }\n";
+        } else if (val.is_words()) {
+            d->m_output_buffer << "W{ ";
+            const auto& words = val.words();
+            for (size_t i = 0; i < words.size(); ++i) {
+                if (i > 0) d->m_output_buffer << ", ";
+                d->m_output_buffer << "$" << Strings::hex(words[i]);
+            }
+            d->m_output_buffer << " }\n";
+        }
+    };
+
     static const auto eval_handler = [](Dashboard* d, const std::string& expr) {
         try {
-            Expression eval(d->m_debugger.get_core());
-            Expression::Value val = eval.evaluate(expr);
-            d->m_output_buffer << expr << "\n";
-            if (val.is_number()) {
-                double v = val.number();
-                d->m_output_buffer << "Result: " << (int)v << " ($" << Strings::hex((uint16_t)v) << ") %" << Strings::bin((uint16_t)v) << "\n";
-            } else if (val.is_register()) {
-                uint16_t v = val.reg().read(d->m_debugger.get_core().get_cpu());
-                d->m_output_buffer << "Register: " << val.reg().getName() << " = " << (int)v << " ($";
-                if (val.reg().is_16bit()) {
-                    d->m_output_buffer << Strings::hex(v) << ") %" << Strings::bin(v);
-                } else {
-                    d->m_output_buffer << Strings::hex((uint8_t)v) << ") %" << Strings::bin((uint8_t)v);
-                }
-                d->m_output_buffer << "\n";
-            } else if (val.is_symbol()) {
-                uint16_t v = val.symbol().read();
-                d->m_output_buffer << "Symbol: " << val.symbol().getName() << " = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
-            } else if (val.is_address()) {
-                auto& mem = d->m_debugger.get_core().get_memory();
-                for (uint16_t addr : val.address()) {
-                    uint8_t v = mem.peek(addr);
-                    d->m_output_buffer << "[" << Strings::hex(addr) << "] = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
-                }
-            } else if (val.is_string()) {
-                d->m_output_buffer << "String: \"" << val.string() << "\"\n";
-            } else if (val.is_bytes()) {
-                d->m_output_buffer << "{ ";
-                const auto& bytes = val.bytes();
-                for (size_t i = 0; i < bytes.size(); ++i) {
-                    if (i > 0) d->m_output_buffer << ", ";
-                    d->m_output_buffer << "$" << Strings::hex(bytes[i]);
-                }
-                d->m_output_buffer << " }\n";
-            } else if (val.is_words()) {
-                d->m_output_buffer << "W{ ";
-                const auto& words = val.words();
-                for (size_t i = 0; i < words.size(); ++i) {
-                    if (i > 0) d->m_output_buffer << ", ";
-                    d->m_output_buffer << "$" << Strings::hex(words[i]);
-                }
-                d->m_output_buffer << " }\n";
-            }
+            perform_eval(d, expr);
         } catch (const std::exception& e) {
             d->m_output_buffer << "Error: " << e.what() << "\n";
         }
@@ -617,15 +621,15 @@ void Dashboard::handle_command(const std::string& input) {
         if (eq_pos != std::string::npos) {
             std::string lhs = input.substr(0, eq_pos);
             std::string rhs = input.substr(eq_pos + 1);
-            Strings::trim(lhs);
-            Strings::trim(rhs);
-            if (lhs.empty() || rhs.empty()) {
-                m_output_buffer << "Syntax error\n";
-            } else {
-                set_handler(this, input);
-            }
+            set_handler(this, input);
         } else {
-            eval_handler(this, input);
+            try {
+                perform_eval(this, input);
+            } catch (const Expression::Error&) {
+                m_output_buffer << "Unknown command: " << cmd << "\n";
+            } catch (const std::exception& e) {
+                m_output_buffer << "Error: " << e.what() << "\n";
+            }
         }
     }
 }
