@@ -7,8 +7,6 @@
 #include <cctype>
 #include <algorithm>
 #include <replxx.hxx>
-#include <map>
-#include <functional>
 
 #include "../Utils/Strings.h"
 #include "../Utils/Terminal.h"
@@ -72,7 +70,6 @@ std::vector<std::string> RegisterView::render() {
     if (delta > 0)
         extra << m_theme.error << " (+" << delta << ")" << Terminal::RESET;
     lines.push_back(format_header("REGS", extra.str()));
-
     auto& cpu = m_core.get_cpu();
     auto fmt_reg16 = [&](const std::string& l, uint16_t v, uint16_t pv) -> std::string {
         std::stringstream ss;
@@ -86,7 +83,6 @@ std::vector<std::string> RegisterView::render() {
             << (v != pv ? m_theme.highlight : m_theme.value_dim) << Strings::hex(v) << Terminal::RESET;
         return ss.str();
     };
-
     std::stringstream ss;
     ss << "  " << fmt_reg16("AF", cpu.get_AF(), m_prev.m_AF.w)  << "   " << fmt_reg16("AF'", cpu.get_AFp(), m_prev.m_AFp.w) << "   " << fmt_reg16("PC", cpu.get_PC(), m_prev.m_PC.w);
     lines.push_back(ss.str());
@@ -143,9 +139,34 @@ std::vector<std::string> StackView::render() {
     return lines;
 }
 
+void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst) {
+    if (line.operands.empty()) return;
+    using Operand = Z80Analyzer<Memory>::CodeLine::Operand;
+    for (size_t i = 0; i < line.operands.size(); ++i) {
+        if (i > 0) os << ", ";
+        const auto& op = line.operands[i];
+        bool is_num = (op.type == Operand::IMM8 || op.type == Operand::IMM16 || op.type == Operand::MEM_IMM16);
+        if (is_num) os << color_num;
+        switch (op.type) {
+            case Operand::REG8: case Operand::REG16: case Operand::CONDITION: os << op.s_val; break;
+            case Operand::IMM8: os << "$" << Strings::hex((uint8_t)op.num_val); break;
+            case Operand::IMM16: os << "$" << Strings::hex((uint16_t)op.num_val); break;
+            case Operand::MEM_IMM16: os << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
+            case Operand::PORT_IMM8: os << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
+            case Operand::MEM_REG16: os << "(" << op.s_val << ")"; break;
+            case Operand::MEM_INDEXED: os << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
+            case Operand::STRING: os << "\"" << op.s_val << "\""; break;
+            case Operand::CHAR_LITERAL: os << "'" << (char)op.num_val << "'"; break;
+            default: break;
+        }
+        if (is_num) os << color_rst;
+    }
+}
+
 std::vector<std::string> CodeView::render() {
     std::vector<std::string> lines_out;
     lines_out.push_back(format_header("CODE"));
+
     if (m_has_history && m_start_addr == m_pc && (m_last_pc != m_pc || !m_pc_moved)) {
         uint16_t hist_addr = m_last_pc;
         uint16_t temp_hist = hist_addr;
@@ -158,25 +179,7 @@ std::vector<std::string> CodeView::render() {
             for(size_t i=line.bytes.size(); i<4; ++i) ss << "   ";
             ss << " ";
             ss << std::left << std::setw(5) << line.mnemonic << " ";
-            if (!line.operands.empty()) {
-                using Operand = typename std::decay_t<decltype(line)>::Operand;
-                for (size_t i = 0; i < line.operands.size(); ++i) {
-                    if (i > 0) ss << ", ";
-                    const auto& op = line.operands[i];
-                    switch (op.type) {
-                        case Operand::REG8: case Operand::REG16: case Operand::CONDITION: ss << op.s_val; break;
-                        case Operand::IMM8: ss << "$" << Strings::hex((uint8_t)op.num_val); break;
-                        case Operand::IMM16: ss << "$" << Strings::hex((uint16_t)op.num_val); break;
-                        case Operand::MEM_IMM16: ss << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
-                        case Operand::PORT_IMM8: ss << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
-                        case Operand::MEM_REG16: ss << "(" << op.s_val << ")"; break;
-                        case Operand::MEM_INDEXED: ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
-                        case Operand::STRING: ss << "\"" << op.s_val << "\""; break;
-                        case Operand::CHAR_LITERAL: ss << "'" << (char)op.num_val << "'"; break;
-                        default: break;
-                    }
-                }
-            }
+            format_operands(line, ss, "", "");
             ss << Terminal::RESET;
             lines_out.push_back(ss.str());
         }
@@ -185,7 +188,6 @@ std::vector<std::string> CodeView::render() {
     auto* code_map = &m_core.get_code_map();
     bool first_line = true;
     int lines_count = 0;
-
     while (lines_count < m_rows) {
         auto lines = m_core.get_analyzer().parse_code(temp_pc_iter, 1, code_map);
         if (lines.empty())
@@ -195,50 +197,41 @@ std::vector<std::string> CodeView::render() {
         const Comment* block_cmt = ctx.comments.find((uint16_t)line.address, Comment::Type::Block);
         bool has_block_desc = block_cmt && !block_cmt->getText().empty();
         bool has_label = !line.label.empty();
-
-        // 1. Separacja wertykalna (Pusta linia przed nowym blokiem)
         if (!first_line && (has_label || has_block_desc)) {
-            if (lines_count < m_rows) { lines_out.push_back(""); lines_count++; }
+            lines_out.push_back("");
+            lines_count++;
         }
-
         if (block_cmt) {
              const auto& desc = block_cmt->getText();
              if (!desc.empty()) {
                  std::stringstream desc_ss(desc);
                  std::string segment;
-                 while(std::getline(desc_ss, segment, '\n')) {
-                     if (lines_count < m_rows) { lines_out.push_back(m_theme.value_dim + segment + Terminal::RESET); lines_count++; }
+                 while(lines_count < m_rows && std::getline(desc_ss, segment, '\n')) {
+                     lines_out.push_back(m_theme.value_dim + segment + Terminal::RESET);
+                     lines_count++;
                  }
              }
         }
-
-        // Podejście 1: Etykieta w osobnej linii
-        if (!line.label.empty()) {
-            if (lines_count < m_rows) { lines_out.push_back(m_theme.label + line.label + ":" + Terminal::RESET); lines_count++; }
+        if (!line.label.empty() && lines_count < m_rows) {
+            lines_out.push_back(m_theme.label + line.label + ":" + Terminal::RESET);
+            lines_count++;
         }
-
         std::stringstream ss;
         bool is_pc = ((uint16_t)line.address == m_pc);
         std::string bg = is_pc ? m_theme.pc_bg : "";
         std::string rst = is_pc ? (Terminal::RESET + bg) : Terminal::RESET;
-        
-        // ZONE 1: Gutter (0-2)
         if (is_pc) 
             ss << bg << m_theme.header_blur << Terminal::BOLD << ">  " << rst;
         else
             ss << "   ";
-
-        // ZONE 2: Address (3-8)
         if (is_pc)
             ss << m_theme.pc_fg << Terminal::BOLD << Strings::hex((uint16_t)line.address) << rst << ": ";
         else
             ss << m_theme.address << Strings::hex((uint16_t)line.address) << rst << ": ";
-
-        // ZONE 3: Hex (9-18)
         std::stringstream hex_ss;
-        if (line.bytes.size() > 3) {
+        if (line.bytes.size() > 3)
             hex_ss << Strings::hex(line.bytes[0]) << " " << Strings::hex(line.bytes[1]) << " ..";
-        } else {
+        else {
             for(size_t i=0; i<line.bytes.size(); ++i) {
                 if (i > 0) hex_ss << " ";
                 hex_ss << Strings::hex(line.bytes[i]);
@@ -248,44 +241,18 @@ std::vector<std::string> CodeView::render() {
         ss << m_theme.value_dim << hex_str << rst;
         int hex_len = (int)hex_str.length();
         int hex_pad = 9 - hex_len;
-        if (hex_pad > 0) ss << std::string(hex_pad, ' ');
-
-        // GAP (18-19)
+        if (hex_pad > 0)
+            ss << std::string(hex_pad, ' ');
         ss << "  ";
-
-        // ZONE 4: Mnemonic (20-34)
         std::stringstream mn_ss;
         if (is_pc)
             mn_ss << Terminal::BOLD << m_theme.pc_fg;
         else
             mn_ss << m_theme.mnemonic;
         mn_ss << line.mnemonic << rst;
-
         if (!line.operands.empty()) {
             mn_ss << " ";
-            using Operand = typename std::decay_t<decltype(line)>::Operand;
-            for (size_t i = 0; i < line.operands.size(); ++i) {
-                if (i > 0)
-                    mn_ss << ", ";
-                const auto& op = line.operands[i];
-                bool is_num = (op.type == Operand::IMM8 || op.type == Operand::IMM16 || op.type == Operand::MEM_IMM16);
-                if (is_num)
-                    mn_ss << m_theme.operand_num;
-                switch (op.type) {
-                    case Operand::REG8: case Operand::REG16: case Operand::CONDITION: mn_ss << op.s_val; break;
-                    case Operand::IMM8: mn_ss << "$" << Strings::hex((uint8_t)op.num_val); break;
-                    case Operand::IMM16: mn_ss << "$" << Strings::hex((uint16_t)op.num_val); break;
-                    case Operand::MEM_IMM16: mn_ss << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
-                    case Operand::PORT_IMM8: mn_ss << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
-                    case Operand::MEM_REG16: mn_ss << "(" << op.s_val << ")"; break;
-                    case Operand::MEM_INDEXED: mn_ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
-                    case Operand::STRING: mn_ss << "\"" << op.s_val << "\""; break;
-                    case Operand::CHAR_LITERAL: mn_ss << "'" << (char)op.num_val << "'"; break;
-                    default: break;
-                }
-                if (is_num)
-                    mn_ss << rst;
-            }
+            format_operands(line, mn_ss, m_theme.operand_num, rst);
         }
         
         std::string mn_str = mn_ss.str();
@@ -395,14 +362,13 @@ void Dashboard::run() {
         if (input_cstr == nullptr)
             break;
         std::string input(input_cstr);
-        if (input.empty()) continue;
-
+        if (input.empty())
+            continue;
         m_repl.history_add(input);
         handle_command(input);
     }
     m_repl.history_save(".zxtool_history");
 }
-
 
 void Dashboard::validate_focus() {
     int attempts = 0;
@@ -650,157 +616,153 @@ void Dashboard::handle_command(const std::string& input) {
 }
 
 void Dashboard::init() {
-        m_repl.install_window_change_handler();
-        
-        auto bind_scroll = [&](char32_t key, int mem_delta, int code_delta, int stack_delta) {
-            m_repl.bind_key(key, [this, mem_delta, code_delta, stack_delta](char32_t code) {
-                if (m_focus == FOCUS_MEMORY) m_memory_view.scroll(mem_delta);
-                else if (m_focus == FOCUS_CODE) {
-                    m_auto_follow = false;
-                    m_code_view.scroll(code_delta);
-                }
-                else if (m_focus == FOCUS_STACK) m_stack_view.scroll(stack_delta);
-                print_dashboard();
-                m_repl.invoke(replxx::Replxx::ACTION::REPAINT, code);
-                return replxx::Replxx::ACTION_RESULT::CONTINUE;
-            });
-        };
-
-        bind_scroll(replxx::Replxx::KEY::UP, -16, -1, -2);
-        bind_scroll(replxx::Replxx::KEY::DOWN, 16, 1, 2);
-
-        auto tab_handler = [this](char32_t code) {
-            m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT);
-            validate_focus();
+    m_repl.install_window_change_handler();    
+    
+    auto bind_scroll = [&](char32_t key, int mem_delta, int code_delta, int stack_delta) {
+        m_repl.bind_key(key, [this, mem_delta, code_delta, stack_delta](char32_t code) {
+        if (m_focus == FOCUS_MEMORY)
+            m_memory_view.scroll(mem_delta);
+        else if (m_focus == FOCUS_CODE) {
+            m_auto_follow = false;
+            m_code_view.scroll(code_delta);
+        }
+        else if (m_focus == FOCUS_STACK) m_stack_view.scroll(stack_delta);
             print_dashboard();
             m_repl.invoke(replxx::Replxx::ACTION::REPAINT, code);
             return replxx::Replxx::ACTION_RESULT::CONTINUE;
-        };
-        
-        m_repl.bind_key(replxx::Replxx::KEY::TAB, tab_handler);
-        m_repl.bind_key(9, tab_handler);
+        });
+    };
+
+    bind_scroll(replxx::Replxx::KEY::UP, -16, -1, -2);
+    bind_scroll(replxx::Replxx::KEY::DOWN, 16, 1, 2);
+
+    auto tab_handler = [this](char32_t code) {
+        m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT);
+        validate_focus();
+        print_dashboard();
+        m_repl.invoke(replxx::Replxx::ACTION::REPAINT, code);
+        return replxx::Replxx::ACTION_RESULT::CONTINUE;
+    };
+    m_repl.bind_key(replxx::Replxx::KEY::TAB, tab_handler);
 }
 
 void Dashboard::print_dashboard() {
-        std::cout << Terminal::CLEAR;
-        auto& core = m_debugger.get_core();
-        auto& cpu = core.get_cpu();
-        uint16_t pc = cpu.get_PC();
-        const int terminal_width = 80;
-        if (m_show_mem) {
-            m_memory_view.set_focus(m_focus == FOCUS_MEMORY);
-            auto lines = m_memory_view.render();
-            for (const auto& line : lines)
-                std::cout << line << "\n";
+    std::cout << Terminal::CLEAR;
+    auto& core = m_debugger.get_core();
+    auto& cpu = core.get_cpu();
+    uint16_t pc = cpu.get_PC();
+    const int terminal_width = 80;
+    if (m_show_mem) {
+        m_memory_view.set_focus(m_focus == FOCUS_MEMORY);
+        auto lines = m_memory_view.render();
+        for (const auto& line : lines)
+            std::cout << line << "\n";
+    }
+    std::cout << std::setfill(' ') << std::right << std::dec;
+    std::vector<std::string> left_lines;
+    std::vector<std::string> right_lines;
+    if (m_show_regs) {
+        m_register_view.set_focus(m_focus == FOCUS_REGS);
+        m_register_view.set_state(m_debugger.get_prev_state(), m_debugger.get_tstates());
+        auto regs_lines = m_register_view.render();
+        left_lines.insert(left_lines.end(), regs_lines.begin(), regs_lines.end());
+    }
+    if (m_show_stack) {
+        m_stack_view.set_focus(m_focus == FOCUS_STACK);
+        auto stack_lines = m_stack_view.render();
+        right_lines.insert(right_lines.end(), stack_lines.begin(), stack_lines.end());
+    }
+    print_separator();
+    print_columns(left_lines, right_lines, 40);
+    print_separator();
+    left_lines.clear();
+    right_lines.clear();
+    if (m_show_code) {
+        int width = terminal_width;    
+        uint16_t view_pc = m_code_view.get_address();
+        uint16_t highlight_pc = pc;
+        if (cpu.is_halted()) {
+            highlight_pc = pc - 1;
+            if (view_pc == pc)
+                view_pc = highlight_pc;
         }
-        std::cout << std::setfill(' ') << std::right << std::dec;
-        std::vector<std::string> left_lines;
-        std::vector<std::string> right_lines;
-        if (m_show_regs) {
-            m_register_view.set_focus(m_focus == FOCUS_REGS);
-            m_register_view.set_state(m_debugger.get_prev_state(), m_debugger.get_tstates());
-            auto regs_lines = m_register_view.render();
-            left_lines.insert(left_lines.end(), regs_lines.begin(), regs_lines.end());
-        }
-        if (m_show_stack) {
-            m_stack_view.set_focus(m_focus == FOCUS_STACK);
-            auto stack_lines = m_stack_view.render();
-            right_lines.insert(right_lines.end(), stack_lines.begin(), stack_lines.end());
-        }
+        m_code_view.set_focus(m_focus == FOCUS_CODE);
+        m_code_view.set_state(highlight_pc, width, m_debugger.get_last_pc(), m_debugger.has_history(), m_debugger.pc_moved());
+        auto code_lines = m_code_view.render();
+        for (const auto& l : code_lines)
+            std::cout << l << "\n";
+    }
+    if (m_show_watch) {
         print_separator();
-        print_columns(left_lines, right_lines, 40);
-        print_separator();
-        left_lines.clear();
-        right_lines.clear();
-        if (m_show_code) {
-            int width = terminal_width;
-            
-            uint16_t view_pc = m_code_view.get_address();
-            uint16_t highlight_pc = pc;
-            if (cpu.is_halted()) {
-                highlight_pc = pc - 1;
-                if (view_pc == pc) view_pc = highlight_pc;
-            }
-
-            m_code_view.set_focus(m_focus == FOCUS_CODE);
-            m_code_view.set_state(highlight_pc, width, m_debugger.get_last_pc(), m_debugger.has_history(), m_debugger.pc_moved());
-            auto code_lines = m_code_view.render();
-            for (const auto& l : code_lines) std::cout << l << "\n";
-        }
-
-        if (m_show_watch) {
-            print_separator();
-            std::cout << (m_focus == FOCUS_WATCH || m_focus == FOCUS_BREAKPOINTS ? m_theme.header_focus : m_theme.header_blur) << "[STATUS]" << Terminal::RESET << "\n";
-
-            std::stringstream ss;
-            std::string label = " WATCH: ";
-            ss << m_theme.label << label << Terminal::RESET;
-            
-            const auto& watches = m_debugger.get_watches();
-            std::vector<std::string> items;
-            for (uint16_t addr : watches) {
-                uint8_t val = core.get_memory().peek(addr);
-                std::stringstream item_ss;
-                auto pair = core.get_context().find_nearest_symbol(addr);
-                if (!pair.first.empty() && pair.second == addr) item_ss << pair.first;
-                else item_ss << Strings::hex(addr);
+        std::cout << (m_focus == FOCUS_WATCH || m_focus == FOCUS_BREAKPOINTS ? m_theme.header_focus : m_theme.header_blur) << "[STATUS]" << Terminal::RESET << "\n";
+        std::stringstream ss;
+        std::string label = " WATCH: ";
+        ss << m_theme.label << label << Terminal::RESET;
+        const auto& watches = m_debugger.get_watches();
+        std::vector<std::string> items;
+        for (uint16_t addr : watches) {
+            uint8_t val = core.get_memory().peek(addr);
+            std::stringstream item_ss;
+            auto pair = core.get_context().find_nearest_symbol(addr);
+            if (!pair.first.empty() && pair.second == addr)
+                item_ss << pair.first;
+            else item_ss << Strings::hex(addr);
                 item_ss << "=" << (int)val;
-                items.push_back(item_ss.str());
+            items.push_back(item_ss.str());
+        }    
+        int max_len = 80;
+        int current_len = (int)label.length();
+        bool first = true;
+        for (size_t i = 0; i < items.size(); ++i) {
+            std::string sep = first ? "" : ", ";
+            if (current_len + sep.length() + items[i].length() > (size_t)(max_len - 10)) {
+                ss << m_theme.value_dim << "... (+" << (items.size() - i) << ")" << Terminal::RESET;
+                break;
             }
-            
-            int max_len = 80;
-            int current_len = (int)label.length();
-            bool first = true;
-            for (size_t i = 0; i < items.size(); ++i) {
-                std::string sep = first ? "" : ", ";
-                if (current_len + sep.length() + items[i].length() > (size_t)(max_len - 10)) {
-                    ss << m_theme.value_dim << "... (+" << (items.size() - i) << ")" << Terminal::RESET;
-                    break;
-                }
-                ss << m_theme.value << sep << items[i] << Terminal::RESET;
-                current_len += sep.length() + items[i].length();
-                first = false;
-            }
-            if (items.empty()) ss << m_theme.value_dim << "No items." << Terminal::RESET;
-            std::cout << ss.str() << "\n";
-            
-            ss.str(""); ss.clear();
-            label = " BREAK: ";
-            ss << m_theme.error << label << Terminal::RESET;
-            
-            const auto& breakpoints = m_debugger.get_breakpoints();
-            items.clear();
-            for (const auto& bp : breakpoints) {
-                std::stringstream item_ss;
-                item_ss << (bp.enabled ? "*" : "o") << Strings::hex(bp.addr);
-                auto pair = core.get_context().find_nearest_symbol(bp.addr);
-                if (!pair.first.empty() && pair.second == bp.addr) item_ss << " (" << pair.first << ")";
-                items.push_back(item_ss.str());
-            }
-            
-            max_len = 80;
-            current_len = (int)label.length();
-            first = true;
-            for (size_t i = 0; i < items.size(); ++i) {
-                std::string sep = first ? "" : ", ";
-                if (current_len + sep.length() + items[i].length() > (size_t)(max_len - 10)) {
-                    ss << m_theme.value_dim << "... (+" << (items.size() - i) << ")" << Terminal::RESET;
-                    break;
-                }
-                ss << m_theme.value << sep << items[i] << Terminal::RESET;
-                current_len += sep.length() + items[i].length();
-                first = false;
-            }
-            if (items.empty()) ss << m_theme.value_dim << "No items." << Terminal::RESET;
-            std::cout << ss.str() << "\n";
-            print_separator();
+            ss << m_theme.value << sep << items[i] << Terminal::RESET;
+            current_len += sep.length() + items[i].length();
+            first = false;
         }
-
-        bool has_output = (m_output_buffer.tellp() > 0);
-        print_output_buffer();
-        if (has_output || !m_show_watch) print_separator();
-        print_footer();
-        std::cout << std::flush;
+        if (items.empty())
+            ss << m_theme.value_dim << "No items." << Terminal::RESET;
+        std::cout << ss.str() << "\n";
+        ss.str(""); ss.clear();
+        label = " BREAK: ";
+        ss << m_theme.error << label << Terminal::RESET;
+        const auto& breakpoints = m_debugger.get_breakpoints();
+        items.clear();
+        for (const auto& bp : breakpoints) {
+            std::stringstream item_ss;
+            item_ss << (bp.enabled ? "*" : "o") << Strings::hex(bp.addr);
+            auto pair = core.get_context().find_nearest_symbol(bp.addr);
+            if (!pair.first.empty() && pair.second == bp.addr)
+                item_ss << " (" << pair.first << ")";
+            items.push_back(item_ss.str());
+        }    
+        max_len = 80;
+        current_len = (int)label.length();
+        first = true;
+        for (size_t i = 0; i < items.size(); ++i) {
+            std::string sep = first ? "" : ", ";
+            if (current_len + sep.length() + items[i].length() > (size_t)(max_len - 10)) {
+                ss << m_theme.value_dim << "... (+" << (items.size() - i) << ")" << Terminal::RESET;
+                break;
+            }
+            ss << m_theme.value << sep << items[i] << Terminal::RESET;
+            current_len += sep.length() + items[i].length();
+            first = false;
+        }
+        if (items.empty())
+            ss << m_theme.value_dim << "No items." << Terminal::RESET;
+        std::cout << ss.str() << "\n";
+        print_separator();
+    }
+    bool has_output = (m_output_buffer.tellp() > 0);
+    print_output_buffer();
+    if (has_output || !m_show_watch)
+        print_separator();
+    print_footer();
+    std::cout << std::flush;
 }
 
 void Dashboard::print_output_buffer() {
@@ -830,25 +792,27 @@ void Dashboard::update_code_view() {
 }
 
 void Dashboard::print_columns(const std::vector<std::string>& left, const std::vector<std::string>& right, size_t left_width) {
-        size_t rows = std::max(left.size(), right.size());
-
-        for (size_t row = 0; row < rows; ++row) {
-            std::string l = (row < left.size()) ? left[row] : "";
-            bool has_bg = (l.find("[100m") != std::string::npos);
-
-            if (!right.empty()) {
-                std::string l_padded = l;
-                if (has_bg) l_padded += m_theme.pc_bg;
-                std::cout << Strings::padding(l_padded, left_width);
-                if (has_bg) std::cout << Terminal::RESET;
-                std::cout << m_theme.separator << " | " << Terminal::RESET;
-                if (row < right.size()) std::cout << " " << right[row];
-            } else {
-                std::cout << l;
-                if (has_bg) std::cout << m_theme.pc_bg << Terminal::RESET;
-            }
-            std::cout << "\n";
+    size_t rows = std::max(left.size(), right.size());
+    for (size_t row = 0; row < rows; ++row) {
+        std::string l = (row < left.size()) ? left[row] : "";
+        bool has_bg = (l.find("[100m") != std::string::npos);
+        if (!right.empty()) {
+            std::string l_padded = l;
+            if (has_bg)
+                l_padded += m_theme.pc_bg;
+            std::cout << Strings::padding(l_padded, left_width);
+            if (has_bg)
+                std::cout << Terminal::RESET;
+            std::cout << m_theme.separator << " | " << Terminal::RESET;
+            if (row < right.size())
+                std::cout << " " << right[row];
+        } else {
+            std::cout << l;
+            if (has_bg)
+                std::cout << m_theme.pc_bg << Terminal::RESET;
         }
+        std::cout << "\n";
+    }
 }
 
 int DebugEngine::run() {
@@ -856,21 +820,19 @@ int DebugEngine::run() {
         try {
             std::string ep = m_options.entryPointStr;
             size_t colon = ep.find(':');
-            if (colon != std::string::npos) {
+            if (colon != std::string::npos)
                 ep = ep.substr(0, colon);
-            }
             int32_t val = 0;
-            if (Strings::parse_integer(ep, val)) {
+            if (Strings::parse_integer(ep, val))
                 m_core.get_cpu().set_PC((uint16_t)val);
-            } else { throw std::runtime_error("Invalid address format"); }
+            else
+                throw std::runtime_error("Invalid address format");
         } catch (const std::exception& e) {
             std::cerr << "Error parsing entry point: " << e.what() << "\n";
         }
     }
-
     Debugger debugger(m_core);
     Dashboard dashboard(debugger, m_repl);
     dashboard.run();
-    
     return 0;
 }

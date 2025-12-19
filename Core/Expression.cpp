@@ -178,9 +178,9 @@ std::string Expression::parse_word(const std::string& expr, size_t& index) {
 }
 
 bool Expression::parse_number(const std::string& word, std::vector<Token>& tokens) {
-    double d_val;
-    if (Strings::parse_double(word, d_val)) {
-        tokens.push_back({TokenType::NUMBER, Value(d_val)});
+    double number;
+    if (Strings::parse_double(word, number)) {
+        tokens.push_back({TokenType::NUMBER, Value(number)});
         return true;
     }
     return false;
@@ -196,9 +196,9 @@ bool Expression::parse_register(const std::string& word, std::vector<Token>& tok
 }
 
 bool Expression::parse_symbol(const std::string& word, std::vector<Token>& tokens) {
-    const Symbol* s = m_core.get_context().symbols.find(word);
-    if (s) {
-        tokens.push_back({TokenType::SYMBOL, Value(*s), word});
+    const Symbol* symbol = m_core.get_context().symbols.find(word);
+    if (symbol) {
+        tokens.push_back({TokenType::SYMBOL, Value(*symbol), word});
         return true;
     }
     return false;

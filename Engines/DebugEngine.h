@@ -94,6 +94,7 @@ public:
         m_pc = pc; m_width = width; m_last_pc = last_pc; m_has_history = has_history; m_pc_moved = pc_moved;
     }
 private:
+    void format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst);
     uint16_t m_start_addr = 0;
     uint16_t m_pc = 0;
     int m_width = 80;
