@@ -26,7 +26,7 @@ add_executable(zxtool
                 Core/Context.cpp
                 Core/Analyzer.cpp
                 Core/Core.cpp
-                Core/Evaluator.cpp
+                Core/Expression.cpp
                 Core/Symbols.cpp
                 Core/Comments.cpp
                 Core/Application.cpp

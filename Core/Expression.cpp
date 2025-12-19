@@ -1,9 +1,8 @@
-#include "Evaluator.h"
+#include "Expression.h"
 #include "../Utils/Strings.h"
 #include <cctype>
-#include <algorithm>
 
-Evaluator::Evaluator(Core& core) : m_core(core) {}
+Expression::Expression(Core& core) : m_core(core) {}
 
 static double get_val(Core& core, const Value& v) {
     if (v.is_register()) return v.reg().read(core.get_cpu());
@@ -11,7 +10,7 @@ static double get_val(Core& core, const Value& v) {
     return v.number();
 }
 
-const std::map<std::string, Evaluator::OperatorInfo>& Evaluator::get_operators() {
+const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators() {
     static const std::map<std::string, OperatorInfo> ops = {
         {"_",   {100, false, true,  [](Core& c, const std::vector<Value>& args) { return -get_val(c, args[0]); }}},
         {"+",   {80, true,  false, [](Core& c, const std::vector<Value>& args) { 
@@ -84,7 +83,7 @@ const std::map<std::string, Evaluator::OperatorInfo>& Evaluator::get_operators()
     return ops;
 }
 
-const std::map<std::string, Evaluator::FunctionInfo>& Evaluator::get_functions() {
+const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions() {
     static const std::map<std::string, FunctionInfo> funcs = {
         {"LOW",  {1, [](Core& c, const std::vector<Value>& args) { return (double)((int)get_val(c, args[0]) & 0xFF); }}},
         {"HIGH", {1, [](Core& c, const std::vector<Value>& args) { return (double)(((int)get_val(c, args[0]) >> 8) & 0xFF); }}},
@@ -93,7 +92,7 @@ const std::map<std::string, Evaluator::FunctionInfo>& Evaluator::get_functions()
     return funcs;
 }
 
-Value Evaluator::evaluate(const std::string& expression) {
+Value Expression::evaluate(const std::string& expression) {
     if (expression.empty())
         return Value(0.0);
     auto tokens = tokenize(expression);
@@ -101,7 +100,7 @@ Value Evaluator::evaluate(const std::string& expression) {
     return execute_rpn(rpn);
 }
 
-bool Evaluator::parse_operator(const std::string& expr, size_t& i, std::vector<Token>& tokens) {
+bool Expression::parse_operator(const std::string& expr, size_t& i, std::vector<Token>& tokens) {
     auto& ops_map = get_operators();
     std::string matched_op;
     const OperatorInfo* op_info = nullptr;
@@ -132,7 +131,7 @@ bool Evaluator::parse_operator(const std::string& expr, size_t& i, std::vector<T
     return false;
 }
 
-bool Evaluator::parse_punctuation(const std::string& expr, size_t& i, std::vector<Token>& tokens) {
+bool Expression::parse_punctuation(const std::string& expr, size_t& i, std::vector<Token>& tokens) {
     char c = expr[i];
     TokenType type;
     switch (c) {
@@ -165,7 +164,7 @@ bool Evaluator::parse_punctuation(const std::string& expr, size_t& i, std::vecto
     return true;
 }
 
-std::string Evaluator::parse_word(const std::string& expr, size_t& index) {
+std::string Expression::parse_word(const std::string& expr, size_t& index) {
     std::string word;
     while (index < expr.length()) {
         char c = expr[index];
@@ -178,7 +177,7 @@ std::string Evaluator::parse_word(const std::string& expr, size_t& index) {
     return word;
 }
 
-bool Evaluator::parse_number(const std::string& word, std::vector<Token>& tokens) {
+bool Expression::parse_number(const std::string& word, std::vector<Token>& tokens) {
     double d_val;
     if (Strings::parse_double(word, d_val)) {
         tokens.push_back({TokenType::NUMBER, Value(d_val)});
@@ -187,7 +186,7 @@ bool Evaluator::parse_number(const std::string& word, std::vector<Token>& tokens
     return false;
 }
 
-bool Evaluator::parse_register(const std::string& word, std::vector<Token>& tokens) {
+bool Expression::parse_register(const std::string& word, std::vector<Token>& tokens) {
     std::string upper_word = Strings::upper(word);
     if (Register::is_valid(upper_word)) {
         tokens.push_back({TokenType::REGISTER, Value(Register(upper_word)), upper_word});
@@ -196,7 +195,7 @@ bool Evaluator::parse_register(const std::string& word, std::vector<Token>& toke
     return false;
 }
 
-bool Evaluator::parse_symbol(const std::string& word, std::vector<Token>& tokens) {
+bool Expression::parse_symbol(const std::string& word, std::vector<Token>& tokens) {
     const Symbol* s = m_core.get_context().symbols.find(word);
     if (s) {
         tokens.push_back({TokenType::SYMBOL, Value(*s), word});
@@ -205,7 +204,7 @@ bool Evaluator::parse_symbol(const std::string& word, std::vector<Token>& tokens
     return false;
 }
 
-bool Evaluator::parse_string(const std::string& expr, size_t& index, std::vector<Token>& tokens) {
+bool Expression::parse_string(const std::string& expr, size_t& index, std::vector<Token>& tokens) {
     char quote = expr[index];
     if (quote == '"' || quote == '\'') {
         size_t j = index + 1;
@@ -224,7 +223,7 @@ bool Evaluator::parse_string(const std::string& expr, size_t& index, std::vector
     return false;
 }
 
-bool Evaluator::parse_function(const std::string& word, std::vector<Token>& tokens) {
+bool Expression::parse_function(const std::string& word, std::vector<Token>& tokens) {
     std::string upper_word = Strings::upper(word);
     auto& funcs = get_functions();
     auto func_it = funcs.find(upper_word);
@@ -235,7 +234,7 @@ bool Evaluator::parse_function(const std::string& word, std::vector<Token>& toke
     return false;
 }
 
-std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
+std::vector<Expression::Token> Expression::tokenize(const std::string& expr) {
     std::vector<Token> tokens;
     size_t i = 0;
     while (i < expr.length()) {
@@ -280,7 +279,7 @@ std::vector<Evaluator::Token> Evaluator::tokenize(const std::string& expr) {
     return tokens;
 }
 
-std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>& tokens) {
+std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token>& tokens) {
     std::vector<Token> output_queue;
     std::stack<Token> operator_stack;
     TokenType last_type = TokenType::OPERATOR;
@@ -422,7 +421,7 @@ std::vector<Evaluator::Token> Evaluator::shunting_yard(const std::vector<Token>&
     return output_queue;
 }
 
-Value Evaluator::execute_rpn(const std::vector<Token>& rpn) {
+Value Expression::execute_rpn(const std::vector<Token>& rpn) {
     std::vector<Value> stack;
 
     for (const auto& token : rpn) {

@@ -1,5 +1,5 @@
-#ifndef __EVALUATOR_H__
-#define __EVALUATOR_H__
+#ifndef __EXPRESSION_H__
+#define __EXPRESSION_H__
 
 #include "CoreIncludes.h"
 
@@ -60,9 +60,9 @@ private:
     std::vector<uint16_t> m_words;
 };
 
-class Evaluator {
+class Expression {
 public:
-    Evaluator(Core& core);
+    Expression(Core& core);
 
     Value evaluate(const std::string& expression);
 
@@ -126,4 +126,4 @@ private:
     Value execute_rpn(const std::vector<Token>& rpn);
 };
 
-#endif//__EVALUATOR_H__
+#endif//__EXPRESSION_H__

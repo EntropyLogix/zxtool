@@ -12,7 +12,7 @@
 
 #include "../Utils/Strings.h"
 #include "../Utils/Terminal.h"
-#include "../Core/Evaluator.h"
+#include "../Core/Expression.h"
 
 std::string DebugView::format_header(const std::string& title, const std::string& extra) const {
     std::stringstream ss;
@@ -431,7 +431,7 @@ void Dashboard::handle_command(const std::string& input) {
 
     static const auto eval_handler = [](Dashboard* d, const std::string& expr) {
         try {
-            Evaluator eval(d->m_debugger.get_core());
+            Expression eval(d->m_debugger.get_core());
             Value val = eval.evaluate(expr);
             d->m_output_buffer << expr << "\n";
             if (val.is_number()) {
@@ -513,7 +513,7 @@ void Dashboard::handle_command(const std::string& input) {
         }
 
         try {
-            Evaluator eval(d->m_debugger.get_core());
+            Expression eval(d->m_debugger.get_core());
             Value target = eval.evaluate(lhs_str);
             Value val = eval.evaluate(rhs_str);
             
