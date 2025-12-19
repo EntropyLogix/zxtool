@@ -612,6 +612,21 @@ void Dashboard::handle_command(const std::string& input) {
     auto it = commands.find(cmd);
     if (it != commands.end()) {
         it->second(this, args);
+    } else {
+        size_t eq_pos = input.find('=');
+        if (eq_pos != std::string::npos) {
+            std::string lhs = input.substr(0, eq_pos);
+            std::string rhs = input.substr(eq_pos + 1);
+            Strings::trim(lhs);
+            Strings::trim(rhs);
+            if (lhs.empty() || rhs.empty()) {
+                m_output_buffer << "Syntax error\n";
+            } else {
+                set_handler(this, input);
+            }
+        } else {
+            eval_handler(this, input);
+        }
     }
 }
 

@@ -124,6 +124,9 @@ private:
     std::vector<Token> tokenize(const std::string& expression);
     std::vector<Token> shunting_yard(const std::vector<Token>& tokens);
     Value execute_rpn(const std::vector<Token>& rpn);
+
+    static void syntax_error(const std::string& msg);
+    static double get_val(Core& core, const Value& v);
 };
 
 #endif//__EXPRESSION_H__

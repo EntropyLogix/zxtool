@@ -8,13 +8,11 @@ class Symbol {
 public:
     enum class Type {
         Label,
-        Constant,
-        Variable
+        Constant
     };
 
     Symbol() = default;
-    Symbol(const std::string& name, uint16_t value, Type type = Type::Label) 
-        : m_name(name), m_value(value), m_type(type) {}
+    Symbol(const std::string& name, uint16_t value, Type type = Type::Label)  : m_name(name), m_value(value), m_type(type) {}
 
     const std::string& getName() const { return m_name; }
     

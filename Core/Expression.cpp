@@ -4,7 +4,11 @@
 
 Expression::Expression(Core& core) : m_core(core) {}
 
-static double get_val(Core& core, const Expression::Value& v) {
+void Expression::syntax_error(const std::string& msg) {
+    throw std::runtime_error("Syntax error: " + msg);
+}
+
+double Expression::get_val(Core& core, const Expression::Value& v) {
     if (v.is_register()) return v.reg().read(core.get_cpu());
     if (v.is_symbol()) return v.symbol().read();
     return v.number();
@@ -218,7 +222,7 @@ bool Expression::parse_string(const std::string& expr, size_t& index, std::vecto
             s += expr[j];
             j++;
         }
-        throw std::runtime_error("Unterminated string literal");
+        syntax_error("Unterminated string literal");
     }
     return false;
 }
@@ -272,9 +276,9 @@ std::vector<Expression::Token> Expression::tokenize(const std::string& expr) {
                 i = j;
                 continue;
             }
-            throw std::runtime_error("Unknown token: " + word);
+            syntax_error("Unknown symbol '" + word + "'");
         }
-        throw std::runtime_error(std::string("Unexpected character: ") + expr[i]);
+        syntax_error(std::string("Unexpected character '") + expr[i] + "'");
     }
     return tokens;
 }
@@ -324,7 +328,7 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                         std::vector<uint16_t> res;
                         if (args[1].is_address()) {
                             if (!args[0].is_register())
-                                throw std::runtime_error("Syntax error: Indexing allowed only on registers.");
+                                syntax_error("Indexing allowed only on registers.");
                             double val = get_val(c, args[0]);
                             for (auto a : args[1].address())
                                 res.push_back((int)val + a);
@@ -434,7 +438,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             const auto* info = token.op_info;
             int args_needed = info->is_unary ? 1 : 2;
             if (stack.size() < args_needed)
-                throw std::runtime_error("Syntax error: Not enough operands for operator: " + token.symbol);
+                syntax_error("Not enough operands for operator: " + token.symbol);
             std::vector<Value> args;
             for(int k=0; k<args_needed; ++k) {
                 args.push_back(stack.back());
@@ -449,7 +453,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             if (info->num_args == -1)
                 args_needed = stack.size();
             if (stack.size() < args_needed)
-                throw std::runtime_error("Syntax error: Not enough arguments for function: " + token.symbol);
+                syntax_error("Not enough arguments for function: " + token.symbol);
             std::vector<Value> args;
             for(int k=0; k<args_needed; ++k) {
                 args.push_back(stack.back());
@@ -482,7 +486,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             std::reverse(args.begin(), args.end());
             for (const auto& v : args) {
                 if (v.is_address())
-                    throw std::runtime_error("Syntax error: Mixing [] and {} is not allowed.");
+                    syntax_error("Mixing [] and {} is not allowed.");
                 if (v.is_string()) {
                     const std::string& s = v.string();
                     bytes.insert(bytes.end(), s.begin(), s.end());
@@ -522,7 +526,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             std::reverse(args.begin(), args.end());
             for (const auto& v : args) {
                 if (v.is_address())
-                    throw std::runtime_error("Syntax error: Mixing [] and W{} is not allowed.");
+                    syntax_error("Mixing [] and W{} is not allowed.");
                 
                 if (v.is_string()) {
                     const std::string& s = v.string();

@@ -18,6 +18,7 @@ public:
 
     static bool parse_integer(const std::string& s, int32_t& out_value);
     static bool parse_double(const std::string& s, double& out_value);
+    static void trim(std::string& s);
 };
 
 #endif//__STRINGS_H__

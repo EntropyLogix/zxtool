@@ -157,3 +157,12 @@ std::string Strings::upper(const std::string& s) {
                    [](unsigned char c){ return std::toupper(c); });
     return result;
 }
+
+void Strings::trim(std::string& s) {
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }));
+    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base(), s.end());
+}
