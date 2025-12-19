@@ -7,6 +7,7 @@
 
 class Variables {
 public:
+    Variables();
     void add(const Variable& v);
     bool remove(const std::string& name);
     void clear();

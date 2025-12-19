@@ -64,6 +64,7 @@ public:
     };
 
     Expression(Core& core);
+    ~Expression() = default;
 
     Value evaluate(const std::string& expression);
 
@@ -88,16 +89,13 @@ private:
         WORDS,
         LBRACE_W
     };
-
     Core& m_core;
-
     struct OperatorInfo {
         int precedence;
         bool left_assoc;
         bool is_unary;
         std::function<Value(Core&, const std::vector<Value>&)> apply;
     };
-
     struct FunctionInfo {
         int num_args;
         std::function<Value(Core&, const std::vector<Value>&)> apply;
@@ -119,6 +117,7 @@ private:
     bool parse_number(const std::string& word, std::vector<Token>& tokens);
     bool parse_register(const std::string& word, std::vector<Token>& tokens);
     bool parse_symbol(const std::string& word, std::vector<Token>& tokens);
+    bool parse_variable(const std::string& expr, size_t& index, std::vector<Token>& tokens);
     bool parse_string(const std::string& expr, size_t& index, std::vector<Token>& tokens);
     bool parse_function(const std::string& word, std::vector<Token>& tokens);
 

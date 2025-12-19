@@ -1,5 +1,6 @@
 #include "Expression.h"
 #include "Core.h"
+#include "Variables.h"
 #include "../Utils/Strings.h"
 #include <cctype>
 
@@ -211,6 +212,49 @@ bool Expression::parse_symbol(const std::string& word, std::vector<Token>& token
     return false;
 }
 
+bool Expression::parse_variable(const std::string& expr, size_t& index, std::vector<Token>& tokens) {
+    if (expr[index] == '@') {
+        size_t j = index + 1;
+        std::string name;
+        while (j < expr.length()) {
+            char c = expr[j];
+            if (std::isalnum(c) || c == '_') {
+                name += c;
+                j++;
+            } else
+                break;
+        }
+        if (name.empty())
+            return false;
+        const Variable* var = m_core.get_context().getVariables().find(name);
+        if (var) {
+            const auto& val = var->getValue();
+            TokenType type = TokenType::UNKNOWN;
+            if (val.is_number())
+                type = TokenType::NUMBER;
+            else if (val.is_register())
+                type = TokenType::REGISTER;
+            else if (val.is_symbol())
+                type = TokenType::SYMBOL;
+            else if (val.is_string())
+                type = TokenType::STRING;
+            else if (val.is_address())
+                type = TokenType::ADDRESS;
+            else if (val.is_bytes())
+                type = TokenType::BYTES;
+            else if (val.is_words())
+                type = TokenType::WORDS;
+            if (type != TokenType::UNKNOWN) {
+                tokens.push_back({type, val});
+                index = j;
+                return true;
+            }
+        }
+        syntax_error("Unknown variable '@" + name + "'");
+    }
+    return false;
+}
+
 bool Expression::parse_string(const std::string& expr, size_t& index, std::vector<Token>& tokens) {
     char quote = expr[index];
     if (quote == '"' || quote == '\'') {
@@ -254,6 +298,8 @@ std::vector<Expression::Token> Expression::tokenize(const std::string& expr) {
             i += 2;
             continue;
         }
+        if (parse_variable(expr, i, tokens))
+            continue;
         if (parse_string(expr, i, tokens))
             continue;
         if (parse_operator(expr, i, tokens))
@@ -339,11 +385,9 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                             throw std::runtime_error("Internal error: Invalid operands for indexing.");
                         return Value(res);
                     }};
-
                     Token op_token;
                     op_token.type = TokenType::OPERATOR;
                     op_token.op_info = &index_op;
-                    
                     while (!operator_stack.empty() && operator_stack.top().type == TokenType::OPERATOR &&
                            ((!op_token.op_info->left_assoc && operator_stack.top().op_info->precedence > op_token.op_info->precedence) ||
                             (op_token.op_info->left_assoc && operator_stack.top().op_info->precedence >= op_token.op_info->precedence))) {
@@ -427,7 +471,6 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
 
 Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
     std::vector<Value> stack;
-
     for (const auto& token : rpn) {
         if (token.type == TokenType::NUMBER)
             stack.push_back(token.value);
