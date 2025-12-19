@@ -4,7 +4,7 @@
 
 Expression::Expression(Core& core) : m_core(core) {}
 
-static double get_val(Core& core, const Value& v) {
+static double get_val(Core& core, const Expression::Value& v) {
     if (v.is_register()) return v.reg().read(core.get_cpu());
     if (v.is_symbol()) return v.symbol().read();
     return v.number();
@@ -92,7 +92,7 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
     return funcs;
 }
 
-Value Expression::evaluate(const std::string& expression) {
+Expression::Value Expression::evaluate(const std::string& expression) {
     if (expression.empty())
         return Value(0.0);
     auto tokens = tokenize(expression);
@@ -284,7 +284,6 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
     std::stack<Token> operator_stack;
     TokenType last_type = TokenType::OPERATOR;
     std::stack<int> arg_counts;
-
     for (const auto& token : tokens) {
         switch (token.type) {
             case TokenType::NUMBER:
@@ -302,7 +301,8 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                     operator_stack.pop();
                 }
                 if (!operator_stack.empty() && (operator_stack.top().type == TokenType::LBRACKET || operator_stack.top().type == TokenType::LBRACE || operator_stack.top().type == TokenType::LBRACE_W)) {
-                    if (!arg_counts.empty()) arg_counts.top()++;
+                    if (!arg_counts.empty())
+                        arg_counts.top()++;
                 }
                 break;
             case TokenType::OPERATOR:
@@ -318,21 +318,18 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 operator_stack.push(token);
                 break;
             case TokenType::LBRACKET:
-                // Implicit indexing operator if preceded by an operand
                 if (last_type == TokenType::NUMBER || last_type == TokenType::REGISTER || 
                     last_type == TokenType::RPAREN || last_type == TokenType::RBRACKET) {
-                    
                     static const OperatorInfo index_op = {110, true, false, [](Core& c, const std::vector<Value>& args) {
                         std::vector<uint16_t> res;
                         if (args[1].is_address()) {
-                            if (!args[0].is_register()) {
+                            if (!args[0].is_register())
                                 throw std::runtime_error("Syntax error: Indexing allowed only on registers.");
-                            }
                             double val = get_val(c, args[0]);
-                            for (auto a : args[1].address()) res.push_back((int)val + a);
-                        } else {
+                            for (auto a : args[1].address())
+                                res.push_back((int)val + a);
+                        } else
                             throw std::runtime_error("Internal error: Invalid operands for indexing.");
-                        }
                         return Value(res);
                     }};
 
@@ -364,14 +361,15 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
                 }
-                if (!operator_stack.empty()) operator_stack.pop();
+                if (!operator_stack.empty())
+                    operator_stack.pop();
                 if (!operator_stack.empty() && operator_stack.top().type == TokenType::FUNCTION) {
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
                 }
                 break;
-            case TokenType::RBRACKET:
-                {while (!operator_stack.empty() && operator_stack.top().type != TokenType::LBRACKET) {
+            case TokenType::RBRACKET: {
+                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LBRACKET) {
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
                 }
@@ -385,16 +383,15 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 if (last_type == TokenType::LBRACKET)
                     count = 0;
                 output_queue.push_back({TokenType::ADDRESS, Value(count)});
-                }
                 break;
-            case TokenType::RBRACE:
-                {while (!operator_stack.empty() && operator_stack.top().type != TokenType::LBRACE && operator_stack.top().type != TokenType::LBRACE_W) {
+            }
+            case TokenType::RBRACE: {
+                while (!operator_stack.empty() && operator_stack.top().type != TokenType::LBRACE && operator_stack.top().type != TokenType::LBRACE_W) {
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
                 }
                 TokenType openType = TokenType::UNKNOWN;
-                if (!operator_stack.empty())
-                {
+                if (!operator_stack.empty()) {
                     openType = operator_stack.top().type;
                     operator_stack.pop();
                 }
@@ -409,8 +406,8 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                     output_queue.push_back({TokenType::BYTES, Value(count)});
                 else if (openType == TokenType::LBRACE_W)
                     output_queue.push_back({TokenType::WORDS, Value(count)});
-                }
                 break;
+            }
         }
         last_type = token.type;
     }
@@ -421,27 +418,23 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
     return output_queue;
 }
 
-Value Expression::execute_rpn(const std::vector<Token>& rpn) {
+Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
     std::vector<Value> stack;
 
     for (const auto& token : rpn) {
-        if (token.type == TokenType::NUMBER) {
+        if (token.type == TokenType::NUMBER)
             stack.push_back(token.value);
-        } 
-        else if (token.type == TokenType::REGISTER) {
+        else if (token.type == TokenType::REGISTER)
             stack.push_back(token.value);
-        }
-        else if (token.type == TokenType::SYMBOL) {
+        else if (token.type == TokenType::SYMBOL)
             stack.push_back(token.value);
-        }
-        else if (token.type == TokenType::STRING) {
+        else if (token.type == TokenType::STRING)
             stack.push_back(token.value);
-        }
         else if (token.type == TokenType::OPERATOR) {
             const auto* info = token.op_info;
             int args_needed = info->is_unary ? 1 : 2;
             if (stack.size() < args_needed)
-                throw std::runtime_error("Not enough operands for operator: " + token.symbol);
+                throw std::runtime_error("Syntax error: Not enough operands for operator: " + token.symbol);
             std::vector<Value> args;
             for(int k=0; k<args_needed; ++k) {
                 args.push_back(stack.back());
@@ -456,7 +449,7 @@ Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             if (info->num_args == -1)
                 args_needed = stack.size();
             if (stack.size() < args_needed)
-                throw std::runtime_error("Not enough arguments for function: " + token.symbol);
+                throw std::runtime_error("Syntax error: Not enough arguments for function: " + token.symbol);
             std::vector<Value> args;
             for(int k=0; k<args_needed; ++k) {
                 args.push_back(stack.back());
@@ -474,9 +467,8 @@ Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 stack.pop_back();
             }
             std::reverse(args.begin(), args.end());
-            for (const auto& v : args) {
+            for (const auto& v : args)
                 addrs.push_back((uint16_t)get_val(m_core, v));
-            }
             stack.push_back(Value(addrs));
         }
         else if (token.type == TokenType::BYTES) {
@@ -489,8 +481,8 @@ Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             }
             std::reverse(args.begin(), args.end());
             for (const auto& v : args) {
-                if (v.is_address()) throw std::runtime_error("Syntax error: Mixing [] and {} is not allowed.");
-                
+                if (v.is_address())
+                    throw std::runtime_error("Syntax error: Mixing [] and {} is not allowed.");
                 if (v.is_string()) {
                     const std::string& s = v.string();
                     bytes.insert(bytes.end(), s.begin(), s.end());
@@ -508,9 +500,9 @@ Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                         uint16_t w = (uint16_t)val;
                         bytes.push_back(w & 0xFF);
                         bytes.push_back(w >> 8);
-                    } else if (val >= -128 && val <= 255) {
+                    } else if (val >= -128 && val <= 255)
                         bytes.push_back((uint8_t)val);
-                    } else {
+                    else {
                         uint16_t w = (uint16_t)val;
                         bytes.push_back(w & 0xFF);
                         bytes.push_back(w >> 8);
@@ -529,7 +521,8 @@ Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             }
             std::reverse(args.begin(), args.end());
             for (const auto& v : args) {
-                if (v.is_address()) throw std::runtime_error("Syntax error: Mixing [] and W{} is not allowed.");
+                if (v.is_address())
+                    throw std::runtime_error("Syntax error: Mixing [] and W{} is not allowed.");
                 
                 if (v.is_string()) {
                     const std::string& s = v.string();
@@ -538,9 +531,8 @@ Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                     const auto& b = v.bytes();
                     for (size_t i = 0; i < b.size(); i += 2) {
                         uint16_t word = b[i];
-                        if (i + 1 < b.size()) {
+                        if (i + 1 < b.size())
                             word |= (uint16_t)b[i+1] << 8;
-                        }
                         words.push_back(word);
                     }
                 } else if (v.is_words()) {

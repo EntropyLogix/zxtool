@@ -432,7 +432,7 @@ void Dashboard::handle_command(const std::string& input) {
     static const auto eval_handler = [](Dashboard* d, const std::string& expr) {
         try {
             Expression eval(d->m_debugger.get_core());
-            Value val = eval.evaluate(expr);
+            Expression::Value val = eval.evaluate(expr);
             d->m_output_buffer << expr << "\n";
             if (val.is_number()) {
                 double v = val.number();
@@ -514,10 +514,10 @@ void Dashboard::handle_command(const std::string& input) {
 
         try {
             Expression eval(d->m_debugger.get_core());
-            Value target = eval.evaluate(lhs_str);
-            Value val = eval.evaluate(rhs_str);
+            Expression::Value target = eval.evaluate(lhs_str);
+            Expression::Value val = eval.evaluate(rhs_str);
             
-            auto get_num = [&](const Value& v) -> double {
+            auto get_num = [&](const Expression::Value& v) -> double {
                 if (v.is_number()) return v.number();
                 if (v.is_register()) return (double)v.reg().read(d->m_debugger.get_core().get_cpu());
                 if (v.is_symbol()) return (double)v.symbol().read();

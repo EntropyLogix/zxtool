@@ -17,51 +17,51 @@
 #include <sstream>
 #include <iomanip>
 
-class Value {
-public:
-    enum class Type { Number, Register, Address, Symbol, String, Bytes, Words };
-
-    Value() = default;
-    Value(double d) : m_number(d), m_type(Type::Number) {}
-    Value(int i) : m_number(i), m_type(Type::Number) {}
-    Value(const Register& reg) : m_reg(reg), m_type(Type::Register) {}
-    Value(const Symbol& sym) : m_symbol(sym), m_type(Type::Symbol) {}
-    Value(const std::string& s) : m_string(s), m_type(Type::String) {}
-    Value(const std::vector<uint16_t>& addrs) : m_address(addrs), m_type(Type::Address) {}
-    Value(const std::vector<uint16_t>& words, bool) : m_words(words), m_type(Type::Words) {}
-    Value(const std::vector<uint8_t>& bytes) : m_bytes(bytes), m_type(Type::Bytes) {}
-    
-    bool is_number() const { return m_type == Type::Number; }
-    bool is_register() const { return m_type == Type::Register; }
-    bool is_address() const { return m_type == Type::Address; }
-    bool is_symbol() const { return m_type == Type::Symbol; }
-    bool is_string() const { return m_type == Type::String; }
-    bool is_bytes() const { return m_type == Type::Bytes; }
-    bool is_words() const { return m_type == Type::Words; }
-    
-    double number() const { return m_number; }
-    const Register& reg() const { return m_reg; }
-    const Symbol& symbol() const { return m_symbol; }
-    const std::string& string() const { return m_string; }
-    const std::vector<uint16_t>& address() const { return m_address; }
-    const std::vector<uint8_t>& bytes() const { return m_bytes; }
-    const std::vector<uint16_t>& words() const { return m_words; }
-    
-    operator double() const { return m_number; }
-
-private:
-    Type m_type = Type::Number;
-    double m_number = 0.0;
-    Register m_reg;
-    std::vector<uint16_t> m_address;
-    Symbol m_symbol;
-    std::string m_string;
-    std::vector<uint8_t> m_bytes;
-    std::vector<uint16_t> m_words;
-};
-
 class Expression {
 public:
+    class Value {
+    public:
+        enum class Type { Number, Register, Address, Symbol, String, Bytes, Words };
+
+        Value() = default;
+        Value(double d) : m_number(d), m_type(Type::Number) {}
+        Value(int i) : m_number(i), m_type(Type::Number) {}
+        Value(const Register& reg) : m_reg(reg), m_type(Type::Register) {}
+        Value(const Symbol& sym) : m_symbol(sym), m_type(Type::Symbol) {}
+        Value(const std::string& s) : m_string(s), m_type(Type::String) {}
+        Value(const std::vector<uint16_t>& addrs) : m_address(addrs), m_type(Type::Address) {}
+        Value(const std::vector<uint16_t>& words, bool) : m_words(words), m_type(Type::Words) {}
+        Value(const std::vector<uint8_t>& bytes) : m_bytes(bytes), m_type(Type::Bytes) {}
+        
+        bool is_number() const { return m_type == Type::Number; }
+        bool is_register() const { return m_type == Type::Register; }
+        bool is_address() const { return m_type == Type::Address; }
+        bool is_symbol() const { return m_type == Type::Symbol; }
+        bool is_string() const { return m_type == Type::String; }
+        bool is_bytes() const { return m_type == Type::Bytes; }
+        bool is_words() const { return m_type == Type::Words; }
+        
+        double number() const { return m_number; }
+        const Register& reg() const { return m_reg; }
+        const Symbol& symbol() const { return m_symbol; }
+        const std::string& string() const { return m_string; }
+        const std::vector<uint16_t>& address() const { return m_address; }
+        const std::vector<uint8_t>& bytes() const { return m_bytes; }
+        const std::vector<uint16_t>& words() const { return m_words; }
+        
+        operator double() const { return m_number; }
+
+    private:
+        Type m_type = Type::Number;
+        double m_number = 0.0;
+        Register m_reg;
+        std::vector<uint16_t> m_address;
+        Symbol m_symbol;
+        std::string m_string;
+        std::vector<uint8_t> m_bytes;
+        std::vector<uint16_t> m_words;
+    };
+
     Expression(Core& core);
 
     Value evaluate(const std::string& expression);
