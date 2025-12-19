@@ -11,6 +11,7 @@
 #include "../Utils/Strings.h"
 #include "../Utils/Terminal.h"
 #include "../Core/Expression.h"
+#include "../Core/Variables.h"
 
 std::string DebugView::format_header(const std::string& title, const std::string& extra) const {
     std::stringstream ss;
@@ -385,6 +386,46 @@ void Dashboard::validate_focus() {
         }
 }
 
+static std::string format_value(const Expression::Value& val) {
+    std::stringstream ss;
+    if (val.is_number()) {
+        ss << Strings::hex((uint16_t)val.number());
+    } else if (val.is_string()) {
+        ss << "\"" << val.string() << "\"";
+    } else if (val.is_bytes()) {
+        ss << "{ ";
+        const auto& bytes = val.bytes();
+        for (size_t i = 0; i < bytes.size(); ++i) {
+            if (i > 0) ss << ", ";
+            ss << "$" << Strings::hex(bytes[i]);
+        }
+        ss << " }";
+    } else if (val.is_words()) {
+        ss << "W{ ";
+        const auto& words = val.words();
+        for (size_t i = 0; i < words.size(); ++i) {
+            if (i > 0) ss << ", ";
+            ss << "$" << Strings::hex(words[i]);
+        }
+        ss << " }";
+    } else if (val.is_address()) {
+        ss << "[ ";
+        const auto& addrs = val.address();
+        for (size_t i = 0; i < addrs.size(); ++i) {
+            if (i > 0) ss << ", ";
+            ss << "$" << Strings::hex(addrs[i]);
+        }
+        ss << " ]";
+    } else if (val.is_register()) {
+        ss << val.reg().getName();
+    } else if (val.is_symbol()) {
+        ss << val.symbol().getName();
+    } else {
+        ss << "?";
+    }
+    return ss.str();
+}
+
 void Dashboard::handle_command(const std::string& input) {
     std::stringstream ss(input);
     std::string cmd;
@@ -421,23 +462,9 @@ void Dashboard::handle_command(const std::string& input) {
                 d->m_output_buffer << "[" << Strings::hex(addr) << "] = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
             }
         } else if (val.is_string()) {
-            d->m_output_buffer << "String: \"" << val.string() << "\"\n";
-        } else if (val.is_bytes()) {
-            d->m_output_buffer << "{ ";
-            const auto& bytes = val.bytes();
-            for (size_t i = 0; i < bytes.size(); ++i) {
-                if (i > 0) d->m_output_buffer << ", ";
-                d->m_output_buffer << "$" << Strings::hex(bytes[i]);
-            }
-            d->m_output_buffer << " }\n";
-        } else if (val.is_words()) {
-            d->m_output_buffer << "W{ ";
-            const auto& words = val.words();
-            for (size_t i = 0; i < words.size(); ++i) {
-                if (i > 0) d->m_output_buffer << ", ";
-                d->m_output_buffer << "$" << Strings::hex(words[i]);
-            }
-            d->m_output_buffer << " }\n";
+            d->m_output_buffer << "String: " << format_value(val) << "\n";
+        } else {
+            d->m_output_buffer << format_value(val) << "\n";
         }
     };
 
@@ -482,6 +509,37 @@ void Dashboard::handle_command(const std::string& input) {
              return;
         }
 
+        std::string lhs_check = lhs_str;
+        Strings::trim(lhs_check);
+        if (lhs_check.size() > 1 && lhs_check[0] == '@') {
+            std::string var_name = lhs_check.substr(1);
+            bool valid = true;
+            for (char c : var_name) {
+                if (!std::isalnum(c) && c != '_') {
+                    valid = false;
+                    break;
+                }
+            }
+            if (valid) {
+                try {
+                    Expression eval(d->m_debugger.get_core());
+                    Expression::Value val = eval.evaluate(rhs_str);
+                    Variable v(var_name, val, rhs_str);
+                    auto& vars = d->m_debugger.get_core().get_context().getVariables();
+                    bool exists = (vars.find(var_name) != nullptr);
+                    vars.add(v);
+                    if (exists)
+                        d->m_output_buffer << "Updated variable @" << var_name << " = " << format_value(val) << "\n";
+                    else
+                        d->m_output_buffer << "Created variable @" << var_name << " = " << format_value(val) << "\n";
+                    return;
+                } catch (const std::exception& e) {
+                    d->m_output_buffer << "Error: " << e.what() << "\n";
+                    return;
+                }
+            }
+        }
+
         try {
             Expression eval(d->m_debugger.get_core());
             Expression::Value target = eval.evaluate(lhs_str);
@@ -517,9 +575,6 @@ void Dashboard::handle_command(const std::string& input) {
                         d->m_output_buffer << "Error: Target address list is empty.\n";
                         return;
                     }
-                    if (words.size() > addrs.size()) {
-                        d->m_output_buffer << "Warning: Source data larger than target address list. Continuing sequentially from last address (step 2).\n";
-                    }
                     for (size_t i = 0; i < words.size(); ++i) {
                         uint16_t addr;
                         if (i < addrs.size()) {
@@ -537,9 +592,6 @@ void Dashboard::handle_command(const std::string& input) {
                     if (addrs.empty()) {
                         d->m_output_buffer << "Error: Target address list is empty.\n";
                         return;
-                    }
-                    if (bytes.size() > addrs.size()) {
-                        d->m_output_buffer << "Warning: Source data larger than target address list. Continuing sequentially from last address.\n";
                     }
                     for (size_t i = 0; i < bytes.size(); ++i) {
                         uint16_t addr;

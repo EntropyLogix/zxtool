@@ -393,6 +393,9 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
             case TokenType::REGISTER:
             case TokenType::SYMBOL:
             case TokenType::STRING:
+            case TokenType::BYTES:
+            case TokenType::WORDS:
+            case TokenType::ADDRESS:
                 output_queue.push_back(token);
                 break;
             case TokenType::FUNCTION:
@@ -421,19 +424,80 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 operator_stack.push(token);
                 break;
             case TokenType::LBRACKET:
-                if (last_type == TokenType::NUMBER || last_type == TokenType::REGISTER || 
+                if (last_type == TokenType::NUMBER || last_type == TokenType::REGISTER ||
+                    last_type == TokenType::BYTES || last_type == TokenType::WORDS ||
+                    last_type == TokenType::ADDRESS || last_type == TokenType::STRING || last_type == TokenType::SYMBOL ||
                     last_type == TokenType::RPAREN || last_type == TokenType::RBRACKET) {
                     static const OperatorInfo index_op = {110, true, false, [](Core& c, const std::vector<Value>& args) {
-                        std::vector<uint16_t> res;
-                        if (args[1].is_address()) {
-                            if (!args[0].is_register())
-                                syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "indexing allowed only on registers.");
-                            double val = get_val(c, args[0]);
-                            for (auto a : args[1].address())
-                                res.push_back((int)val + a);
-                        } else
+                        if (!args[1].is_address())
                             syntax_error(ErrorCode::INTERNAL_ERROR, "invalid operands for indexing.");
-                        return Value(res);
+
+                        const auto& indices = args[1].address();
+
+                        if (args[0].is_register() || args[0].is_symbol()) {
+                            std::vector<uint16_t> res;
+                            double val = get_val(c, args[0]);
+                            for (auto a : indices)
+                                res.push_back((uint16_t)((int)val + a));
+                            return Value(res);
+                        }
+
+                        auto check_bounds = [&](size_t idx, size_t size) {
+                            if (idx >= size) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "index out of bounds");
+                        };
+
+                        if (args[0].is_bytes()) {
+                            const auto& vec = args[0].bytes();
+                            if (indices.size() == 1) {
+                                check_bounds(indices[0], vec.size());
+                                return Value((double)vec[indices[0]]);
+                            }
+                            std::vector<uint8_t> res;
+                            for (auto idx : indices) {
+                                check_bounds(idx, vec.size());
+                                res.push_back(vec[idx]);
+                            }
+                            return Value(res);
+                        } else if (args[0].is_words()) {
+                            const auto& vec = args[0].words();
+                            if (indices.size() == 1) {
+                                check_bounds(indices[0], vec.size());
+                                return Value((double)vec[indices[0]]);
+                            }
+                            std::vector<uint16_t> res;
+                            for (auto idx : indices) {
+                                check_bounds(idx, vec.size());
+                                res.push_back(vec[idx]);
+                            }
+                            return Value(res, true);
+                        } else if (args[0].is_address()) {
+                            const auto& vec = args[0].address();
+                            if (indices.size() == 1) {
+                                check_bounds(indices[0], vec.size());
+                                return Value((double)vec[indices[0]]);
+                            }
+                            std::vector<uint16_t> res;
+                            for (auto idx : indices) {
+                                check_bounds(idx, vec.size());
+                                res.push_back(vec[idx]);
+                            }
+                            return Value(res);
+                        } else if (args[0].is_string()) {
+                            const auto& str = args[0].string();
+                            if (indices.size() == 1) {
+                                check_bounds(indices[0], str.size());
+                                return Value((double)(unsigned char)str[indices[0]]);
+                            }
+                            std::string res;
+                            for (auto idx : indices) {
+                                check_bounds(idx, str.size());
+                                res += str[idx];
+                            }
+                            return Value(res);
+                        }
+                        
+                        syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "indexing allowed only on registers, symbols, arrays or strings.");
+                        return Value(0.0);
                     }};
                     Token op_token;
                     op_token.type = TokenType::OPERATOR;
@@ -572,91 +636,103 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             stack.push_back(info->apply(m_core, args));
         }
         else if (token.type == TokenType::ADDRESS) {
-            int count = (int)token.value.number();
-            std::vector<uint16_t> addrs;
-            std::vector<Value> args;
-            for(int k = 0; k < count; ++k) {
-                args.push_back(stack.back());
-                stack.pop_back();
+            if (token.value.is_address()) {
+                stack.push_back(token.value);
+            } else {
+                int count = (int)token.value.number();
+                std::vector<uint16_t> addrs;
+                std::vector<Value> args;
+                for(int k = 0; k < count; ++k) {
+                    args.push_back(stack.back());
+                    stack.pop_back();
+                }
+                std::reverse(args.begin(), args.end());
+                for (const auto& v : args)
+                    addrs.push_back((uint16_t)get_val(m_core, v));
+                stack.push_back(Value(addrs));
             }
-            std::reverse(args.begin(), args.end());
-            for (const auto& v : args)
-                addrs.push_back((uint16_t)get_val(m_core, v));
-            stack.push_back(Value(addrs));
         }
         else if (token.type == TokenType::BYTES) {
-            int count = (int)token.value.number();
-            std::vector<uint8_t> bytes;
-            std::vector<Value> args;
-            for(int k = 0; k < count; ++k) {
-                args.push_back(stack.back());
-                stack.pop_back();
-            }
-            std::reverse(args.begin(), args.end());
-            for (const auto& v : args) {
-                if (v.is_address())
-                    syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS);
-                if (v.is_string()) {
-                    const std::string& s = v.string();
-                    bytes.insert(bytes.end(), s.begin(), s.end());
-                } else if (v.is_bytes()) {
-                    const auto& b = v.bytes();
-                    bytes.insert(bytes.end(), b.begin(), b.end());
-                } else if (v.is_words()) {
-                    for (uint16_t word : v.words()) {
-                        bytes.push_back(word & 0xFF);
-                        bytes.push_back(word >> 8);
-                    }
-                } else {
-                    double val = get_val(m_core, v);
-                    if (v.is_register() && v.reg().is_16bit()) {
-                        uint16_t w = (uint16_t)val;
-                        bytes.push_back(w & 0xFF);
-                        bytes.push_back(w >> 8);
-                    } else if (val >= -128 && val <= 255)
-                        bytes.push_back((uint8_t)val);
-                    else {
-                        uint16_t w = (uint16_t)val;
-                        bytes.push_back(w & 0xFF);
-                        bytes.push_back(w >> 8);
+            if (token.value.is_bytes()) {
+                stack.push_back(token.value);
+            } else {
+                int count = (int)token.value.number();
+                std::vector<uint8_t> bytes;
+                std::vector<Value> args;
+                for(int k = 0; k < count; ++k) {
+                    args.push_back(stack.back());
+                    stack.pop_back();
+                }
+                std::reverse(args.begin(), args.end());
+                for (const auto& v : args) {
+                    if (v.is_address())
+                        syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS);
+                    if (v.is_string()) {
+                        const std::string& s = v.string();
+                        bytes.insert(bytes.end(), s.begin(), s.end());
+                    } else if (v.is_bytes()) {
+                        const auto& b = v.bytes();
+                        bytes.insert(bytes.end(), b.begin(), b.end());
+                    } else if (v.is_words()) {
+                        for (uint16_t word : v.words()) {
+                            bytes.push_back(word & 0xFF);
+                            bytes.push_back(word >> 8);
+                        }
+                    } else {
+                        double val = get_val(m_core, v);
+                        if (v.is_register() && v.reg().is_16bit()) {
+                            uint16_t w = (uint16_t)val;
+                            bytes.push_back(w & 0xFF);
+                            bytes.push_back(w >> 8);
+                        } else if (val >= -128 && val <= 255)
+                            bytes.push_back((uint8_t)val);
+                        else {
+                            uint16_t w = (uint16_t)val;
+                            bytes.push_back(w & 0xFF);
+                            bytes.push_back(w >> 8);
+                        }
                     }
                 }
+                stack.push_back(Value(bytes));
             }
-            stack.push_back(Value(bytes));
         }
         else if (token.type == TokenType::WORDS) {
-            int count = (int)token.value.number();
-            std::vector<uint16_t> words;
-            std::vector<Value> args;
-            for(int k = 0; k < count; ++k) {
-                args.push_back(stack.back());
-                stack.pop_back();
-            }
-            std::reverse(args.begin(), args.end());
-            for (const auto& v : args) {
-                if (v.is_address())
-                    syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS);
-                
-                if (v.is_string()) {
-                    const std::string& s = v.string();
-                    for (char c : s) words.push_back((uint16_t)(unsigned char)c);
-                } else if (v.is_bytes()) {
-                    const auto& b = v.bytes();
-                    for (size_t i = 0; i < b.size(); i += 2) {
-                        uint16_t word = b[i];
-                        if (i + 1 < b.size())
-                            word |= (uint16_t)b[i+1] << 8;
-                        words.push_back(word);
-                    }
-                } else if (v.is_words()) {
-                    const auto& w = v.words();
-                    words.insert(words.end(), w.begin(), w.end());
-                } else {
-                    double val = get_val(m_core, v);
-                    words.push_back((uint16_t)val);
+            if (token.value.is_words()) {
+                stack.push_back(token.value);
+            } else {
+                int count = (int)token.value.number();
+                std::vector<uint16_t> words;
+                std::vector<Value> args;
+                for(int k = 0; k < count; ++k) {
+                    args.push_back(stack.back());
+                    stack.pop_back();
                 }
+                std::reverse(args.begin(), args.end());
+                for (const auto& v : args) {
+                    if (v.is_address())
+                        syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS);
+                    
+                    if (v.is_string()) {
+                        const std::string& s = v.string();
+                        for (char c : s) words.push_back((uint16_t)(unsigned char)c);
+                    } else if (v.is_bytes()) {
+                        const auto& b = v.bytes();
+                        for (size_t i = 0; i < b.size(); i += 2) {
+                            uint16_t word = b[i];
+                            if (i + 1 < b.size())
+                                word |= (uint16_t)b[i+1] << 8;
+                            words.push_back(word);
+                        }
+                    } else if (v.is_words()) {
+                        const auto& w = v.words();
+                        words.insert(words.end(), w.begin(), w.end());
+                    } else {
+                        double val = get_val(m_core, v);
+                        words.push_back((uint16_t)val);
+                    }
+                }
+                stack.push_back(Value(words, true));
             }
-            stack.push_back(Value(words, true));
         }
     }
     return stack.empty() ? Value(0.0) : stack.back();
