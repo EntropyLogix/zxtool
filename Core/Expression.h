@@ -20,6 +20,30 @@ class Core;
 
 class Expression {
 public:
+    enum class ErrorCode {
+        UNKNOWN_VARIABLE,
+        UNTERMINATED_STRING,
+        UNKNOWN_SYMBOL,
+        UNEXPECTED_CHARACTER,
+        NOT_ENOUGH_OPERANDS,
+        NOT_ENOUGH_ARGUMENTS,
+        MIXING_CONTAINERS,
+        INVALID_INDEXING,
+        INTERNAL_ERROR,
+        GENERIC
+    };
+
+    class Error : public std::exception {
+    public:
+        Error(ErrorCode code, const std::string& detail = "") : m_code(code), m_detail(detail) {}
+        ErrorCode code() const { return m_code; }
+        const std::string& detail() const { return m_detail; }
+        const char* what() const noexcept override { return "Expression Error"; }
+    private:
+        ErrorCode m_code;
+        std::string m_detail;
+    };
+
     class Value {
     public:
         enum class Type { Number, Register, Address, Symbol, String, Bytes, Words };
@@ -125,7 +149,7 @@ private:
     std::vector<Token> shunting_yard(const std::vector<Token>& tokens);
     Value execute_rpn(const std::vector<Token>& rpn);
 
-    static void syntax_error(const std::string& msg);
+    static void syntax_error(ErrorCode code, const std::string& detail = "");
     static double get_val(Core& core, const Value& v);
 };
 

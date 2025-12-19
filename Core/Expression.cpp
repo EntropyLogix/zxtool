@@ -6,8 +6,8 @@
 
 Expression::Expression(Core& core) : m_core(core) {}
 
-void Expression::syntax_error(const std::string& msg) {
-    throw std::runtime_error("Syntax error: " + msg);
+void Expression::syntax_error(ErrorCode code, const std::string& detail) {
+    throw Error(code, detail);
 }
 
 double Expression::get_val(Core& core, const Expression::Value& v) {
@@ -24,7 +24,8 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
         {"+",   {80, true,  false, [](Core& c, const std::vector<Value>& args) { 
             if (args[0].is_string() || args[1].is_string()) {
                 auto to_str = [&](const Value& v) {
-                    if (v.is_string()) return v.string();
+                    if (v.is_string())
+                        return v.string();
                     double d = get_val(c, v);
                     return (d == (long long)d) ? std::to_string((long long)d) : std::to_string(d);
                 };
@@ -55,10 +56,12 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
                 std::vector<uint16_t> res;
                 if (args[0].is_address()) {
                     double val = get_val(c, args[1]);
-                    for (auto a : args[0].address()) res.push_back(a + (int)val);
+                    for (auto a : args[0].address())
+                        res.push_back(a + (int)val);
                 } else {
                     double val = get_val(c, args[0]);
-                    for (auto a : args[1].address()) res.push_back((int)val + a);
+                    for (auto a : args[1].address())
+                        res.push_back((int)val + a);
                 }
                 return Value(res);
             }
@@ -70,18 +73,20 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
                 const auto& v1 = args[0].address();
                 const auto& v2 = args[1].address();
                 size_t len = std::min(v1.size(), v2.size());
-                for(size_t i=0; i<len; ++i) res.push_back(v1[i] - v2[i]);
+                for(size_t i=0; i<len; ++i)
+                    res.push_back(v1[i] - v2[i]);
                 return Value(res);
             }
             if (args[0].is_address() || args[1].is_address()) {
                 std::vector<uint16_t> res;
                 if (args[0].is_address()) {
                     double val = get_val(c, args[1]);
-                    for (auto a : args[0].address()) res.push_back(a - (int)val);
+                    for (auto a : args[0].address())
+                        res.push_back(a - (int)val);
                 } else {
-                    // Number - Address (not typical, but mathematically defined)
                     double val = get_val(c, args[0]);
-                    for (auto a : args[1].address()) res.push_back((int)val - a);
+                    for (auto a : args[1].address())
+                        res.push_back((int)val - a);
                 }
                 return Value(res);
             }
@@ -250,7 +255,7 @@ bool Expression::parse_variable(const std::string& expr, size_t& index, std::vec
                 return true;
             }
         }
-        syntax_error("Unknown variable '@" + name + "'");
+        syntax_error(ErrorCode::UNKNOWN_VARIABLE, name);
     }
     return false;
 }
@@ -269,7 +274,7 @@ bool Expression::parse_string(const std::string& expr, size_t& index, std::vecto
             s += expr[j];
             j++;
         }
-        syntax_error("Unterminated string literal");
+            syntax_error(ErrorCode::UNTERMINATED_STRING);
     }
     return false;
 }
@@ -325,9 +330,9 @@ std::vector<Expression::Token> Expression::tokenize(const std::string& expr) {
                 i = j;
                 continue;
             }
-            syntax_error("Unknown symbol '" + word + "'");
+            syntax_error(ErrorCode::UNKNOWN_SYMBOL, word);
         }
-        syntax_error(std::string("Unexpected character '") + expr[i] + "'");
+        syntax_error(ErrorCode::UNEXPECTED_CHARACTER, std::string(1, expr[i]));
     }
     return tokens;
 }
@@ -377,12 +382,12 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                         std::vector<uint16_t> res;
                         if (args[1].is_address()) {
                             if (!args[0].is_register())
-                                syntax_error("Indexing allowed only on registers.");
+                                syntax_error(ErrorCode::INVALID_INDEXING, "Indexing allowed only on registers.");
                             double val = get_val(c, args[0]);
                             for (auto a : args[1].address())
                                 res.push_back((int)val + a);
                         } else
-                            throw std::runtime_error("Internal error: Invalid operands for indexing.");
+                            syntax_error(ErrorCode::INTERNAL_ERROR, "Invalid operands for indexing.");
                         return Value(res);
                     }};
                     Token op_token;
@@ -484,7 +489,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             const auto* info = token.op_info;
             int args_needed = info->is_unary ? 1 : 2;
             if (stack.size() < args_needed)
-                syntax_error("Not enough operands for operator: " + token.symbol);
+                syntax_error(ErrorCode::NOT_ENOUGH_OPERANDS, token.symbol);
             std::vector<Value> args;
             for(int k=0; k<args_needed; ++k) {
                 args.push_back(stack.back());
@@ -499,7 +504,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             if (info->num_args == -1)
                 args_needed = stack.size();
             if (stack.size() < args_needed)
-                syntax_error("Not enough arguments for function: " + token.symbol);
+                syntax_error(ErrorCode::NOT_ENOUGH_ARGUMENTS, token.symbol);
             std::vector<Value> args;
             for(int k=0; k<args_needed; ++k) {
                 args.push_back(stack.back());
@@ -532,7 +537,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             std::reverse(args.begin(), args.end());
             for (const auto& v : args) {
                 if (v.is_address())
-                    syntax_error("Mixing [] and {} is not allowed.");
+                    syntax_error(ErrorCode::MIXING_CONTAINERS);
                 if (v.is_string()) {
                     const std::string& s = v.string();
                     bytes.insert(bytes.end(), s.begin(), s.end());
@@ -572,7 +577,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             std::reverse(args.begin(), args.end());
             for (const auto& v : args) {
                 if (v.is_address())
-                    syntax_error("Mixing [] and W{} is not allowed.");
+                    syntax_error(ErrorCode::MIXING_CONTAINERS);
                 
                 if (v.is_string()) {
                     const std::string& s = v.string();
