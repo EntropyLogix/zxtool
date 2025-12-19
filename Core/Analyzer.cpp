@@ -4,11 +4,7 @@
 #include <sstream>
 #include <iostream>
 
-// ---------------------------------------------------------
-// Analyzer Implementation
-// ---------------------------------------------------------
-
-Analyzer::Analyzer(Memory* memory, Context* ctx) : Z80Analyzer<Memory>(memory, ctx), context(*ctx) {}
+Analyzer::Analyzer(Memory* memory, Context* ctx) : Z80Analyzer<Memory>(memory, &ctx->getSymbols()), context(*ctx) {}
 
 void Analyzer::set_map_type(CodeMap& map, uint16_t addr, ExtendedFlags type) {
     map[addr] = (map[addr] & ~TYPE_MASK) | (type << TYPE_SHIFT);
@@ -25,33 +21,25 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
     while (pc < 0x10000 && result.size() < instruction_limit) {
         uint16_t current_pc = static_cast<uint16_t>(pc);
         
-        // 1. Sprawdź, czy mamy wymuszony typ z CTL
         ExtendedFlags forcedType = get_map_type(map, current_pc);
-
-        // Jeśli typ jest nieznany (0), ale mamy profilowanie (use_map=true),
-        // to sprawdzamy flagi profilera.
         bool is_code = false;
         
-        if (forcedType == TYPE_CODE) {
+        if (forcedType == TYPE_CODE)
             is_code = true;
-        } else if (forcedType == TYPE_UNKNOWN) {
+        else if (forcedType == TYPE_UNKNOWN) {
             is_code = true;
             if (use_map) {
                 if (map[current_pc] & Z80Analyzer<Memory>::FLAG_CODE_INTERIOR) {
-                    pc++; continue; // Skip inside
+                    pc++;
+                    continue;
                 }
-                if ((map[current_pc] & Z80Analyzer<Memory>::FLAG_DATA_READ) && !(map[current_pc] & Z80Analyzer<Memory>::FLAG_CODE_START)) {
+                if ((map[current_pc] & Z80Analyzer<Memory>::FLAG_DATA_READ) && !(map[current_pc] & Z80Analyzer<Memory>::FLAG_CODE_START))
                     is_code = false;
-                }
             }
         }
-
-        // --- Przetwarzanie ---
-        
         if (is_code) {
             uint16_t instr_start = current_pc;
-            CodeLine line = this->parse_instruction(current_pc); // pc przesuwane przez ref wewnątrz
-            
+            CodeLine line = this->parse_instruction(current_pc);
             if (use_map && !(map[instr_start] & Z80Analyzer<Memory>::FLAG_CODE_START)) {
                 bool collision = false;
                 for (uint16_t k = instr_start + 1; k < current_pc; ++k) {
@@ -68,9 +56,8 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
                     continue;
                 }
             }
-            
-            // Wzbogać linię o komentarz z metadanych
-            std::string comment = context.get_inline_comment(line.address);
+            const Comment* c = context.getComments().find(line.address, Comment::Type::Inline);
+            std::string comment = c ? c->getText() : "";
             if (!comment.empty()) {
                     // Tutaj prosta implementacja, w praktyce CodeLine może mieć pole 'comment'
                     // Dla teraz doklejamy do mnemonika lub labela, zależnie od struktury CodeLine
@@ -85,17 +72,14 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
                 pc &= 0xFFFF;
             } else {
                 result.push_back(line);
-                pc = current_pc; // parse_instruction przesunęło
+                pc = current_pc;
             }
         } 
         else if (forcedType == TYPE_BYTE) {
-            // CTL says Byte
             size_t count = 1;
-            // Zbijamy w grupę, jeśli kolejne też są BYTE
             while (pc + count < 0x10000 && get_map_type(map, pc+count) == TYPE_BYTE) count++;
-            // Limit for single DB line (e.g. 8 bytes)
-            if (count > 8) count = 8; 
-            
+            if (count > 8)
+                count = 8; 
             uint16_t tmp = current_pc;
             result.push_back(this->parse_db(tmp, count));
             pc += count;
@@ -107,18 +91,17 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
             pc = tmp;
         }
         else if (forcedType == TYPE_TEXT) {
-            // SkoolKit text/string
             uint16_t tmp = current_pc;
             CodeLine line;
             line.address = tmp; 
             line.type = CodeLine::Type::DATA; 
             line.mnemonic = "DEFM";
-            const Symbol* s = context.symbols.find(tmp);
-            if (s) line.label = s->getName();
+            const Symbol* s = context.getSymbols().find(tmp);
+            if (s)
+                line.label = s->getName();
             
             std::string txt;
             size_t count = 0;
-            // Czytamy póki jest flaga TEXT
             while(pc + count < 0x10000 && get_map_type(map, pc+count) == TYPE_TEXT) {
                 uint8_t b = this->m_memory->peek(pc+count);
                 line.bytes.push_back(b);

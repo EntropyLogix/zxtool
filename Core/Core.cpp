@@ -23,7 +23,7 @@ Core::Core()
     , m_analyzer(&m_memory, &m_context)
 {
     m_profiler.connect(&m_cpu);
-    m_profiler.set_labels(&m_context);
+    m_profiler.set_labels(&m_context.getSymbols());
     
     m_file_manager.register_loader(new BinFiles(m_memory));
     m_file_manager.register_loader(new AsmFiles(m_assembler));
@@ -53,8 +53,8 @@ void Core::reset() {
     m_cpu.reset();
     m_blocks.clear();
     m_profiler.reset();
-    m_context.symbols.clear();
-    m_context.comments.clear();
+    m_context.getSymbols().clear();
+    m_context.getComments().clear();
     m_current_path_stack.clear();
 }
 

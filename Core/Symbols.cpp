@@ -43,3 +43,12 @@ std::pair<std::string, uint16_t> Symbols::find_nearest(uint16_t address) const {
     --it;
     return {it->second.getName(), it->first};
 }
+
+std::string Symbols::get_label(uint16_t address) const {
+    const Symbol* s = find(address);
+    return s ? s->getName() : "";
+}
+
+void Symbols::add_label(uint16_t address, const std::string& label) {
+    add(Symbol(label, address, Symbol::Type::Label));
+}

@@ -3,7 +3,6 @@
 
 #include "CoreIncludes.h"
 
-#include "Core.h"
 #include "Symbol.h"
 #include "Register.h"
 #include <string>
@@ -16,6 +15,8 @@
 #include <cmath>
 #include <sstream>
 #include <iomanip>
+
+class Core;
 
 class Expression {
 public:

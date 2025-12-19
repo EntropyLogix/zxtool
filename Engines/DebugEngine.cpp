@@ -194,7 +194,7 @@ std::vector<std::string> CodeView::render() {
             break;
         const auto& line = lines[0];
         auto& ctx = m_core.get_analyzer().context;
-        const Comment* block_cmt = ctx.comments.find((uint16_t)line.address, Comment::Type::Block);
+        const Comment* block_cmt = ctx.getComments().find((uint16_t)line.address, Comment::Type::Block);
         bool has_block_desc = block_cmt && !block_cmt->getText().empty();
         bool has_label = !line.label.empty();
         if (!first_line && (has_label || has_block_desc)) {
@@ -260,7 +260,7 @@ std::vector<std::string> CodeView::render() {
         ss << Strings::padding(Strings::truncate(mn_str, 15), 15);
 
         // ZONE 5: Comment (35-79)
-        const Comment* inline_cmt = ctx.comments.find((uint16_t)line.address, Comment::Type::Inline);
+        const Comment* inline_cmt = ctx.getComments().find((uint16_t)line.address, Comment::Type::Inline);
         if (inline_cmt) {
              const auto& comment = inline_cmt->getText();
              if (!comment.empty()) {
@@ -499,8 +499,8 @@ void Dashboard::handle_command(const std::string& input) {
                 std::string name = target.symbol().getName();
                 auto& ctx = d->m_debugger.get_core().get_context();
                 Symbol::Type type = target.symbol().getType();
-                ctx.symbols.remove(name);
-                ctx.symbols.add(Symbol(name, num, type));
+                ctx.getSymbols().remove(name);
+                ctx.getSymbols().add(Symbol(name, num, type));
                 d->m_output_buffer << "Set symbol " << name << " to " << Strings::hex(num) << "\n";
             } else if (target.is_address()) {
                 auto& mem = d->m_debugger.get_core().get_memory();
@@ -593,7 +593,7 @@ void Dashboard::handle_command(const std::string& input) {
         size_t last = name.find_last_not_of(" \t");
         if (last != std::string::npos) name = name.substr(0, last + 1);
 
-        if (d->m_debugger.get_core().get_context().remove_symbol(name)) {
+        if (d->m_debugger.get_core().get_context().getSymbols().remove(name)) {
             d->m_output_buffer << "Symbol '" << name << "' removed.\n";
         } else {
             d->m_output_buffer << "Error: Symbol '" << name << "' not found.\n";
@@ -718,7 +718,7 @@ void Dashboard::print_dashboard() {
         for (uint16_t addr : watches) {
             uint8_t val = core.get_memory().peek(addr);
             std::stringstream item_ss;
-            auto pair = core.get_context().find_nearest_symbol(addr);
+            auto pair = core.get_context().getSymbols().find_nearest(addr);
             if (!pair.first.empty() && pair.second == addr)
                 item_ss << pair.first;
             else item_ss << Strings::hex(addr);
@@ -749,7 +749,7 @@ void Dashboard::print_dashboard() {
         for (const auto& bp : breakpoints) {
             std::stringstream item_ss;
             item_ss << (bp.enabled ? "*" : "o") << Strings::hex(bp.addr);
-            auto pair = core.get_context().find_nearest_symbol(bp.addr);
+            auto pair = core.get_context().getSymbols().find_nearest(bp.addr);
             if (!pair.first.empty() && pair.second == bp.addr)
                 item_ss << " (" << pair.first << ")";
             items.push_back(item_ss.str());

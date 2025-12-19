@@ -80,14 +80,14 @@ bool ControlFile::load(const std::string& filename) {
         switch (type) {
             case 'c': // Code
                 m_analyzer.set_map_type(map, addr, Analyzer::TYPE_CODE); // This should probably be add_inline_comment
-                if (!remainder.empty()) m_analyzer.context.add_inline_comment(addr, clean_skool_tags(remainder));
+                if (!remainder.empty()) m_analyzer.context.getComments().add(Comment(addr, clean_skool_tags(remainder), Comment::Type::Inline));
                 break;
             case 'C': // Comment
                 if (!remainder.empty()) {
                     size_t first = remainder.find_first_not_of(" \t\r");
                     if (first != std::string::npos) {
                         size_t last = remainder.find_last_not_of(" \t\r");
-                        m_analyzer.context.add_inline_comment(addr, clean_skool_tags(remainder.substr(first, (last - first + 1))));
+                        m_analyzer.context.getComments().add(Comment(addr, clean_skool_tags(remainder.substr(first, (last - first + 1))), Comment::Type::Inline));
                     }
                 }
                 break;
@@ -95,7 +95,7 @@ bool ControlFile::load(const std::string& filename) {
             case 's': case 'S': // Space
             case 'g':           // Game state
                 set_range(Analyzer::TYPE_BYTE);
-                if (!remainder.empty() && type == 'b') m_analyzer.context.add_block_desc(addr, clean_skool_tags(remainder));
+                if (!remainder.empty() && type == 'b') m_analyzer.context.getComments().add(Comment(addr, "; " + clean_skool_tags(remainder), Comment::Type::Block));
                 break;
             case 'w': case 'W': // Word
                 set_range(Analyzer::TYPE_WORD);
@@ -112,15 +112,15 @@ bool ControlFile::load(const std::string& filename) {
                     std::string name = remainder.substr(labelPos + 6);
                     size_t space = name.find_first_of(" \r\n\t");
                     if (space != std::string::npos) name = name.substr(0, space);
-                    m_analyzer.context.add_label(addr, name);
+                    m_analyzer.context.getSymbols().add_label(addr, name);
                 }
                 break;
             }
             case 'D': case 'N': // Description
-                m_analyzer.context.add_block_desc(addr, clean_skool_tags(remainder));
+                m_analyzer.context.getComments().add(Comment(addr, "; " + clean_skool_tags(remainder), Comment::Type::Block));
                 break;
             case 'R': // Register info
-                m_analyzer.context.add_block_desc(addr, "[Regs: " + clean_skool_tags(remainder) + "]");
+                m_analyzer.context.getComments().add(Comment(addr, "; [Regs: " + clean_skool_tags(remainder) + "]", Comment::Type::Block));
                 break;
         }
     }

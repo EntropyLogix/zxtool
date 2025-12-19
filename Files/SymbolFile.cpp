@@ -41,9 +41,9 @@ void SymbolFile::load_sym(const std::string& filename) {
                 valStr.pop_back();
             uint16_t addr = parse_hex_addr(valStr);
             Symbol symbol(label, addr, Symbol::Type::Constant);
-            m_analyzer.context.add_label(symbol.read(), symbol.getName());
+            m_analyzer.context.getSymbols().add_label(symbol.read(), symbol.getName());
             if (!comment.empty()) {
-                m_analyzer.context.add_inline_comment(symbol.read(), comment);
+                m_analyzer.context.getComments().add(Comment(symbol.read(), comment, Comment::Type::Inline));
             }
         }
     }
@@ -58,7 +58,7 @@ void SymbolFile::load_map(const std::string& filename) {
         uint16_t addr = parse_hex_addr(addrStr);
         if (!label.empty()) {
             Symbol symbol(label, addr, Symbol::Type::Label);
-            m_analyzer.context.add_label(symbol.read(), symbol.getName());
+            m_analyzer.context.getSymbols().add_label(symbol.read(), symbol.getName());
         }
     }
 }

@@ -4,40 +4,28 @@
 #include "CoreIncludes.h"
 #include "Symbols.h"
 #include "Comments.h"
+#include "Variables.h"
 
 #include <map>
 #include <string>
 #include <cstdint>
 #include <utility>
 
-// ---------------------------------------------------------
-// Kontekst Projektu: Symbole, Komentarze, Metadane
-// ---------------------------------------------------------
-class Context : public ILabels {
+class Context {
 public:
-    Symbols symbols;
-    Comments comments;
+    Symbols& getSymbols() { return m_symbols; }
+    const Symbols& getSymbols() const { return m_symbols; }
 
-    // --- ILabels Interface Implementation ---
-    std::string get_label(uint16_t address) const override;
-    void add_label(uint16_t address, const std::string& label) override;
+    Comments& getComments() { return m_comments; }
+    const Comments& getComments() const { return m_comments; }
 
-    enum class SymbolResult { Created, Updated };
-    struct SymbolUpdateInfo {
-        SymbolResult result;
-        uint16_t old_address;
-    };
-    SymbolUpdateInfo add_or_update_symbol(const std::string& label, uint16_t address);
-    bool remove_symbol(const std::string& label);
+    Variables& getVariables() { return m_variables; }
+    const Variables& getVariables() const { return m_variables; }
 
-    // Finds the symbol at or immediately preceding the address
-    std::pair<std::string, uint16_t> find_nearest_symbol(uint16_t address) const;
-
-    // --- Helpers for Metadata ---
-    void add_block_desc(uint16_t addr, const std::string& desc);
-    void add_inline_comment(uint16_t addr, const std::string& comment);
-    std::string get_inline_comment(uint16_t addr);
-    std::string get_block_desc(uint16_t addr);
+private:
+    Symbols m_symbols;
+    Comments m_comments;
+    Variables m_variables;
 };
 
 #endif // __CONTEXT_H__

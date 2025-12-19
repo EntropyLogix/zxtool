@@ -1,4 +1,5 @@
 #include "Expression.h"
+#include "Core.h"
 #include "../Utils/Strings.h"
 #include <cctype>
 
@@ -9,8 +10,10 @@ void Expression::syntax_error(const std::string& msg) {
 }
 
 double Expression::get_val(Core& core, const Expression::Value& v) {
-    if (v.is_register()) return v.reg().read(core.get_cpu());
-    if (v.is_symbol()) return v.symbol().read();
+    if (v.is_register())
+        return v.reg().read(core.get_cpu());
+    if (v.is_symbol())
+        return v.symbol().read();
     return v.number();
 }
 
@@ -200,7 +203,7 @@ bool Expression::parse_register(const std::string& word, std::vector<Token>& tok
 }
 
 bool Expression::parse_symbol(const std::string& word, std::vector<Token>& tokens) {
-    const Symbol* symbol = m_core.get_context().symbols.find(word);
+    const Symbol* symbol = m_core.get_context().getSymbols().find(word);
     if (symbol) {
         tokens.push_back({TokenType::SYMBOL, Value(*symbol), word});
         return true;

@@ -5,8 +5,9 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "CoreIncludes.h"
 
-class Symbols {
+class Symbols : public ILabels {
 public:
     void add(const Symbol& s);
     bool remove(const std::string& name);
@@ -18,6 +19,10 @@ public:
     std::pair<std::string, uint16_t> find_nearest(uint16_t address) const;
 
     const std::map<uint16_t, Symbol>& by_address() const { return m_by_addr; }
+
+    // --- ILabels Interface Implementation ---
+    std::string get_label(uint16_t address) const override;
+    void add_label(uint16_t address, const std::string& label) override;
 
 private:
     std::map<std::string, Symbol> m_by_name;
