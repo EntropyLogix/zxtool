@@ -30,6 +30,7 @@ public:
         EVAL_NOT_ENOUGH_ARGUMENTS,
         EVAL_MIXING_CONTAINERS,
         EVAL_INVALID_INDEXING,
+        EVAL_TYPE_MISMATCH,
         INTERNAL_ERROR,
         GENERIC
     };
@@ -78,6 +79,7 @@ public:
         const std::vector<uint8_t>& bytes() const { return m_bytes; }
         const std::vector<uint16_t>& words() const { return m_words; }
 
+        Type type() const { return m_type; }
         double get_scalar(Core& core) const;
 
     private:
@@ -123,10 +125,18 @@ private:
         bool left_assoc;
         bool is_unary;
         Value (Expression::*apply)(const std::vector<Value>&);
+        std::vector<std::vector<Value::Type>> signatures;
+        void check(const std::string& name, const std::vector<Value>& args) const {
+            check_types(name, args, signatures);
+        }
     };
     struct FunctionInfo {
         int num_args;
         Value (Expression::*apply)(const std::vector<Value>&);
+        std::vector<std::vector<Value::Type>> signatures;
+        void check(const std::string& name, const std::vector<Value>& args) const {
+            check_types(name, args, signatures);
+        }
     };
     struct Token {
         TokenType type;
@@ -152,6 +162,22 @@ private:
     std::vector<Token> tokenize(const std::string& expression);
     std::vector<Token> shunting_yard(const std::vector<Token>& tokens);
     Value execute_rpn(const std::vector<Token>& rpn);
+
+    static void check_types(const std::string& name, const std::vector<Value>& args, const std::vector<std::vector<Value::Type>>& signatures) {
+        if (signatures.empty()) return;
+        for (const auto& sig : signatures) {
+            if (sig.size() != args.size()) continue;
+            bool match = true;
+            for (size_t i = 0; i < args.size(); ++i) {
+                if (args[i].type() != sig[i]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) return;
+        }
+        throw Error(ErrorCode::EVAL_TYPE_MISMATCH, "Type mismatch for " + name);
+    }
 
     static void syntax_error(ErrorCode code, const std::string& detail = "");
 
