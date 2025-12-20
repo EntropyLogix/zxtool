@@ -6,6 +6,7 @@
 #include <cctype>
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -211,7 +212,7 @@ Expression::Value Expression::operator_xor(const std::vector<Value>& args) {
 }
 
 Expression::Value Expression::operator_not(const std::vector<Value>& args) {
-    return Value((double)(~(int)args[0].get_scalar(m_core)));
+    return Value((double)(uint16_t)(~((uint16_t)args[0].get_scalar(m_core))));
 }
 
 Expression::Value Expression::operator_shl(const std::vector<Value>& args) {
@@ -262,6 +263,45 @@ Expression::Value Expression::operator_lte(const std::vector<Value>& args) {
 
 Expression::Value Expression::operator_gte(const std::vector<Value>& args) {
     return Value(args[0].get_scalar(m_core) >= args[1].get_scalar(m_core) ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::operator_range(const std::vector<Value>& args) {
+    int start = (int)args[0].get_scalar(m_core);
+    int end = (int)args[1].get_scalar(m_core);
+    std::vector<uint16_t> vals;
+    if (start <= end) {
+        for (int i = start; i <= end; ++i) vals.push_back((uint16_t)i);
+    } else {
+        for (int i = start; i >= end; --i) vals.push_back((uint16_t)i);
+    }
+    return Value(vals);
+}
+
+Expression::Value Expression::operator_step(const std::vector<Value>& args) {
+    int step = (int)args[1].get_scalar(m_core);
+    if (step == 0) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Step cannot be zero");
+
+    auto process = [&](const auto& vec) {
+        using T = typename std::decay<decltype(vec)>::type::value_type;
+        std::vector<T> res;
+        if (step > 0) {
+            for (size_t i = 0; i < vec.size(); i += step) {
+                res.push_back(vec[i]);
+            }
+        } else {
+            for (int i = (int)vec.size() - 1; i >= 0; i += step) {
+                res.push_back(vec[i]);
+            }
+        }
+        return res;
+    };
+
+    const auto& v = args[0];
+    if (v.is_address()) return Value(process(v.address()));
+    if (v.is_words()) return Value(process(v.words()), true);
+    if (v.is_bytes()) return Value(process(v.bytes()));
+    
+    return v;
 }
 
 Expression::Value Expression::operator_index(const std::vector<Value>& args) {
@@ -485,7 +525,7 @@ Expression::Value Expression::function_word(const std::vector<Value>& args) {
     return (double)((((int)args[0].get_scalar(m_core) & 0xFF) << 8) | ((int)args[1].get_scalar(m_core) & 0xFF));
 }
 
-Expression::Value Expression::function_mem(const std::vector<Value>& args) {
+Expression::Value Expression::function_copy_mem(const std::vector<Value>& args) {
     uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
     int count = (int)args[1].get_scalar(m_core);
     std::vector<uint8_t> bytes;
@@ -518,7 +558,7 @@ Expression::Value Expression::function_char(const std::vector<Value>& args) {
     return Value(std::string(1, c));
 }
 
-Expression::Value Expression::function_str(const std::vector<Value>& args) {
+Expression::Value Expression::function_to_str(const std::vector<Value>& args) {
     double d = args[0].get_scalar(m_core);
     if (d == (long long)d) {
         return Value(std::to_string((long long)d));
@@ -587,9 +627,9 @@ Expression::Value Expression::function_resbit(const std::vector<Value>& args) {
 Expression::Value Expression::function_read_str(const std::vector<Value>& args) {
     uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
     int len = -1;
-    if (args.size() > 1) {
-        len = (int)args[1].get_scalar(m_core);
-    }
+    int terminator = 0;
+    if (args.size() > 1) len = (int)args[1].get_scalar(m_core);
+    if (args.size() > 2) terminator = (int)args[2].get_scalar(m_core);
 
     std::string s;
     if (len >= 0) {
@@ -597,10 +637,10 @@ Expression::Value Expression::function_read_str(const std::vector<Value>& args) 
             s += (char)m_core.get_memory().peek(addr + i);
         }
     } else {
-        // C-String (read until 0x00), limit to 256 chars for safety
+        // Read until terminator (default 0x00), limit to 256 chars for safety
         for (int i = 0; i < 256; ++i) {
             char c = (char)m_core.get_memory().peek(addr + i);
-            if (c == 0) break;
+            if (c == (char)terminator) break;
             s += c;
         }
     }
@@ -920,6 +960,120 @@ Expression::Value Expression::function_argmin(const std::vector<Value>& args) {
     return Value((double)min_idx);
 }
 
+Expression::Value Expression::function_all(const std::vector<Value>& args) {
+    double target = args[1].get_scalar(m_core);
+    bool result = true;
+    auto process = [&](double val) { if (val != target) result = false; };
+
+    const auto& v = args[0];
+    if (v.is_bytes()) {
+        for (auto b : v.bytes()) process((double)b);
+    } else if (v.is_words()) {
+        for (auto w : v.words()) process((double)w);
+    } else if (v.is_address()) {
+        for (auto a : v.address()) process((double)a);
+    } else {
+        process(v.get_scalar(m_core));
+    }
+    return Value(result ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::function_any(const std::vector<Value>& args) {
+    double target = args[1].get_scalar(m_core);
+    bool result = false;
+    auto process = [&](double val) { if (val == target) result = true; };
+
+    const auto& v = args[0];
+    if (v.is_bytes()) {
+        for (auto b : v.bytes()) process((double)b);
+    } else if (v.is_words()) {
+        for (auto w : v.words()) process((double)w);
+    } else if (v.is_address()) {
+        for (auto a : v.address()) process((double)a);
+    } else {
+        process(v.get_scalar(m_core));
+    }
+    return Value(result ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::function_find(const std::vector<Value>& args) {
+    std::vector<uint8_t> needle;
+    if (args[1].is_bytes()) {
+        needle = args[1].bytes();
+    } else {
+        needle.push_back((uint8_t)args[1].get_scalar(m_core));
+    }
+
+    if (needle.empty()) return Value(-1.0);
+    
+    if (args[0].is_address()) {
+        const auto& addrs = args[0].address();
+        for (size_t i = 0; i < addrs.size(); ++i) {
+            bool match = true;
+            uint16_t addr = addrs[i];
+            for (size_t j = 0; j < needle.size(); ++j) {
+                if (m_core.get_memory().peek(addr + j) != needle[j]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) return Value((double)i);
+        }
+        return Value(-1.0);
+    }
+
+    const auto& haystack = args[0].is_bytes() ? args[0].bytes() : std::vector<uint8_t>{(uint8_t)args[0].get_scalar(m_core)};
+    
+    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());
+    if (it == haystack.end()) return Value(-1.0);
+    
+    return Value((double)std::distance(haystack.begin(), it));
+}
+
+Expression::Value Expression::function_dump(const std::vector<Value>& args) {
+    uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
+    int len = (int)args[1].get_scalar(m_core);
+    std::stringstream ss;
+    int row_len = 8;
+    for (int i = 0; i < len; i += row_len) {
+        if (i > 0) ss << "\n";
+        uint16_t row_addr = addr + i;
+        ss << std::hex << std::setw(4) << std::setfill('0') << std::uppercase << row_addr << ": ";
+        std::string ascii;
+        for (int j = 0; j < row_len; ++j) {
+            if (i + j < len) {
+                uint8_t b = m_core.get_memory().peek(row_addr + j);
+                ss << std::setw(2) << (int)b << " ";
+                ascii += (b >= 32 && b <= 126) ? (char)b : '.';
+            } else {
+                ss << "   ";
+            }
+        }
+        ss << " " << ascii;
+    }
+    return Value(ss.str());
+}
+
+Expression::Value Expression::function_is_var(const std::vector<Value>& args) {
+    std::string name = args[0].string();
+    if (name.empty()) return Value(0.0);
+    if (name[0] == '@') name.erase(0, 1);
+    return Value(m_core.get_context().getVariables().find(name) ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::function_type(const std::vector<Value>& args) {
+    switch (args[0].type()) {
+        case Value::Type::Number:   return Value(std::string("NUMBER"));
+        case Value::Type::Register: return Value(std::string("REGISTER"));
+        case Value::Type::Address:  return Value(std::string("ADDRESS"));
+        case Value::Type::Symbol:   return Value(std::string("SYMBOL"));
+        case Value::Type::String:   return Value(std::string("STRING"));
+        case Value::Type::Bytes:    return Value(std::string("BYTES"));
+        case Value::Type::Words:    return Value(std::string("WORDS"));
+        default:                    return Value(std::string("UNKNOWN"));
+    }
+}
+
 Expression::Value Expression::function_asm(const std::vector<Value>& args) {
     uint16_t pc = m_core.get_cpu().get_PC();
     std::string code;
@@ -972,13 +1126,31 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"BYTE", {1, &Expression::function_byte, {
             {T::Number}, {T::Register}, {T::Symbol}
         }}},
+        {"PEEK", {1, &Expression::function_byte, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"B", {1, &Expression::function_byte, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
         {"WORD", {-1, &Expression::function_word, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
             {T::Number}, {T::Register}, {T::Symbol}
         }}},
-        {"MEM", {2, &Expression::function_mem, {
+        {"W", {-1, &Expression::function_word, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"DPEEK", {-1, &Expression::function_word, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"COPY_MEM", {2, &Expression::function_copy_mem, {
             {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
         }}},
         {"FILL", {2, &Expression::function_fill, {
@@ -995,7 +1167,7 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"CHR", {1, &Expression::function_char, {
             {T::Number}, {T::Register}, {T::Symbol}
         }}},
-        {"STR", {1, &Expression::function_str, {
+        {"TO_STR", {1, &Expression::function_to_str, {
             {T::Number}, {T::Register}, {T::Symbol}
         }}},
         {"LEN", {1, &Expression::function_len, {
@@ -1019,9 +1191,15 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"VAL", {1, &Expression::function_val, {
             {T::String}
         }}},
+        {"STR", {-1, &Expression::function_read_str, {
+            {T::Number}, {T::Register}, {T::Symbol},
+            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number},
+            {T::Number, T::Number, T::Number}
+        }}},
         {"READ_STR", {-1, &Expression::function_read_str, {
             {T::Number}, {T::Register}, {T::Symbol},
-            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
+            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number},
+            {T::Number, T::Number, T::Number}
         }}},
         {"ASC", {1, &Expression::function_asc, {
             {T::Number}, {T::Register}, {T::Symbol}
@@ -1133,6 +1311,23 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         }}},
         {"ARGMIN", {-1, &Expression::function_argmin, {
         }}},
+        {"ALL", {2, &Expression::function_all, {
+            {T::Bytes, T::Number}, {T::Words, T::Number}, {T::Address, T::Number}
+        }}},
+        {"ANY", {2, &Expression::function_any, {
+            {T::Bytes, T::Number}, {T::Words, T::Number}, {T::Address, T::Number}
+        }}},
+        {"FIND", {2, &Expression::function_find, {
+            {T::Bytes, T::Bytes}, {T::Bytes, T::Number}, {T::Number, T::Bytes}, {T::Number, T::Number},
+            {T::Address, T::Bytes}, {T::Address, T::Number}
+        }}},
+        {"DUMP", {2, &Expression::function_dump, {
+            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
+        }}},
+        {"IS_VAR", {1, &Expression::function_is_var, {
+            {T::String}
+        }}},
+        {"TYPE", {1, &Expression::function_type, {}}},
         {"ASM", {-1, &Expression::function_asm, {
             {T::String},
             {T::Number, T::String}, {T::Register, T::String}, {T::Symbol, T::String}
@@ -1224,6 +1419,9 @@ std::string Expression::parse_word(const std::string& expr, size_t& index) {
     std::string word;
     while (index < expr.length()) {
         char c = expr[index];
+        if (c == '.' && index + 1 < expr.length() && expr[index+1] == '.') {
+            break;
+        }
         if (std::isalnum(c) || c == '$' || c == '_' || c == '.' || c == '%') {
             word += c;
             index++;
@@ -1346,6 +1544,26 @@ std::vector<Expression::Token> Expression::tokenize(const std::string& expr) {
             i += 2;
             continue;
         }
+        if (i + 1 < expr.length() && expr[i] == '.' && expr[i+1] == '.') {
+            using T = Expression::Value::Type;
+            static const OperatorInfo range_op = {20, true, false, &Expression::operator_range, {
+                {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number},
+                {T::Number, T::Register}, {T::Register, T::Register}, {T::Register, T::Symbol},
+                {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+            }};
+            tokens.push_back({TokenType::OPERATOR, Value(0.0), "..", &range_op});
+            i += 2;
+            continue;
+        }
+        if (expr[i] == ':') {
+            using T = Expression::Value::Type;
+            static const OperatorInfo step_op = {20, true, false, &Expression::operator_step, {
+                {T::Address, T::Number}, {T::Words, T::Number}, {T::Bytes, T::Number}
+            }};
+            tokens.push_back({TokenType::OPERATOR, Value(0.0), ":", &step_op});
+            i++;
+            continue;
+        }
         if (parse_variable(expr, i, tokens))
             continue;
         if (parse_string(expr, i, tokens))
@@ -1357,6 +1575,17 @@ std::vector<Expression::Token> Expression::tokenize(const std::string& expr) {
         size_t j = i;
         std::string word = parse_word(expr, j);
         if (!word.empty()) {
+            std::string upper = Strings::upper(word);
+            if (upper == "TRUE") {
+                tokens.push_back({TokenType::NUMBER, Value(1.0)});
+                i = j;
+                continue;
+            }
+            if (upper == "FALSE") {
+                tokens.push_back({TokenType::NUMBER, Value(0.0)});
+                i = j;
+                continue;
+            }
             if (parse_number(word, tokens)) {
                 i = j;
                 continue;
@@ -1589,6 +1818,8 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 stack.push_back(token.value);
             } else {
                 int count = (int)token.value.number();
+                if (stack.size() < (size_t)count)
+                    syntax_error(ErrorCode::EVAL_NOT_ENOUGH_OPERANDS);
                 std::vector<uint16_t> addrs;
                 std::vector<Value> args;
                 for(int k = 0; k < count; ++k) {
@@ -1596,8 +1827,20 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                     stack.pop_back();
                 }
                 std::reverse(args.begin(), args.end());
-                for (const auto& v : args)
-                    addrs.push_back((uint16_t)v.get_scalar(m_core));
+                for (const auto& v : args) {
+                    if (v.is_address()) {
+                        const auto& vec = v.address();
+                        addrs.insert(addrs.end(), vec.begin(), vec.end());
+                    } else if (v.is_words()) {
+                        const auto& vec = v.words();
+                        addrs.insert(addrs.end(), vec.begin(), vec.end());
+                    } else if (v.is_bytes()) {
+                        const auto& vec = v.bytes();
+                        for(auto b : vec) addrs.push_back((uint16_t)b);
+                    } else {
+                        addrs.push_back((uint16_t)v.get_scalar(m_core));
+                    }
+                }
                 stack.push_back(Value(addrs));
             }
         }
@@ -1628,17 +1871,19 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                             bytes.push_back(word >> 8);
                         }
                     } else {
-                        double val = v.get_scalar(m_core);
                         if (v.is_register() && v.reg().is_16bit()) {
-                            uint16_t w = (uint16_t)val;
-                            bytes.push_back(w & 0xFF);
-                            bytes.push_back(w >> 8);
-                        } else if (val >= -128 && val <= 255)
-                            bytes.push_back((uint8_t)val);
-                        else {
-                            uint16_t w = (uint16_t)val;
-                            bytes.push_back(w & 0xFF);
-                            bytes.push_back(w >> 8);
+                            uint16_t val = (uint16_t)v.get_scalar(m_core);
+                            bytes.push_back(val & 0xFF);
+                            bytes.push_back(val >> 8);
+                        } else {
+                            double val = v.get_scalar(m_core);
+                            if (val > 255 || val < -128) {
+                                uint16_t w = (uint16_t)val;
+                                bytes.push_back(w & 0xFF);
+                                bytes.push_back(w >> 8);
+                            } else {
+                                bytes.push_back((uint8_t)val);
+                            }
                         }
                     }
                 }

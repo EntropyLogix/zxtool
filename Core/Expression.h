@@ -204,16 +204,18 @@ private:
     Value operator_gt(const std::vector<Value>& args);
     Value operator_lte(const std::vector<Value>& args);
     Value operator_gte(const std::vector<Value>& args);
+    Value operator_range(const std::vector<Value>& args);
+    Value operator_step(const std::vector<Value>& args);
 
     Value function_low(const std::vector<Value>& args);
     Value function_high(const std::vector<Value>& args);
     Value function_byte(const std::vector<Value>& args);
     Value function_word(const std::vector<Value>& args);
-    Value function_mem(const std::vector<Value>& args);
+    Value function_copy_mem(const std::vector<Value>& args);
     Value function_fill(const std::vector<Value>& args);
     Value function_checksum(const std::vector<Value>& args);
     Value function_char(const std::vector<Value>& args);
-    Value function_str(const std::vector<Value>& args);
+    Value function_to_str(const std::vector<Value>& args);
     Value function_len(const std::vector<Value>& args);
     Value function_substr(const std::vector<Value>& args);
     Value function_hex(const std::vector<Value>& args);
@@ -255,6 +257,12 @@ private:
     Value function_avg(const std::vector<Value>& args);
     Value function_argmax(const std::vector<Value>& args);
     Value function_argmin(const std::vector<Value>& args);
+    Value function_all(const std::vector<Value>& args);
+    Value function_any(const std::vector<Value>& args);
+    Value function_find(const std::vector<Value>& args);
+    Value function_dump(const std::vector<Value>& args);
+    Value function_is_var(const std::vector<Value>& args);
+    Value function_type(const std::vector<Value>& args);
     Value function_asm(const std::vector<Value>& args);
 };
 
