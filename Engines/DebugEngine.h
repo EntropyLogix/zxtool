@@ -163,11 +163,13 @@ public:
     {
         m_debugger.set_logger([this](const std::string& msg){ log(msg); });
         m_commands = {
+            {"evaluate", &Dashboard::cmd_eval},
             {"eval", &Dashboard::cmd_eval},
             {"?", &Dashboard::cmd_eval},
             {"quit", &Dashboard::cmd_quit},
             {"q", &Dashboard::cmd_quit},
             {"set", &Dashboard::cmd_set},
+            {"!", &Dashboard::cmd_set},
             {"undef", &Dashboard::cmd_undef}
         };
     }

@@ -366,6 +366,7 @@ void Dashboard::run() {
         if (input.empty())
             continue;
         m_repl.history_add(input);
+        m_output_buffer << "> " << input << "\n";
         handle_command(input);
     }
     m_repl.history_save(".zxtool_history");
@@ -427,7 +428,6 @@ static std::string format_value(const Expression::Value& val) {
 }
 
 void Dashboard::perform_eval(const std::string& expr) {
-    m_output_buffer << expr << "\n";
     Expression eval(m_debugger.get_core());
     Expression::Value val = eval.evaluate(expr);
     if (val.is_number()) {
@@ -665,7 +665,11 @@ void Dashboard::cmd_undef(const std::string& args_str) {
 }
 
 void Dashboard::handle_command(const std::string& input) {
-    auto parts = Strings::split(input);
+    std::string clean_input = input;
+    Strings::trim(clean_input);
+    if (clean_input.empty()) return;
+
+    auto parts = Strings::split(clean_input);
     if (parts.empty()) return;
 
     std::string cmd = parts[0];
@@ -677,21 +681,7 @@ void Dashboard::handle_command(const std::string& input) {
     if (it != m_commands.end()) {
         (this->*(it->second))(args);
     } else {
-        size_t eq_pos = input.find('=');
-        if (eq_pos != std::string::npos) {
-            cmd_set(input);
-        } else {
-            try {
-                perform_eval(input);
-            } catch (const Expression::Error& e) {
-                if (e.code() == Expression::ErrorCode::GENERIC || e.code() == Expression::ErrorCode::LOOKUP_UNKNOWN_SYMBOL)
-                    m_output_buffer << "Unknown command: " << cmd << "\n";
-                else
-                    m_output_buffer << "Error: " << e.what() << "\n";;
-            } catch (const std::exception& e) {
-                m_output_buffer << "Error: " << e.what() << "\n";
-            }
-        }
+        m_output_buffer << "Unknown command: " << cmd << "\n";
     }
 }
 
