@@ -29,6 +29,7 @@ add_executable(zxtool
                 Core/Expression.cpp
                 Core/Symbols.cpp
                 Core/Comments.cpp
+                Core/Variables.cpp
                 Core/Application.cpp
                 Engines/AssembleEngine.cpp
                 Engines/RunEngine.cpp

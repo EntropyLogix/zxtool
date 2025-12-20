@@ -509,37 +509,6 @@ void Dashboard::handle_command(const std::string& input) {
              return;
         }
 
-        std::string lhs_check = lhs_str;
-        Strings::trim(lhs_check);
-        if (lhs_check.size() > 1 && lhs_check[0] == '@') {
-            std::string var_name = lhs_check.substr(1);
-            bool valid = true;
-            for (char c : var_name) {
-                if (!std::isalnum(c) && c != '_') {
-                    valid = false;
-                    break;
-                }
-            }
-            if (valid) {
-                try {
-                    Expression eval(d->m_debugger.get_core());
-                    Expression::Value val = eval.evaluate(rhs_str);
-                    Variable v(var_name, val, rhs_str);
-                    auto& vars = d->m_debugger.get_core().get_context().getVariables();
-                    bool exists = (vars.find(var_name) != nullptr);
-                    vars.add(v);
-                    if (exists)
-                        d->m_output_buffer << "Updated variable @" << var_name << " = " << format_value(val) << "\n";
-                    else
-                        d->m_output_buffer << "Created variable @" << var_name << " = " << format_value(val) << "\n";
-                    return;
-                } catch (const std::exception& e) {
-                    d->m_output_buffer << "Error: " << e.what() << "\n";
-                    return;
-                }
-            }
-        }
-
         try {
             Expression eval(d->m_debugger.get_core());
             Expression::Value target = eval.evaluate(lhs_str);
@@ -630,9 +599,61 @@ void Dashboard::handle_command(const std::string& input) {
                                        << " (" << (std::isprint(writes[i].second) ? (char)writes[i].second : '.') << ")\n";
                 }
             } else {
-                d->m_output_buffer << "Error: Left side must be a register, symbol or address list (e.g. [addr]).\n";
+                // Jeśli dotarliśmy tutaj, to lewa strona została poprawnie ewaluowana do wartości (np. liczby, stringa),
+                // co oznacza, że może to być aktualizacja istniejącej zmiennej (Expression zwraca wartość zmiennej, nie referencję).
+                std::string lhs_trim = lhs_str;
+                Strings::trim(lhs_trim);
+                if (lhs_trim.size() > 1 && lhs_trim[0] == '@') {
+                    std::string var_name = lhs_trim.substr(1);
+                    // Sprawdzamy czy nazwa jest poprawnym identyfikatorem, aby uniknąć przypadków typu "set @a+1 = 10"
+                    bool is_valid = true;
+                    for(char c : var_name) if(!isalnum(c) && c != '_') is_valid = false;
+                    
+                    if (is_valid) {
+                        Variable v(var_name, val, rhs_str);
+                        d->m_debugger.get_core().get_context().getVariables().add(v);
+                        d->m_output_buffer << "Updated variable @" << var_name << " = " << format_value(val) << "\n";
+                        return;
+                    }
+                }
+                d->m_output_buffer << "Error: Left side must be a register, symbol, variable or address list.\n";
             }
 
+        } catch (const Expression::Error& e) {
+            if (e.code() == Expression::ErrorCode::LOOKUP_UNKNOWN_VARIABLE) {
+                // Zmienna nie istnieje - tworzymy nową
+                std::string name = e.detail();
+                try {
+                    Expression eval(d->m_debugger.get_core());
+                    Expression::Value val = eval.evaluate(rhs_str);
+                    Variable v(name, val, rhs_str);
+                    d->m_debugger.get_core().get_context().getVariables().add(v);
+                    d->m_output_buffer << "Created variable @" << name << " = " << format_value(val) << "\n";
+                } catch (const std::exception& rhs_e) {
+                    d->m_output_buffer << "Error evaluating value: " << rhs_e.what() << "\n";
+                }
+            } else if (e.code() == Expression::ErrorCode::LOOKUP_UNKNOWN_SYMBOL) {
+                // Symbol nie istnieje - tworzymy nowy
+                std::string name = e.detail();
+                try {
+                    Expression eval(d->m_debugger.get_core());
+                    Expression::Value val = eval.evaluate(rhs_str);
+                    
+                    double num_val = 0;
+                    if (val.is_number()) num_val = val.number();
+                    else if (val.is_register()) num_val = val.reg().read(d->m_debugger.get_core().get_cpu());
+                    else if (val.is_symbol()) num_val = val.symbol().read();
+                    else throw std::runtime_error("Symbol value must be a number");
+
+                    Symbol s(name, (uint16_t)num_val, Symbol::Type::Label);
+                    d->m_debugger.get_core().get_context().getSymbols().add(s);
+                    d->m_output_buffer << "Created symbol " << name << " = " << Strings::hex((uint16_t)num_val) << "\n";
+                } catch (const std::exception& rhs_e) {
+                    d->m_output_buffer << "Error evaluating value: " << rhs_e.what() << "\n";
+                }
+            } else {
+                d->m_output_buffer << "Error: " << e.what() << "\n";
+            }
         } catch (const std::exception& e) {
             d->m_output_buffer << "Error: " << e.what() << "\n";
         }
