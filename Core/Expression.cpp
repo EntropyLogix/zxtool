@@ -311,6 +311,13 @@ Expression::Value Expression::function_asm(const std::vector<Value>& args) {
         symbols[pair.first] = pair.second.read();
     }
 
+    for (const auto& pair : m_core.get_context().getVariables().by_name()) {
+        const auto& val = pair.second.getValue();
+        if (val.is_scalar()) {
+            symbols["@" + pair.first] = (uint16_t)val.get_scalar(m_core);
+        }
+    }
+
     std::vector<uint8_t> bytes;
     LineAssembler assembler;
     assembler.assemble(code, symbols, pc, bytes);

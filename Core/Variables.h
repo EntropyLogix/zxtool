@@ -15,6 +15,8 @@ public:
     const Variable* find(const std::string& name) const;
     Variable* find(const std::string& name);
 
+    const std::map<std::string, Variable>& by_name() const { return m_by_name; }
+
 private:
     std::map<std::string, Variable> m_by_name;
 };
