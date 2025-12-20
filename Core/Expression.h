@@ -143,6 +143,7 @@ private:
         std::string symbol; 
         const OperatorInfo* op_info = nullptr;
         const FunctionInfo* func_info = nullptr;
+        int argc = 0;
     };
 
     static const std::map<std::string, OperatorInfo>& get_operators();
@@ -189,6 +190,7 @@ private:
     Value function_low(const std::vector<Value>& args);
     Value function_high(const std::vector<Value>& args);
     Value function_word(const std::vector<Value>& args);
+    Value function_asm(const std::vector<Value>& args);
 };
 
 #endif//__EXPRESSION_H__

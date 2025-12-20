@@ -2,7 +2,9 @@
 #include "Core.h"
 #include "Variables.h"
 #include "../Utils/Strings.h"
+#include "Assembler.h"
 #include <cctype>
+#include <algorithm>
 
 Expression::Error::Error(ErrorCode code, const std::string& detail) : m_code(code), m_detail(detail) {
     switch (code) {
@@ -289,6 +291,33 @@ Expression::Value Expression::function_word(const std::vector<Value>& args) {
     return (double)((((int)args[0].get_scalar(m_core) & 0xFF) << 8) | ((int)args[1].get_scalar(m_core) & 0xFF));
 }
 
+Expression::Value Expression::function_asm(const std::vector<Value>& args) {
+    uint16_t pc = m_core.get_cpu().get_PC();
+    std::string code;
+
+    if (args.size() == 1) {
+        code = args[0].string();
+    } else if (args.size() == 2) {
+        pc = (uint16_t)args[0].get_scalar(m_core);
+        code = args[1].string();
+    } else {
+        syntax_error(ErrorCode::EVAL_NOT_ENOUGH_ARGUMENTS, "ASM requires 1 or 2 arguments");
+    }
+
+    std::replace(code.begin(), code.end(), ';', '\n');
+
+    std::map<std::string, uint16_t> symbols;
+    for (const auto& pair : m_core.get_context().getSymbols().by_name()) {
+        symbols[pair.first] = pair.second.read();
+    }
+
+    std::vector<uint8_t> bytes;
+    LineAssembler assembler;
+    assembler.assemble(code, symbols, pc, bytes);
+
+    return Value(bytes);
+}
+
 const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions() {
     using T = Expression::Value::Type;
     static const std::map<std::string, FunctionInfo> funcs = {
@@ -302,6 +331,10 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"ASM", {-1, &Expression::function_asm, {
+            {T::String},
+            {T::Number, T::String}, {T::Register, T::String}, {T::Symbol, T::String}
         }}}
     };
     return funcs;
@@ -570,7 +603,7 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                     output_queue.push_back(operator_stack.top());
                     operator_stack.pop();
                 }
-                if (!operator_stack.empty() && (operator_stack.top().type == TokenType::LBRACKET || operator_stack.top().type == TokenType::LBRACE || operator_stack.top().type == TokenType::LBRACE_W)) {
+                if (!operator_stack.empty() && (operator_stack.top().type == TokenType::LBRACKET || operator_stack.top().type == TokenType::LBRACE || operator_stack.top().type == TokenType::LBRACE_W || operator_stack.top().type == TokenType::LPAREN)) {
                     if (!arg_counts.empty())
                         arg_counts.top()++;
                 }
@@ -586,6 +619,7 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 break;
             case TokenType::LPAREN:
                 operator_stack.push(token);
+                arg_counts.push(1);
                 break;
             case TokenType::LBRACKET:
                 if (last_type == TokenType::NUMBER || last_type == TokenType::REGISTER ||
@@ -622,7 +656,7 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 operator_stack.push(token);
                 arg_counts.push(1);
                 break;
-            case TokenType::RPAREN:
+            case TokenType::RPAREN: {
                 while (!operator_stack.empty() && operator_stack.top().type != TokenType::LPAREN) {
                     if (operator_stack.top().type == TokenType::LBRACKET || operator_stack.top().type == TokenType::LBRACE || operator_stack.top().type == TokenType::LBRACE_W)
                         syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, ")");
@@ -632,12 +666,22 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 if (operator_stack.empty())
                     syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, ")");
                 operator_stack.pop();
+                
+                int count = 1;
+                if (!arg_counts.empty()) {
+                    count = arg_counts.top();
+                    arg_counts.pop();
+                }
+                if (last_type == TokenType::LPAREN) count = 0;
 
                 if (!operator_stack.empty() && operator_stack.top().type == TokenType::FUNCTION) {
-                    output_queue.push_back(operator_stack.top());
+                    Token t = operator_stack.top();
+                    t.argc = count;
+                    output_queue.push_back(t);
                     operator_stack.pop();
                 }
                 break;
+            }
             case TokenType::RBRACKET: {
                 while (!operator_stack.empty() && operator_stack.top().type != TokenType::LBRACKET) {
                     if (operator_stack.top().type == TokenType::LPAREN || operator_stack.top().type == TokenType::LBRACE || operator_stack.top().type == TokenType::LBRACE_W)
@@ -724,8 +768,10 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
         else if (token.type == TokenType::FUNCTION) {
             const auto* info = token.func_info;
             int args_needed = info->num_args;
-            if (info->num_args == -1)
-                args_needed = stack.size();
+            if (info->num_args == -1) {
+                args_needed = token.argc;
+            } else if (token.argc != info->num_args)
+                syntax_error(ErrorCode::EVAL_NOT_ENOUGH_ARGUMENTS, token.symbol);
             if (stack.size() < args_needed)
                 syntax_error(ErrorCode::EVAL_NOT_ENOUGH_ARGUMENTS, token.symbol);
             std::vector<Value> args;

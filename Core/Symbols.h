@@ -19,6 +19,7 @@ public:
     std::pair<std::string, uint16_t> find_nearest(uint16_t address) const;
 
     const std::map<uint16_t, Symbol>& by_address() const { return m_by_addr; }
+    const std::map<std::string, Symbol>& by_name() const { return m_by_name; }
 
     // --- ILabels Interface Implementation ---
     std::string get_label(uint16_t address) const override;
