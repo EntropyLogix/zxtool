@@ -42,7 +42,7 @@ Expression::Error::Error(ErrorCode code, const std::string& detail) : m_code(cod
             break;
     }
     if (!detail.empty())
-        m_message += " ( " + detail + " )";
+        m_message += " (" + detail + ")";
 }
 
 const char* Expression::Error::what() const noexcept {

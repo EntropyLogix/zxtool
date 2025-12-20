@@ -698,8 +698,11 @@ void Dashboard::handle_command(const std::string& input) {
         } else {
             try {
                 perform_eval(this, input);
-            } catch (const Expression::Error&) {
-                m_output_buffer << "Unknown command: " << cmd << "\n";
+            } catch (const Expression::Error& e) {
+                if (e.code() == Expression::ErrorCode::GENERIC || e.code() == Expression::ErrorCode::LOOKUP_UNKNOWN_SYMBOL)
+                    m_output_buffer << "Unknown command: " << cmd << "\n";
+                else
+                    m_output_buffer << "Error: " << e.what() << "\n";;
             } catch (const std::exception& e) {
                 m_output_buffer << "Error: " << e.what() << "\n";
             }
