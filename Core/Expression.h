@@ -120,11 +120,11 @@ private:
         int precedence;
         bool left_assoc;
         bool is_unary;
-        std::function<Value(Core&, const std::vector<Value>&)> apply;
+        Value (Expression::*apply)(const std::vector<Value>&);
     };
     struct FunctionInfo {
         int num_args;
-        std::function<Value(Core&, const std::vector<Value>&)> apply;
+        Value (Expression::*apply)(const std::vector<Value>&);
     };
     struct Token {
         TokenType type;
@@ -152,7 +152,16 @@ private:
     Value execute_rpn(const std::vector<Token>& rpn);
 
     static void syntax_error(ErrorCode code, const std::string& detail = "");
-    static double get_val(Core& core, const Value& v);
+    double get_val(const Value& v);
+
+    Value operator_unary_minus(const std::vector<Value>& args);
+    Value operator_plus(const std::vector<Value>& args);
+    Value operator_minus(const std::vector<Value>& args);
+    Value operator_index(const std::vector<Value>& args);
+
+    Value function_low(const std::vector<Value>& args);
+    Value function_high(const std::vector<Value>& args);
+    Value function_word(const std::vector<Value>& args);
 };
 
 #endif//__EXPRESSION_H__

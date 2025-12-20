@@ -55,97 +55,186 @@ void Expression::syntax_error(ErrorCode code, const std::string& detail) {
     throw Error(code, detail);
 }
 
-double Expression::get_val(Core& core, const Expression::Value& v) {
+double Expression::get_val(const Expression::Value& v) {
     if (v.is_register())
-        return v.reg().read(core.get_cpu());
+        return v.reg().read(m_core.get_cpu());
     if (v.is_symbol())
         return v.symbol().read();
     return v.number();
 }
 
+Expression::Value Expression::operator_unary_minus(const std::vector<Value>& args) {
+    return -get_val(args[0]);
+}
+
+Expression::Value Expression::operator_plus(const std::vector<Value>& args) {
+    if (args[0].is_string() || args[1].is_string()) {
+        auto to_str = [&](const Value& v) {
+            if (v.is_string())
+                return v.string();
+            double d = get_val(v);
+            return (d == (long long)d) ? std::to_string((long long)d) : std::to_string(d);
+        };
+        return Value(to_str(args[0]) + to_str(args[1]));
+    }
+    if (args[0].is_bytes() && args[1].is_bytes()) {
+        std::vector<uint8_t> res = args[0].bytes();
+        const auto& v2 = args[1].bytes();
+        res.insert(res.end(), v2.begin(), v2.end());
+        return Value(res);
+    }
+    if (args[0].is_words() && args[1].is_words()) {
+        std::vector<uint16_t> res = args[0].words();
+        const auto& v2 = args[1].words();
+        res.insert(res.end(), v2.begin(), v2.end());
+        return Value(res, true);
+    }
+    if (args[0].is_address() && args[1].is_address()) {
+        std::vector<uint16_t> res;
+        const auto& v1 = args[0].address();
+        const auto& v2 = args[1].address();
+        size_t len = std::min(v1.size(), v2.size());
+        for(size_t i=0; i<len; ++i)
+            res.push_back(v1[i] + v2[i]);
+        return Value(res);
+    }
+    if (args[0].is_address() || args[1].is_address()) {
+        std::vector<uint16_t> res;
+        if (args[0].is_address()) {
+            double val = get_val(args[1]);
+            for (auto a : args[0].address())
+                res.push_back(a + (int)val);
+        } else {
+            double val = get_val(args[0]);
+            for (auto a : args[1].address())
+                res.push_back((int)val + a);
+        }
+        return Value(res);
+    }
+    return Value(get_val(args[0]) + get_val(args[1]));
+}
+
+Expression::Value Expression::operator_minus(const std::vector<Value>& args) {
+    if (args[0].is_address() && args[1].is_address()) {
+        std::vector<uint16_t> res;
+        const auto& v1 = args[0].address();
+        const auto& v2 = args[1].address();
+        size_t len = std::min(v1.size(), v2.size());
+        for(size_t i=0; i<len; ++i)
+            res.push_back(v1[i] - v2[i]);
+        return Value(res);
+    }
+    if (args[0].is_address() || args[1].is_address()) {
+        std::vector<uint16_t> res;
+        if (args[0].is_address()) {
+            double val = get_val(args[1]);
+            for (auto a : args[0].address())
+                res.push_back(a - (int)val);
+        } else {
+            double val = get_val(args[0]);
+            for (auto a : args[1].address())
+                res.push_back((int)val - a);
+        }
+        return Value(res);
+    }
+    return Value(get_val(args[0]) - get_val(args[1]));
+}
+
+Expression::Value Expression::operator_index(const std::vector<Value>& args) {
+    auto check_bounds = [&](size_t idx, size_t size) {
+        if (idx >= size)
+            syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "index out of bounds");
+    };
+
+    if (!args[1].is_address())
+        syntax_error(ErrorCode::INTERNAL_ERROR, "invalid operands for indexing.");
+    const auto& indices = args[1].address();
+    if (args[0].is_register() || args[0].is_symbol()) {
+        std::vector<uint16_t> res;
+        double val = get_val(args[0]);
+        for (auto a : indices)
+            res.push_back((uint16_t)((int)val + a));
+        return Value(res);
+    }
+    if (args[0].is_bytes()) {
+        const auto& vec = args[0].bytes();
+        if (indices.size() == 1) {
+            check_bounds(indices[0], vec.size());
+            return Value((double)vec[indices[0]]);
+        }
+        std::vector<uint8_t> res;
+        for (auto idx : indices) {
+            check_bounds(idx, vec.size());
+            res.push_back(vec[idx]);
+        }
+        return Value(res);
+    } else if (args[0].is_words()) {
+        const auto& vec = args[0].words();
+        if (indices.size() == 1) {
+            check_bounds(indices[0], vec.size());
+            return Value((double)vec[indices[0]]);
+        }
+        std::vector<uint16_t> res;
+        for (auto idx : indices) {
+            check_bounds(idx, vec.size());
+            res.push_back(vec[idx]);
+        }
+        return Value(res, true);
+    } else if (args[0].is_address()) {
+        const auto& vec = args[0].address();
+        if (indices.size() == 1) {
+            check_bounds(indices[0], vec.size());
+            return Value((double)vec[indices[0]]);
+        }
+        std::vector<uint16_t> res;
+        for (auto idx : indices) {
+            check_bounds(idx, vec.size());
+            res.push_back(vec[idx]);
+        }
+        return Value(res);
+    } else if (args[0].is_string()) {
+        const auto& str = args[0].string();
+        if (indices.size() == 1) {
+            check_bounds(indices[0], str.size());
+            return Value((double)(unsigned char)str[indices[0]]);
+        }
+        std::string res;
+        for (auto idx : indices) {
+            check_bounds(idx, str.size());
+            res += str[idx];
+        }
+        return Value(res);
+    }
+    syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "indexing allowed only on registers, symbols, arrays or strings.");
+    return Value(0.0);
+}
+
 const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators() {
     static const std::map<std::string, OperatorInfo> ops = {
-        {"_",   {100, false, true,  [](Core& c, const std::vector<Value>& args) { return -get_val(c, args[0]); }}},
-        {"+",   {80, true,  false, [](Core& c, const std::vector<Value>& args) { 
-            if (args[0].is_string() || args[1].is_string()) {
-                auto to_str = [&](const Value& v) {
-                    if (v.is_string())
-                        return v.string();
-                    double d = get_val(c, v);
-                    return (d == (long long)d) ? std::to_string((long long)d) : std::to_string(d);
-                };
-                return Value(to_str(args[0]) + to_str(args[1]));
-            }
-            if (args[0].is_bytes() && args[1].is_bytes()) {
-                std::vector<uint8_t> res = args[0].bytes();
-                const auto& v2 = args[1].bytes();
-                res.insert(res.end(), v2.begin(), v2.end());
-                return Value(res);
-            }
-            if (args[0].is_words() && args[1].is_words()) {
-                std::vector<uint16_t> res = args[0].words();
-                const auto& v2 = args[1].words();
-                res.insert(res.end(), v2.begin(), v2.end());
-                return Value(res, true);
-            }
-            if (args[0].is_address() && args[1].is_address()) {
-                std::vector<uint16_t> res;
-                const auto& v1 = args[0].address();
-                const auto& v2 = args[1].address();
-                size_t len = std::min(v1.size(), v2.size());
-                for(size_t i=0; i<len; ++i)
-                    res.push_back(v1[i] + v2[i]);
-                return Value(res);
-            }
-            if (args[0].is_address() || args[1].is_address()) {
-                std::vector<uint16_t> res;
-                if (args[0].is_address()) {
-                    double val = get_val(c, args[1]);
-                    for (auto a : args[0].address())
-                        res.push_back(a + (int)val);
-                } else {
-                    double val = get_val(c, args[0]);
-                    for (auto a : args[1].address())
-                        res.push_back((int)val + a);
-                }
-                return Value(res);
-            }
-            return Value(get_val(c, args[0]) + get_val(c, args[1])); 
-        }}},
-        {"-",   {80, true,  false, [](Core& c, const std::vector<Value>& args) { 
-            if (args[0].is_address() && args[1].is_address()) {
-                std::vector<uint16_t> res;
-                const auto& v1 = args[0].address();
-                const auto& v2 = args[1].address();
-                size_t len = std::min(v1.size(), v2.size());
-                for(size_t i=0; i<len; ++i)
-                    res.push_back(v1[i] - v2[i]);
-                return Value(res);
-            }
-            if (args[0].is_address() || args[1].is_address()) {
-                std::vector<uint16_t> res;
-                if (args[0].is_address()) {
-                    double val = get_val(c, args[1]);
-                    for (auto a : args[0].address())
-                        res.push_back(a - (int)val);
-                } else {
-                    double val = get_val(c, args[0]);
-                    for (auto a : args[1].address())
-                        res.push_back((int)val - a);
-                }
-                return Value(res);
-            }
-            return Value(get_val(c, args[0]) - get_val(c, args[1])); 
-        }}},
+        {"_",   {100, false, true,  &Expression::operator_unary_minus}},
+        {"+",   {80, true,  false, &Expression::operator_plus}},
+        {"-",   {80, true,  false, &Expression::operator_minus}},
     };
     return ops;
 }
 
+Expression::Value Expression::function_low(const std::vector<Value>& args) {
+    return (double)((int)get_val(args[0]) & 0xFF);
+}
+
+Expression::Value Expression::function_high(const std::vector<Value>& args) {
+    return (double)(((int)get_val(args[0]) >> 8) & 0xFF);
+}
+
+Expression::Value Expression::function_word(const std::vector<Value>& args) {
+    return (double)((((int)get_val(args[0]) & 0xFF) << 8) | ((int)get_val(args[1]) & 0xFF));
+}
+
 const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions() {
     static const std::map<std::string, FunctionInfo> funcs = {
-        {"LOW",  {1, [](Core& c, const std::vector<Value>& args) { return (double)((int)get_val(c, args[0]) & 0xFF); }}},
-        {"HIGH", {1, [](Core& c, const std::vector<Value>& args) { return (double)(((int)get_val(c, args[0]) >> 8) & 0xFF); }}},
-        {"WORD", {2, [](Core& c, const std::vector<Value>& args) { return (double)((((int)get_val(c, args[0]) & 0xFF) << 8) | ((int)get_val(c, args[1]) & 0xFF)); }}}
+        {"LOW",  {1, &Expression::function_low}},
+        {"HIGH", {1, &Expression::function_high}},
+        {"WORD", {2, &Expression::function_word}}
     };
     return funcs;
 }
@@ -428,77 +517,7 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                     last_type == TokenType::BYTES || last_type == TokenType::WORDS ||
                     last_type == TokenType::ADDRESS || last_type == TokenType::STRING || last_type == TokenType::SYMBOL ||
                     last_type == TokenType::RPAREN || last_type == TokenType::RBRACKET) {
-                    static const OperatorInfo index_op = {110, true, false, [](Core& c, const std::vector<Value>& args) {
-                        if (!args[1].is_address())
-                            syntax_error(ErrorCode::INTERNAL_ERROR, "invalid operands for indexing.");
-
-                        const auto& indices = args[1].address();
-
-                        if (args[0].is_register() || args[0].is_symbol()) {
-                            std::vector<uint16_t> res;
-                            double val = get_val(c, args[0]);
-                            for (auto a : indices)
-                                res.push_back((uint16_t)((int)val + a));
-                            return Value(res);
-                        }
-
-                        auto check_bounds = [&](size_t idx, size_t size) {
-                            if (idx >= size) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "index out of bounds");
-                        };
-
-                        if (args[0].is_bytes()) {
-                            const auto& vec = args[0].bytes();
-                            if (indices.size() == 1) {
-                                check_bounds(indices[0], vec.size());
-                                return Value((double)vec[indices[0]]);
-                            }
-                            std::vector<uint8_t> res;
-                            for (auto idx : indices) {
-                                check_bounds(idx, vec.size());
-                                res.push_back(vec[idx]);
-                            }
-                            return Value(res);
-                        } else if (args[0].is_words()) {
-                            const auto& vec = args[0].words();
-                            if (indices.size() == 1) {
-                                check_bounds(indices[0], vec.size());
-                                return Value((double)vec[indices[0]]);
-                            }
-                            std::vector<uint16_t> res;
-                            for (auto idx : indices) {
-                                check_bounds(idx, vec.size());
-                                res.push_back(vec[idx]);
-                            }
-                            return Value(res, true);
-                        } else if (args[0].is_address()) {
-                            const auto& vec = args[0].address();
-                            if (indices.size() == 1) {
-                                check_bounds(indices[0], vec.size());
-                                return Value((double)vec[indices[0]]);
-                            }
-                            std::vector<uint16_t> res;
-                            for (auto idx : indices) {
-                                check_bounds(idx, vec.size());
-                                res.push_back(vec[idx]);
-                            }
-                            return Value(res);
-                        } else if (args[0].is_string()) {
-                            const auto& str = args[0].string();
-                            if (indices.size() == 1) {
-                                check_bounds(indices[0], str.size());
-                                return Value((double)(unsigned char)str[indices[0]]);
-                            }
-                            std::string res;
-                            for (auto idx : indices) {
-                                check_bounds(idx, str.size());
-                                res += str[idx];
-                            }
-                            return Value(res);
-                        }
-                        
-                        syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "indexing allowed only on registers, symbols, arrays or strings.");
-                        return Value(0.0);
-                    }};
+                    static const OperatorInfo index_op = {110, true, false, &Expression::operator_index};
                     Token op_token;
                     op_token.type = TokenType::OPERATOR;
                     op_token.op_info = &index_op;
@@ -547,7 +566,6 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 if (operator_stack.empty())
                     syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, "]");
                 operator_stack.pop();
-
                 int count = 0;
                 if (!arg_counts.empty()) {
                     count = arg_counts.top();
@@ -618,7 +636,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 stack.pop_back();
             }
             std::reverse(args.begin(), args.end());
-            stack.push_back(info->apply(m_core, args));
+            stack.push_back((this->*(info->apply))(args));
         }
         else if (token.type == TokenType::FUNCTION) {
             const auto* info = token.func_info;
@@ -633,7 +651,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 stack.pop_back();
             }
             std::reverse(args.begin(), args.end());
-            stack.push_back(info->apply(m_core, args));
+            stack.push_back((this->*(info->apply))(args));
         }
         else if (token.type == TokenType::ADDRESS) {
             if (token.value.is_address()) {
@@ -648,7 +666,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 }
                 std::reverse(args.begin(), args.end());
                 for (const auto& v : args)
-                    addrs.push_back((uint16_t)get_val(m_core, v));
+                    addrs.push_back((uint16_t)get_val(v));
                 stack.push_back(Value(addrs));
             }
         }
@@ -679,7 +697,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                             bytes.push_back(word >> 8);
                         }
                     } else {
-                        double val = get_val(m_core, v);
+                        double val = get_val(v);
                         if (v.is_register() && v.reg().is_16bit()) {
                             uint16_t w = (uint16_t)val;
                             bytes.push_back(w & 0xFF);
@@ -727,7 +745,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                         const auto& w = v.words();
                         words.insert(words.end(), w.begin(), w.end());
                     } else {
-                        double val = get_val(m_core, v);
+                        double val = get_val(v);
                         words.push_back((uint16_t)val);
                     }
                 }
