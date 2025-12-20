@@ -55,16 +55,46 @@ void Expression::syntax_error(ErrorCode code, const std::string& detail) {
     throw Error(code, detail);
 }
 
-double Expression::get_val(const Expression::Value& v) {
-    if (v.is_register())
-        return v.reg().read(m_core.get_cpu());
-    if (v.is_symbol())
-        return v.symbol().read();
-    return v.number();
+double Expression::Value::get_scalar(Core& core) const {
+    if (is_register())
+        return reg().read(core.get_cpu());
+    if (is_symbol())
+        return symbol().read();
+    return number();
 }
 
 Expression::Value Expression::operator_unary_minus(const std::vector<Value>& args) {
-    return -get_val(args[0]);
+    const auto& v = args[0];
+    if (v.is_string())
+        syntax_error(ErrorCode::GENERIC, "invalid operand type for unary minus: string");
+    if (v.is_address()) {
+        std::vector<uint16_t> res;
+        for (auto a : v.address())
+            res.push_back((uint16_t)(-(int)a));
+        return Value(res);
+    }
+    if (v.is_words()) {
+        std::vector<uint16_t> res;
+        for (auto w : v.words())
+            res.push_back((uint16_t)(-(int)w));
+        return Value(res, true);
+    }
+    if (v.is_bytes()) {
+        std::vector<uint8_t> res;
+        for (auto b : v.bytes())
+            res.push_back((uint8_t)(-(int)b));
+        return Value(res);
+    }
+    return -v.get_scalar(m_core);
+}
+
+Expression::Value Expression::operator_unary_plus(const std::vector<Value>& args) {
+    const auto& v = args[0];
+    if (v.is_string())
+        syntax_error(ErrorCode::GENERIC, "invalid operand type for unary plus: string");
+    if (v.is_scalar())
+        return Value(v.get_scalar(m_core));
+    return v;
 }
 
 Expression::Value Expression::operator_plus(const std::vector<Value>& args) {
@@ -72,7 +102,9 @@ Expression::Value Expression::operator_plus(const std::vector<Value>& args) {
         auto to_str = [&](const Value& v) {
             if (v.is_string())
                 return v.string();
-            double d = get_val(v);
+            if (!v.is_scalar())
+                syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS, "cannot concatenate string and vector");
+            double d = v.get_scalar(m_core);
             return (d == (long long)d) ? std::to_string((long long)d) : std::to_string(d);
         };
         return Value(to_str(args[0]) + to_str(args[1]));
@@ -101,20 +133,29 @@ Expression::Value Expression::operator_plus(const std::vector<Value>& args) {
     if (args[0].is_address() || args[1].is_address()) {
         std::vector<uint16_t> res;
         if (args[0].is_address()) {
-            double val = get_val(args[1]);
+            if (!args[1].is_scalar()) syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS, "invalid operands for +");
+            double val = args[1].get_scalar(m_core);
             for (auto a : args[0].address())
                 res.push_back(a + (int)val);
         } else {
-            double val = get_val(args[0]);
+            if (!args[0].is_scalar()) syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS, "invalid operands for +");
+            double val = args[0].get_scalar(m_core);
             for (auto a : args[1].address())
                 res.push_back((int)val + a);
         }
         return Value(res);
     }
-    return Value(get_val(args[0]) + get_val(args[1]));
+
+    if (!args[0].is_scalar() || !args[1].is_scalar())
+        syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS, "invalid operands for +");
+
+    return Value(args[0].get_scalar(m_core) + args[1].get_scalar(m_core));
 }
 
 Expression::Value Expression::operator_minus(const std::vector<Value>& args) {
+    if (args[0].is_string() || args[1].is_string())
+        syntax_error(ErrorCode::GENERIC, "invalid operand type for binary -: string");
+
     if (args[0].is_address() && args[1].is_address()) {
         std::vector<uint16_t> res;
         const auto& v1 = args[0].address();
@@ -127,17 +168,23 @@ Expression::Value Expression::operator_minus(const std::vector<Value>& args) {
     if (args[0].is_address() || args[1].is_address()) {
         std::vector<uint16_t> res;
         if (args[0].is_address()) {
-            double val = get_val(args[1]);
+            if (!args[1].is_scalar()) syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS, "invalid operands for -");
+            double val = args[1].get_scalar(m_core);
             for (auto a : args[0].address())
                 res.push_back(a - (int)val);
         } else {
-            double val = get_val(args[0]);
+            if (!args[0].is_scalar()) syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS, "invalid operands for -");
+            double val = args[0].get_scalar(m_core);
             for (auto a : args[1].address())
                 res.push_back((int)val - a);
         }
         return Value(res);
     }
-    return Value(get_val(args[0]) - get_val(args[1]));
+
+    if (!args[0].is_scalar() || !args[1].is_scalar())
+        syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS, "invalid operands for -");
+
+    return Value(args[0].get_scalar(m_core) - args[1].get_scalar(m_core));
 }
 
 Expression::Value Expression::operator_index(const std::vector<Value>& args) {
@@ -151,7 +198,7 @@ Expression::Value Expression::operator_index(const std::vector<Value>& args) {
     const auto& indices = args[1].address();
     if (args[0].is_register() || args[0].is_symbol()) {
         std::vector<uint16_t> res;
-        double val = get_val(args[0]);
+        double val = args[0].get_scalar(m_core);
         for (auto a : indices)
             res.push_back((uint16_t)((int)val + a));
         return Value(res);
@@ -212,6 +259,7 @@ Expression::Value Expression::operator_index(const std::vector<Value>& args) {
 const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators() {
     static const std::map<std::string, OperatorInfo> ops = {
         {"_",   {100, false, true,  &Expression::operator_unary_minus}},
+        {"#",   {100, false, true,  &Expression::operator_unary_plus}},
         {"+",   {80, true,  false, &Expression::operator_plus}},
         {"-",   {80, true,  false, &Expression::operator_minus}},
     };
@@ -219,15 +267,15 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
 }
 
 Expression::Value Expression::function_low(const std::vector<Value>& args) {
-    return (double)((int)get_val(args[0]) & 0xFF);
+    return (double)((int)args[0].get_scalar(m_core) & 0xFF);
 }
 
 Expression::Value Expression::function_high(const std::vector<Value>& args) {
-    return (double)(((int)get_val(args[0]) >> 8) & 0xFF);
+    return (double)(((int)args[0].get_scalar(m_core) >> 8) & 0xFF);
 }
 
 Expression::Value Expression::function_word(const std::vector<Value>& args) {
-    return (double)((((int)get_val(args[0]) & 0xFF) << 8) | ((int)get_val(args[1]) & 0xFF));
+    return (double)((((int)args[0].get_scalar(m_core) & 0xFF) << 8) | ((int)args[1].get_scalar(m_core) & 0xFF));
 }
 
 const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions() {
@@ -261,6 +309,13 @@ bool Expression::parse_operator(const std::string& expr, size_t& i, std::vector<
                     op_info = &it->second;
                 }
             }
+            else if (op_sym == "+" && (tokens.empty() || tokens.back().type == TokenType::OPERATOR || tokens.back().type == TokenType::LPAREN || tokens.back().type == TokenType::COMMA)) {
+                auto it = ops_map.find("#");
+                if (it != ops_map.end()) {
+                    matched_op = "#";
+                    op_info = &it->second;
+                }
+            }
             else {
                 if (op_sym.length() > matched_op.length()) {
                     matched_op = op_sym;
@@ -270,7 +325,7 @@ bool Expression::parse_operator(const std::string& expr, size_t& i, std::vector<
         }
     }
     if (!matched_op.empty()) {
-        size_t consume = (matched_op == "_") ? 1 : matched_op.length();
+        size_t consume = (matched_op == "_" || matched_op == "#") ? 1 : matched_op.length();
         tokens.push_back({TokenType::OPERATOR, Value(0.0), matched_op, op_info});
         i += consume;
         return true;
@@ -666,7 +721,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 }
                 std::reverse(args.begin(), args.end());
                 for (const auto& v : args)
-                    addrs.push_back((uint16_t)get_val(v));
+                    addrs.push_back((uint16_t)v.get_scalar(m_core));
                 stack.push_back(Value(addrs));
             }
         }
@@ -697,7 +752,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                             bytes.push_back(word >> 8);
                         }
                     } else {
-                        double val = get_val(v);
+                        double val = v.get_scalar(m_core);
                         if (v.is_register() && v.reg().is_16bit()) {
                             uint16_t w = (uint16_t)val;
                             bytes.push_back(w & 0xFF);
@@ -745,7 +800,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                         const auto& w = v.words();
                         words.insert(words.end(), w.begin(), w.end());
                     } else {
-                        double val = get_val(v);
+                        double val = v.get_scalar(m_core);
                         words.push_back((uint16_t)val);
                     }
                 }

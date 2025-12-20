@@ -67,6 +67,8 @@ public:
         bool is_string() const { return m_type == Type::String; }
         bool is_bytes() const { return m_type == Type::Bytes; }
         bool is_words() const { return m_type == Type::Words; }
+        bool is_scalar() const { return m_type == Type::Number || m_type == Type::Register || m_type == Type::Symbol; }
+        bool is_array() const { return m_type == Type::Address || m_type == Type::Bytes || m_type == Type::Words; }
         
         double number() const { return m_number; }
         const Register& reg() const { return m_reg; }
@@ -75,8 +77,8 @@ public:
         const std::vector<uint16_t>& address() const { return m_address; }
         const std::vector<uint8_t>& bytes() const { return m_bytes; }
         const std::vector<uint16_t>& words() const { return m_words; }
-        
-        operator double() const { return m_number; }
+
+        double get_scalar(Core& core) const;
 
     private:
         Type m_type = Type::Number;
@@ -152,9 +154,9 @@ private:
     Value execute_rpn(const std::vector<Token>& rpn);
 
     static void syntax_error(ErrorCode code, const std::string& detail = "");
-    double get_val(const Value& v);
 
     Value operator_unary_minus(const std::vector<Value>& args);
+    Value operator_unary_plus(const std::vector<Value>& args);
     Value operator_plus(const std::vector<Value>& args);
     Value operator_minus(const std::vector<Value>& args);
     Value operator_index(const std::vector<Value>& args);
