@@ -5,6 +5,7 @@
 #include <charconv>
 #include <algorithm>
 #include <cctype>
+#include <vector>
 
 std::string Strings::hex(uint8_t v) {
     std::stringstream ss;
@@ -165,4 +166,16 @@ void Strings::trim(std::string& s) {
     s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
         return !std::isspace(ch);
     }).base(), s.end());
+}
+
+std::vector<std::string> Strings::split(const std::string& s, char delimiter) {
+    std::vector<std::string> tokens;
+    std::string token;
+    std::istringstream tokenStream(s);
+    while (std::getline(tokenStream, token, delimiter)) {
+        if (!token.empty()) {
+            tokens.push_back(token);
+        }
+    }
+    return tokens;
 }

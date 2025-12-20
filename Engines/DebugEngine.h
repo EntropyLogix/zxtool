@@ -13,6 +13,7 @@
 #include <sstream>
 #include <algorithm>
 #include <iostream>
+#include <map>
 
 struct Theme {
     std::string header_focus = Terminal::rgb_fg(255, 255, 10);
@@ -161,6 +162,14 @@ public:
         , m_code_view(debugger.get_core(), 15, m_theme)
     {
         m_debugger.set_logger([this](const std::string& msg){ log(msg); });
+        m_commands = {
+            {"eval", &Dashboard::cmd_eval},
+            {"?", &Dashboard::cmd_eval},
+            {"quit", &Dashboard::cmd_quit},
+            {"q", &Dashboard::cmd_quit},
+            {"set", &Dashboard::cmd_set},
+            {"undef", &Dashboard::cmd_undef}
+        };
     }
     void run();
 
@@ -184,6 +193,7 @@ private:
     bool m_show_watch = false;
     bool m_show_breakpoints = false;
     bool m_auto_follow = true;
+    std::map<std::string, void (Dashboard::*)(const std::string&)> m_commands;
     
     void validate_focus();
     void handle_command(const std::string& input);
@@ -195,6 +205,12 @@ private:
     void print_output_buffer();
     void log(const std::string& msg) { m_output_buffer << msg << "\n"; }
     void update_code_view();
+
+    void perform_eval(const std::string& expr);
+    void cmd_eval(const std::string& args);
+    void cmd_quit(const std::string& args);
+    void cmd_set(const std::string& args);
+    void cmd_undef(const std::string& args);
 };
 
 class DebugEngine : public Engine {

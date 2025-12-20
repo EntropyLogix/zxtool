@@ -426,278 +426,263 @@ static std::string format_value(const Expression::Value& val) {
     return ss.str();
 }
 
-void Dashboard::handle_command(const std::string& input) {
-    std::stringstream ss(input);
-    std::string cmd;
-    ss >> cmd;
+void Dashboard::perform_eval(const std::string& expr) {
+    m_output_buffer << expr << "\n";
+    Expression eval(m_debugger.get_core());
+    Expression::Value val = eval.evaluate(expr);
+    if (val.is_number()) {
+        double v = val.number();
+        m_output_buffer << "Result: " << (int)v << " ($" << Strings::hex((uint16_t)v) << ") %" << Strings::bin((uint16_t)v) << "\n";
+    } else if (val.is_register()) {
+        uint16_t v = val.reg().read(m_debugger.get_core().get_cpu());
+        m_output_buffer << "Register: " << val.reg().getName() << " = " << (int)v << " ($";
+        if (val.reg().is_16bit()) {
+            m_output_buffer << Strings::hex(v) << ") %" << Strings::bin(v);
+        } else {
+            m_output_buffer << Strings::hex((uint8_t)v) << ") %" << Strings::bin((uint8_t)v);
+        }
+        m_output_buffer << "\n";
+    } else if (val.is_symbol()) {
+        uint16_t v = val.symbol().read();
+        m_output_buffer << "Symbol: " << val.symbol().getName() << " = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
+    } else if (val.is_address()) {
+        auto& mem = m_debugger.get_core().get_memory();
+        for (uint16_t addr : val.address()) {
+            uint8_t v = mem.peek(addr);
+            m_output_buffer << "[" << Strings::hex(addr) << "] = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
+        }
+    } else if (val.is_string()) {
+        m_output_buffer << "String: " << format_value(val) << "\n";
+    } else {
+        m_output_buffer << format_value(val) << "\n";
+    }
+}
+
+void Dashboard::cmd_eval(const std::string& expr) {
+    try {
+        perform_eval(expr);
+    } catch (const std::exception& e) {
+        m_output_buffer << "Error: " << e.what() << "\n";
+    }
+}
+
+void Dashboard::cmd_quit(const std::string&) {
+    m_running = false;
+}
+
+void Dashboard::cmd_set(const std::string& args_str) {
+    std::string args = args_str;
+    Strings::trim(args);
+    if (args.empty()) {
+        m_output_buffer << "Error: Missing arguments for set command.\n";
+        return;
+    }
     
-    std::string args;
-    std::getline(ss, args);
-    size_t first = args.find_first_not_of(" \t");
-    if (first != std::string::npos) args = args.substr(first);
-
-    static const auto perform_eval = [](Dashboard* d, const std::string& expr) {
-        d->m_output_buffer << expr << "\n";
-        Expression eval(d->m_debugger.get_core());
-        Expression::Value val = eval.evaluate(expr);
-        if (val.is_number()) {
-            double v = val.number();
-            d->m_output_buffer << "Result: " << (int)v << " ($" << Strings::hex((uint16_t)v) << ") %" << Strings::bin((uint16_t)v) << "\n";
-        } else if (val.is_register()) {
-            uint16_t v = val.reg().read(d->m_debugger.get_core().get_cpu());
-            d->m_output_buffer << "Register: " << val.reg().getName() << " = " << (int)v << " ($";
-            if (val.reg().is_16bit()) {
-                d->m_output_buffer << Strings::hex(v) << ") %" << Strings::bin(v);
-            } else {
-                d->m_output_buffer << Strings::hex((uint8_t)v) << ") %" << Strings::bin((uint8_t)v);
-            }
-            d->m_output_buffer << "\n";
-        } else if (val.is_symbol()) {
-            uint16_t v = val.symbol().read();
-            d->m_output_buffer << "Symbol: " << val.symbol().getName() << " = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
-        } else if (val.is_address()) {
-            auto& mem = d->m_debugger.get_core().get_memory();
-            for (uint16_t addr : val.address()) {
-                uint8_t v = mem.peek(addr);
-                d->m_output_buffer << "[" << Strings::hex(addr) << "] = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
-            }
-        } else if (val.is_string()) {
-            d->m_output_buffer << "String: " << format_value(val) << "\n";
+    std::string lhs_str, rhs_str;
+    size_t eq_pos = args.find('=');
+    if (eq_pos != std::string::npos) {
+        lhs_str = args.substr(0, eq_pos);
+        rhs_str = args.substr(eq_pos + 1);
+    } else {
+        size_t space_pos = args.find_first_of(" \t");
+        if (space_pos != std::string::npos) {
+            lhs_str = args.substr(0, space_pos);
+            rhs_str = args.substr(space_pos + 1);
         } else {
-            d->m_output_buffer << format_value(val) << "\n";
+            lhs_str = args;
         }
-    };
+    }
 
-    static const auto eval_handler = [](Dashboard* d, const std::string& expr) {
-        try {
-            perform_eval(d, expr);
-        } catch (const std::exception& e) {
-            d->m_output_buffer << "Error: " << e.what() << "\n";
-        }
-    };
+    Strings::trim(lhs_str);
+    Strings::trim(rhs_str);
 
-    static const auto quit_handler = [](Dashboard* d, const std::string&) {
-        d->m_running = false;
-    };
-
-    static const auto set_handler = [](Dashboard* d, const std::string& args_str) {
-        std::string args = args_str;
-        size_t first = args.find_first_not_of(" \t");
-        if (first == std::string::npos) {
-            d->m_output_buffer << "Error: Missing arguments for set command.\n";
+    if (lhs_str.empty() || rhs_str.empty()) {
+            m_output_buffer << "Error: Invalid syntax for set. Use: set <target> [=] <value>\n";
             return;
-        }
-        args = args.substr(first);
+    }
+
+    try {
+        Expression eval(m_debugger.get_core());
+        Expression::Value target = eval.evaluate(lhs_str);
+        Expression::Value val = eval.evaluate(rhs_str);
         
-        std::string lhs_str, rhs_str;
-        size_t eq_pos = args.find('=');
-        if (eq_pos != std::string::npos) {
-            lhs_str = args.substr(0, eq_pos);
-            rhs_str = args.substr(eq_pos + 1);
-        } else {
-            size_t space_pos = args.find_first_of(" \t");
-            if (space_pos != std::string::npos) {
-                lhs_str = args.substr(0, space_pos);
-                rhs_str = args.substr(space_pos + 1);
-            } else {
-                lhs_str = args;
-            }
-        }
+        auto get_num = [&](const Expression::Value& v) -> double {
+            if (v.is_number()) return v.number();
+            if (v.is_register()) return (double)v.reg().read(m_debugger.get_core().get_cpu());
+            if (v.is_symbol()) return (double)v.symbol().read();
+            throw std::runtime_error("Expected number, register or symbol");
+        };
 
-        if (lhs_str.empty() || rhs_str.empty()) {
-             d->m_output_buffer << "Error: Invalid syntax for set. Use: set <target> [=] <value>\n";
-             return;
-        }
-
-        try {
-            Expression eval(d->m_debugger.get_core());
-            Expression::Value target = eval.evaluate(lhs_str);
-            Expression::Value val = eval.evaluate(rhs_str);
+        if (target.is_register()) {
+            uint16_t num = (uint16_t)get_num(val);
+            target.reg().write(m_debugger.get_core().get_cpu(), num);
+            m_output_buffer << "Set register " << target.reg().getName() << " to " << Strings::hex(num) << "\n";
+        } else if (target.is_symbol()) {
+            uint16_t num = (uint16_t)get_num(val);
+            std::string name = target.symbol().getName();
+            auto& ctx = m_debugger.get_core().get_context();
+            Symbol::Type type = target.symbol().getType();
+            ctx.getSymbols().remove(name);
+            ctx.getSymbols().add(Symbol(name, num, type));
+            m_output_buffer << "Set symbol " << name << " to " << Strings::hex(num) << "\n";
+        } else if (target.is_address()) {
+            auto& mem = m_debugger.get_core().get_memory();
+            const auto& addrs = target.address();
+            std::vector<std::pair<uint16_t, uint8_t>> writes;
             
-            auto get_num = [&](const Expression::Value& v) -> double {
-                if (v.is_number()) return v.number();
-                if (v.is_register()) return (double)v.reg().read(d->m_debugger.get_core().get_cpu());
-                if (v.is_symbol()) return (double)v.symbol().read();
-                throw std::runtime_error("Expected number, register or symbol");
-            };
-
-            if (target.is_register()) {
-                uint16_t num = (uint16_t)get_num(val);
-                target.reg().write(d->m_debugger.get_core().get_cpu(), num);
-                d->m_output_buffer << "Set register " << target.reg().getName() << " to " << Strings::hex(num) << "\n";
-            } else if (target.is_symbol()) {
-                uint16_t num = (uint16_t)get_num(val);
-                std::string name = target.symbol().getName();
-                auto& ctx = d->m_debugger.get_core().get_context();
-                Symbol::Type type = target.symbol().getType();
-                ctx.getSymbols().remove(name);
-                ctx.getSymbols().add(Symbol(name, num, type));
-                d->m_output_buffer << "Set symbol " << name << " to " << Strings::hex(num) << "\n";
-            } else if (target.is_address()) {
-                auto& mem = d->m_debugger.get_core().get_memory();
-                const auto& addrs = target.address();
-                std::vector<std::pair<uint16_t, uint8_t>> writes;
-                
-                if (val.is_words()) {
-                    const auto& words = val.words();
-                    if (addrs.empty()) {
-                        d->m_output_buffer << "Error: Target address list is empty.\n";
-                        return;
-                    }
-                    for (size_t i = 0; i < words.size(); ++i) {
-                        uint16_t addr;
-                        if (i < addrs.size()) {
-                            addr = addrs[i];
-                        } else {
-                            addr = addrs.back() + (uint16_t)((i - (addrs.size() - 1)) * 2);
-                        }
-                        mem.write(addr, words[i] & 0xFF);
-                        mem.write(addr + 1, words[i] >> 8);
-                        writes.push_back({addr, (uint8_t)(words[i] & 0xFF)});
-                        writes.push_back({(uint16_t)(addr + 1), (uint8_t)(words[i] >> 8)});
-                    }
-                } else if (val.is_bytes()) {
-                    const auto& bytes = val.bytes();
-                    if (addrs.empty()) {
-                        d->m_output_buffer << "Error: Target address list is empty.\n";
-                        return;
-                    }
-                    for (size_t i = 0; i < bytes.size(); ++i) {
-                        uint16_t addr;
-                        if (i < addrs.size()) {
-                            addr = addrs[i];
-                        } else {
-                            addr = addrs.back() + (uint16_t)(i - (addrs.size() - 1));
-                        }
-                        mem.write(addr, bytes[i]);
-                        writes.push_back({addr, bytes[i]});
-                    }
-                } else if (val.is_string()) {
-                    const std::string& s = val.string();
-                    for (uint16_t addr : addrs) {
-                        for (size_t i = 0; i < s.length(); ++i) {
-                            mem.write(addr + i, (uint8_t)s[i]);
-                            writes.push_back({(uint16_t)(addr + i), (uint8_t)s[i]});
-                        }
-                    }
-                } else {
-                    uint8_t byte_val = (uint8_t)get_num(val);
-                    for (uint16_t addr : addrs) {
-                        mem.write(addr, byte_val);
-                        writes.push_back({addr, byte_val});
-                    }
+            if (val.is_words()) {
+                const auto& words = val.words();
+                if (addrs.empty()) {
+                    m_output_buffer << "Error: Target address list is empty.\n";
+                    return;
                 }
-
-                d->m_output_buffer << "Written " << writes.size() << " byte(s):\n";
-                size_t limit = 8;
-                for (size_t i = 0; i < writes.size(); ++i) {
-                    if (i == limit && writes.size() > limit) {
-                        d->m_output_buffer << "  ... (" << (writes.size() - limit) << " more)\n";
-                        break;
+                for (size_t i = 0; i < words.size(); ++i) {
+                    uint16_t addr;
+                    if (i < addrs.size()) {
+                        addr = addrs[i];
+                    } else {
+                        addr = addrs.back() + (uint16_t)((i - (addrs.size() - 1)) * 2);
                     }
-                    d->m_output_buffer << "  [" << Strings::hex(writes[i].first) << "] = $" << Strings::hex(writes[i].second) 
-                                       << " (" << (std::isprint(writes[i].second) ? (char)writes[i].second : '.') << ")\n";
+                    mem.write(addr, words[i] & 0xFF);
+                    mem.write(addr + 1, words[i] >> 8);
+                    writes.push_back({addr, (uint8_t)(words[i] & 0xFF)});
+                    writes.push_back({(uint16_t)(addr + 1), (uint8_t)(words[i] >> 8)});
+                }
+            } else if (val.is_bytes()) {
+                const auto& bytes = val.bytes();
+                if (addrs.empty()) {
+                    m_output_buffer << "Error: Target address list is empty.\n";
+                    return;
+                }
+                for (size_t i = 0; i < bytes.size(); ++i) {
+                    uint16_t addr;
+                    if (i < addrs.size()) {
+                        addr = addrs[i];
+                    } else {
+                        addr = addrs.back() + (uint16_t)(i - (addrs.size() - 1));
+                    }
+                    mem.write(addr, bytes[i]);
+                    writes.push_back({addr, bytes[i]});
+                }
+            } else if (val.is_string()) {
+                const std::string& s = val.string();
+                for (uint16_t addr : addrs) {
+                    for (size_t i = 0; i < s.length(); ++i) {
+                        mem.write(addr + i, (uint8_t)s[i]);
+                        writes.push_back({(uint16_t)(addr + i), (uint8_t)s[i]});
+                    }
                 }
             } else {
-                // Jeśli dotarliśmy tutaj, to lewa strona została poprawnie ewaluowana do wartości (np. liczby, stringa),
-                // co oznacza, że może to być aktualizacja istniejącej zmiennej (Expression zwraca wartość zmiennej, nie referencję).
-                std::string lhs_trim = lhs_str;
-                Strings::trim(lhs_trim);
-                if (lhs_trim.size() > 1 && lhs_trim[0] == '@') {
-                    std::string var_name = lhs_trim.substr(1);
-                    // Sprawdzamy czy nazwa jest poprawnym identyfikatorem, aby uniknąć przypadków typu "set @a+1 = 10"
-                    bool is_valid = true;
-                    for(char c : var_name) if(!isalnum(c) && c != '_') is_valid = false;
-                    
-                    if (is_valid) {
-                        Variable v(var_name, val, rhs_str);
-                        d->m_debugger.get_core().get_context().getVariables().add(v);
-                        d->m_output_buffer << "Updated variable @" << var_name << " = " << format_value(val) << "\n";
-                        return;
-                    }
+                uint8_t byte_val = (uint8_t)get_num(val);
+                for (uint16_t addr : addrs) {
+                    mem.write(addr, byte_val);
+                    writes.push_back({addr, byte_val});
                 }
-                d->m_output_buffer << "Error: Left side must be a register, symbol, variable or address list.\n";
             }
 
-        } catch (const Expression::Error& e) {
-            if (e.code() == Expression::ErrorCode::LOOKUP_UNKNOWN_VARIABLE) {
-                // Zmienna nie istnieje - tworzymy nową
-                std::string name = e.detail();
-                try {
-                    Expression eval(d->m_debugger.get_core());
-                    Expression::Value val = eval.evaluate(rhs_str);
-                    Variable v(name, val, rhs_str);
-                    d->m_debugger.get_core().get_context().getVariables().add(v);
-                    d->m_output_buffer << "Created variable @" << name << " = " << format_value(val) << "\n";
-                } catch (const std::exception& rhs_e) {
-                    d->m_output_buffer << "Error evaluating value: " << rhs_e.what() << "\n";
+            m_output_buffer << "Written " << writes.size() << " byte(s):\n";
+            size_t limit = 8;
+            for (size_t i = 0; i < writes.size(); ++i) {
+                if (i == limit && writes.size() > limit) {
+                    m_output_buffer << "  ... (" << (writes.size() - limit) << " more)\n";
+                    break;
                 }
-            } else if (e.code() == Expression::ErrorCode::LOOKUP_UNKNOWN_SYMBOL) {
-                // Symbol nie istnieje - tworzymy nowy
-                std::string name = e.detail();
-                try {
-                    Expression eval(d->m_debugger.get_core());
-                    Expression::Value val = eval.evaluate(rhs_str);
-                    
-                    double num_val = 0;
-                    if (val.is_number()) num_val = val.number();
-                    else if (val.is_register()) num_val = val.reg().read(d->m_debugger.get_core().get_cpu());
-                    else if (val.is_symbol()) num_val = val.symbol().read();
-                    else throw std::runtime_error("Symbol value must be a number");
-
-                    Symbol s(name, (uint16_t)num_val, Symbol::Type::Label);
-                    d->m_debugger.get_core().get_context().getSymbols().add(s);
-                    d->m_output_buffer << "Created symbol " << name << " = " << Strings::hex((uint16_t)num_val) << "\n";
-                } catch (const std::exception& rhs_e) {
-                    d->m_output_buffer << "Error evaluating value: " << rhs_e.what() << "\n";
-                }
-            } else {
-                d->m_output_buffer << "Error: " << e.what() << "\n";
+                m_output_buffer << "  [" << Strings::hex(writes[i].first) << "] = $" << Strings::hex(writes[i].second) 
+                                   << " (" << (std::isprint(writes[i].second) ? (char)writes[i].second : '.') << ")\n";
             }
-        } catch (const std::exception& e) {
-            d->m_output_buffer << "Error: " << e.what() << "\n";
-        }
-    };
-
-    static const auto undef_handler = [](Dashboard* d, const std::string& args_str) {
-        std::string args = args_str;
-        size_t first = args.find_first_not_of(" \t");
-        if (first == std::string::npos) {
-            d->m_output_buffer << "Error: Missing symbol name.\n";
-            return;
-        }
-        std::string name = args.substr(first);
-        size_t last = name.find_last_not_of(" \t");
-        if (last != std::string::npos) name = name.substr(0, last + 1);
-
-        if (d->m_debugger.get_core().get_context().getSymbols().remove(name)) {
-            d->m_output_buffer << "Symbol '" << name << "' removed.\n";
         } else {
-            d->m_output_buffer << "Error: Symbol '" << name << "' not found.\n";
+            // Jeśli dotarliśmy tutaj, to lewa strona została poprawnie ewaluowana do wartości (np. liczby, stringa),
+            // co oznacza, że może to być aktualizacja istniejącej zmiennej (Expression zwraca wartość zmiennej, nie referencję).
+            if (lhs_str.size() > 1 && lhs_str[0] == '@') {
+                std::string var_name = lhs_str.substr(1);
+                // Sprawdzamy czy nazwa jest poprawnym identyfikatorem, aby uniknąć przypadków typu "set @a+1 = 10"
+                bool is_valid = true;
+                for(char c : var_name) if(!isalnum(c) && c != '_') is_valid = false;
+                
+                if (is_valid) {
+                    Variable v(var_name, val, rhs_str);
+                    m_debugger.get_core().get_context().getVariables().add(v);
+                    m_output_buffer << "Updated variable @" << var_name << " = " << format_value(val) << "\n";
+                    return;
+                }
+            }
+            m_output_buffer << "Error: Left side must be a register, symbol, variable or address list.\n";
         }
-    };
 
-    static const std::map<std::string, std::function<void(Dashboard*, const std::string&)>> commands = {
-        {"eval", eval_handler},
-        {"?", eval_handler},
-        {"quit", quit_handler},
-        {"q", quit_handler},
-        {"set", set_handler},
-        {"undef", undef_handler}
-    };
+    } catch (const Expression::Error& e) {
+        if (e.code() == Expression::ErrorCode::LOOKUP_UNKNOWN_VARIABLE) {
+            // Zmienna nie istnieje - tworzymy nową
+            std::string name = e.detail();
+            try {
+                Expression eval(m_debugger.get_core());
+                Expression::Value val = eval.evaluate(rhs_str);
+                Variable v(name, val, rhs_str);
+                m_debugger.get_core().get_context().getVariables().add(v);
+                m_output_buffer << "Created variable @" << name << " = " << format_value(val) << "\n";
+            } catch (const std::exception& rhs_e) {
+                m_output_buffer << "Error evaluating value: " << rhs_e.what() << "\n";
+            }
+        } else if (e.code() == Expression::ErrorCode::LOOKUP_UNKNOWN_SYMBOL) {
+            // Symbol nie istnieje - tworzymy nowy
+            std::string name = e.detail();
+            try {
+                Expression eval(m_debugger.get_core());
+                Expression::Value val = eval.evaluate(rhs_str);
+                
+                double num_val = 0;
+                if (val.is_number()) num_val = val.number();
+                else if (val.is_register()) num_val = val.reg().read(m_debugger.get_core().get_cpu());
+                else if (val.is_symbol()) num_val = val.symbol().read();
+                else throw std::runtime_error("Symbol value must be a number");
 
-    auto it = commands.find(cmd);
-    if (it != commands.end()) {
-        it->second(this, args);
+                Symbol s(name, (uint16_t)num_val, Symbol::Type::Label);
+                m_debugger.get_core().get_context().getSymbols().add(s);
+                m_output_buffer << "Created symbol " << name << " = " << Strings::hex((uint16_t)num_val) << "\n";
+            } catch (const std::exception& rhs_e) {
+                m_output_buffer << "Error evaluating value: " << rhs_e.what() << "\n";
+            }
+        } else {
+            m_output_buffer << "Error: " << e.what() << "\n";
+        }
+    } catch (const std::exception& e) {
+        m_output_buffer << "Error: " << e.what() << "\n";
+    }
+}
+
+void Dashboard::cmd_undef(const std::string& args_str) {
+    std::string name = args_str;
+    Strings::trim(name);
+    if (name.empty()) {
+        m_output_buffer << "Error: Missing symbol name.\n";
+        return;
+    }
+
+    if (m_debugger.get_core().get_context().getSymbols().remove(name)) {
+        m_output_buffer << "Symbol '" << name << "' removed.\n";
+    } else {
+        m_output_buffer << "Error: Symbol '" << name << "' not found.\n";
+    }
+}
+
+void Dashboard::handle_command(const std::string& input) {
+    auto parts = Strings::split(input);
+    if (parts.empty()) return;
+
+    std::string cmd = parts[0];
+    std::string args;
+    for (size_t i = 1; i < parts.size(); ++i)
+        args += (i > 1 ? " " : "") + parts[i];
+
+    auto it = m_commands.find(cmd);
+    if (it != m_commands.end()) {
+        (this->*(it->second))(args);
     } else {
         size_t eq_pos = input.find('=');
         if (eq_pos != std::string::npos) {
-            std::string lhs = input.substr(0, eq_pos);
-            std::string rhs = input.substr(eq_pos + 1);
-            set_handler(this, input);
+            cmd_set(input);
         } else {
             try {
-                perform_eval(this, input);
+                perform_eval(input);
             } catch (const Expression::Error& e) {
                 if (e.code() == Expression::ErrorCode::GENERIC || e.code() == Expression::ErrorCode::LOOKUP_UNKNOWN_SYMBOL)
                     m_output_buffer << "Unknown command: " << cmd << "\n";
@@ -914,9 +899,9 @@ int DebugEngine::run() {
     if (!m_options.entryPointStr.empty()) {
         try {
             std::string ep = m_options.entryPointStr;
-            size_t colon = ep.find(':');
-            if (colon != std::string::npos)
-                ep = ep.substr(0, colon);
+            auto parts = Strings::split(ep, ':');
+            if (!parts.empty()) ep = parts[0];
+            
             int32_t val = 0;
             if (Strings::parse_integer(ep, val))
                 m_core.get_cpu().set_PC((uint16_t)val);

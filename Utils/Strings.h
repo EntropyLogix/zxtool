@@ -3,6 +3,7 @@
 
 #include <string>
 #include <cstdint>
+#include <vector>
 
 class Strings {
 public:
@@ -19,6 +20,7 @@ public:
     static bool parse_integer(const std::string& s, int32_t& out_value);
     static bool parse_double(const std::string& s, double& out_value);
     static void trim(std::string& s);
+    static std::vector<std::string> split(const std::string& s, char delimiter = ' ');
 };
 
 #endif//__STRINGS_H__
