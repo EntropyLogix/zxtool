@@ -262,6 +262,8 @@ private:
     Value function_find(const std::vector<Value>& args);
     Value function_dump(const std::vector<Value>& args);
     Value function_is_var(const std::vector<Value>& args);
+    Value function_is_symbol(const std::vector<Value>& args);
+    Value function_flag(const std::vector<Value>& args);
     Value function_type(const std::vector<Value>& args);
     Value function_asm(const std::vector<Value>& args);
 };

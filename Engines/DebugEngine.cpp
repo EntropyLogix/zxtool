@@ -12,6 +12,7 @@
 #include "../Utils/Terminal.h"
 #include "../Core/Expression.h"
 #include "../Core/Variables.h"
+#include "../Utils/Formatter.h"
 
 std::string DebugView::format_header(const std::string& title, const std::string& extra) const {
     std::stringstream ss;
@@ -387,92 +388,9 @@ void Dashboard::validate_focus() {
         }
 }
 
-static std::string format_value(const Expression::Value& val) {
-    std::stringstream ss;
-    if (val.is_number()) {
-        ss << Strings::hex((uint16_t)val.number());
-    } else if (val.is_string()) {
-        ss << "\"" << val.string() << "\"";
-    } else if (val.is_bytes()) {
-        ss << "{ ";
-        const auto& bytes = val.bytes();
-        for (size_t i = 0; i < bytes.size(); ++i) {
-            if (i > 0) ss << ", ";
-            ss << "$" << Strings::hex(bytes[i]);
-        }
-        ss << " }";
-    } else if (val.is_words()) {
-        ss << "W{ ";
-        const auto& words = val.words();
-        for (size_t i = 0; i < words.size(); ++i) {
-            if (i > 0) ss << ", ";
-            ss << "$" << Strings::hex(words[i]);
-        }
-        ss << " }";
-    } else if (val.is_address()) {
-        ss << "[ ";
-        const auto& addrs = val.address();
-        for (size_t i = 0; i < addrs.size(); ++i) {
-            if (i > 0) ss << ", ";
-            ss << "$" << Strings::hex(addrs[i]);
-        }
-        ss << " ]";
-    } else if (val.is_register()) {
-        ss << val.reg().getName();
-    } else if (val.is_symbol()) {
-        ss << val.symbol().getName();
-    } else {
-        ss << "?";
-    }
-    return ss.str();
-}
-
-static std::string format_bin_dotted(uint16_t val, int bits) {
-    std::string s;
-    for (int i = bits - 1; i >= 0; --i) {
-        s += ((val >> i) & 1) ? '1' : '0';
-        if (i > 0 && i % 4 == 0) s += ".";
-    }
-    return "%" + s;
-}
-
-static std::string format_flags_detailed(uint8_t f) {
-    std::stringstream ss;
-    ss << "[";
-    ss << "S:" << ((f >> 7) & 1) << " ";
-    ss << "Z:" << ((f >> 6) & 1) << " ";
-    ss << "H:" << ((f >> 4) & 1) << " ";
-    ss << "P:" << ((f >> 2) & 1) << " ";
-    ss << "N:" << ((f >> 1) & 1) << " ";
-    ss << "C:" << ((f >> 0) & 1);
-    ss << "]";
-    return ss.str();
-}
-
 void Dashboard::perform_eval(const std::string& expr) {
     Expression eval(m_debugger.get_core());
     Expression::Value val = eval.evaluate(expr);
-
-    auto format_ops = [](const auto& line, std::ostream& os) {
-        if (line.operands.empty()) return;
-        using Operand = Z80Analyzer<Memory>::CodeLine::Operand;
-        for (size_t i = 0; i < line.operands.size(); ++i) {
-            if (i > 0) os << ", ";
-            const auto& op = line.operands[i];
-            switch (op.type) {
-                case Operand::REG8: case Operand::REG16: case Operand::CONDITION: os << op.s_val; break;
-                case Operand::IMM8: os << "$" << Strings::hex((uint8_t)op.num_val); break;
-                case Operand::IMM16: os << "$" << Strings::hex((uint16_t)op.num_val); break;
-                case Operand::MEM_IMM16: os << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
-                case Operand::PORT_IMM8: os << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
-                case Operand::MEM_REG16: os << "(" << op.s_val << ")"; break;
-                case Operand::MEM_INDEXED: os << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
-                case Operand::STRING: os << "\"" << op.s_val << "\""; break;
-                case Operand::CHAR_LITERAL: os << "'" << (char)op.num_val << "'"; break;
-                default: break;
-            }
-        }
-    };
 
     std::string prefix = "";
     if (!expr.empty() && expr[0] == '@') {
@@ -485,23 +403,23 @@ void Dashboard::perform_eval(const std::string& expr) {
     if (val.is_number()) {
         double v = val.number();
         uint16_t u = (uint16_t)v;
-        m_output_buffer << prefix << (int)v << " ($" << Strings::hex(u) << ") " << format_bin_dotted(u, 16) << "\n";
+        m_output_buffer << prefix << (int)v << " ($" << Strings::hex(u) << ") " << Formatter::format_bin_dotted(u, 16) << "\n";
     } else if (val.is_register()) {
         std::string name = val.reg().getName();
         uint16_t v = val.reg().read(m_debugger.get_core().get_cpu());
         
         if (prefix.empty()) {
             if (name == "F") {
-                 m_output_buffer << "F = $" << Strings::hex((uint8_t)v) << " " << format_bin_dotted((uint8_t)v, 8) 
-                                 << " " << format_flags_detailed((uint8_t)v) << "\n";
+                 m_output_buffer << "F = $" << Strings::hex((uint8_t)v) << " " << Formatter::format_bin_dotted((uint8_t)v, 8) 
+                                 << " " << Formatter::format_flags_detailed((uint8_t)v) << "\n";
             } else {
                 m_output_buffer << name << " = " << (int)v << " ($";
                 if (val.reg().is_16bit()) {
                     m_output_buffer << Strings::hex(v) << ") " 
                                     << Strings::hex((uint8_t)(v >> 8)) << ":" << Strings::hex((uint8_t)(v & 0xFF)) 
-                                    << " " << format_bin_dotted(v, 16);
+                                    << " " << Formatter::format_bin_dotted(v, 16);
                 } else {
-                    m_output_buffer << Strings::hex((uint8_t)v) << ") " << format_bin_dotted((uint8_t)v, 8);
+                    m_output_buffer << Strings::hex((uint8_t)v) << ") " << Formatter::format_bin_dotted((uint8_t)v, 8);
                 }
                 m_output_buffer << "\n";
             }
@@ -526,13 +444,13 @@ void Dashboard::perform_eval(const std::string& expr) {
             uint16_t addr = addrs[0];
             uint8_t v = mem.peek(addr);
             m_output_buffer << prefix << "[" << Strings::hex(addr) << "] -> $" << Strings::hex(v) 
-                            << " (" << (int)v << ") " << format_bin_dotted(v, 8);
+                            << " (" << (int)v << ") " << Formatter::format_bin_dotted(v, 8);
             
             auto line = m_debugger.get_core().get_analyzer().parse_instruction(addr);
             if (!line.mnemonic.empty()) {
                  m_output_buffer << " " << m_theme.mnemonic << line.mnemonic << Terminal::RESET;
                  if (!line.operands.empty()) m_output_buffer << " ";
-                 format_ops(line, m_output_buffer);
+                Formatter::format_ops(line, m_output_buffer);
             }
             m_output_buffer << "\n";
         } else {
@@ -550,7 +468,7 @@ void Dashboard::perform_eval(const std::string& expr) {
                 if (!line.mnemonic.empty()) {
                     m_output_buffer << " (" << line.mnemonic;
                     if (!line.operands.empty()) m_output_buffer << " ";
-                    format_ops(line, m_output_buffer);
+                    Formatter::format_ops(line, m_output_buffer);
                     m_output_buffer << ")";
                 }
                 m_output_buffer << "\n";
@@ -624,7 +542,7 @@ void Dashboard::perform_eval(const std::string& expr) {
     } else if (val.is_string()) {
         m_output_buffer << prefix << "\"" << val.string() << "\" (len: " << val.string().length() << ")\n";
     } else {
-        m_output_buffer << prefix << format_value(val) << "\n";
+        m_output_buffer << prefix << Formatter::format_value(val) << "\n";
     }
 }
 
@@ -772,7 +690,7 @@ void Dashboard::cmd_set(const std::string& args_str) {
                 if (is_valid) {
                     Variable v(var_name, val, rhs_str);
                     m_debugger.get_core().get_context().getVariables().add(v);
-                    m_output_buffer << "Updated variable @" << var_name << " = " << format_value(val) << "\n";
+                    m_output_buffer << "Updated variable @" << var_name << " = " << Formatter::format_value(val) << "\n";
                     return;
                 }
             }
@@ -788,7 +706,7 @@ void Dashboard::cmd_set(const std::string& args_str) {
                 Expression::Value val = eval.evaluate(rhs_str);
                 Variable v(name, val, rhs_str);
                 m_debugger.get_core().get_context().getVariables().add(v);
-                m_output_buffer << "Created variable @" << name << " = " << format_value(val) << "\n";
+                m_output_buffer << "Created variable @" << name << " = " << Formatter::format_value(val) << "\n";
             } catch (const std::exception& rhs_e) {
                 m_output_buffer << "Error evaluating value: " << rhs_e.what() << "\n";
             }
@@ -807,7 +725,7 @@ void Dashboard::cmd_set(const std::string& args_str) {
 
                 Symbol s(name, (uint16_t)num_val, Symbol::Type::Label);
                 m_debugger.get_core().get_context().getSymbols().add(s);
-                m_output_buffer << "Created symbol " << name << " = " << Strings::hex((uint16_t)num_val) << "\n";
+                m_output_buffer << "Created symbol " << name << " = " << Formatter::format_value(Expression::Value(num_val)) << "\n";
             } catch (const std::exception& rhs_e) {
                 m_output_buffer << "Error evaluating value: " << rhs_e.what() << "\n";
             }

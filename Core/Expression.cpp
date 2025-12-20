@@ -2,6 +2,7 @@
 #include "Core.h"
 #include "Variables.h"
 #include "../Utils/Strings.h"
+#include "../Utils/Formatter.h"
 #include "Assembler.h"
 #include <cctype>
 #include <algorithm>
@@ -1061,6 +1062,19 @@ Expression::Value Expression::function_is_var(const std::vector<Value>& args) {
     return Value(m_core.get_context().getVariables().find(name) ? 1.0 : 0.0);
 }
 
+Expression::Value Expression::function_is_symbol(const std::vector<Value>& args) {
+    std::string name = args[0].string();
+    return Value(m_core.get_context().getSymbols().find(name) ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::function_flag(const std::vector<Value>& args) {
+    double val = args[0].get_scalar(m_core);
+    if (val < 0 || val > 255) {
+        syntax_error(ErrorCode::GENERIC, "FLAG function requires a byte value (0-255)");
+    }
+    return Value(Formatter::format_flags_detailed((uint8_t)val));
+}
+
 Expression::Value Expression::function_type(const std::vector<Value>& args) {
     switch (args[0].type()) {
         case Value::Type::Number:   return Value(std::string("NUMBER"));
@@ -1326,6 +1340,12 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         }}},
         {"IS_VAR", {1, &Expression::function_is_var, {
             {T::String}
+        }}},
+        {"IS_SYMBOL", {1, &Expression::function_is_symbol, {
+            {T::String}
+        }}},
+        {"FLAG", {1, &Expression::function_flag, {
+            {T::Number}, {T::Register}, {T::Symbol}
         }}},
         {"TYPE", {1, &Expression::function_type, {}}},
         {"ASM", {-1, &Expression::function_asm, {
