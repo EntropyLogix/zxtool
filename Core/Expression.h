@@ -189,7 +189,12 @@ private:
 
     Value function_low(const std::vector<Value>& args);
     Value function_high(const std::vector<Value>& args);
+    Value function_byte(const std::vector<Value>& args);
     Value function_word(const std::vector<Value>& args);
+    Value function_mem(const std::vector<Value>& args);
+    Value function_fill(const std::vector<Value>& args);
+    Value function_checksum(const std::vector<Value>& args);
+    Value function_char(const std::vector<Value>& args);
     Value function_asm(const std::vector<Value>& args);
 };
 

@@ -287,8 +287,52 @@ Expression::Value Expression::function_high(const std::vector<Value>& args) {
     return (double)(((int)args[0].get_scalar(m_core) >> 8) & 0xFF);
 }
 
+Expression::Value Expression::function_byte(const std::vector<Value>& args) {
+    uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
+    return Value((double)m_core.get_memory().peek(addr));
+}
+
 Expression::Value Expression::function_word(const std::vector<Value>& args) {
+    if (args.size() == 1) {
+        uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
+        uint8_t lo = m_core.get_memory().peek(addr);
+        uint8_t hi = m_core.get_memory().peek(addr + 1);
+        return (double)(lo | (hi << 8));
+    }
     return (double)((((int)args[0].get_scalar(m_core) & 0xFF) << 8) | ((int)args[1].get_scalar(m_core) & 0xFF));
+}
+
+Expression::Value Expression::function_mem(const std::vector<Value>& args) {
+    uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
+    int count = (int)args[1].get_scalar(m_core);
+    std::vector<uint8_t> bytes;
+    for (int i = 0; i < count; ++i) {
+        bytes.push_back(m_core.get_memory().peek(addr + i));
+    }
+    return Value(bytes);
+}
+
+Expression::Value Expression::function_fill(const std::vector<Value>& args) {
+    int count = (int)args[0].get_scalar(m_core);
+    uint8_t val = (uint8_t)args[1].get_scalar(m_core);
+    if (count < 0) count = 0;
+    std::vector<uint8_t> bytes((size_t)count, val);
+    return Value(bytes);
+}
+
+Expression::Value Expression::function_checksum(const std::vector<Value>& args) {
+    uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
+    int count = (int)args[1].get_scalar(m_core);
+    uint32_t sum = 0;
+    for (int i = 0; i < count; ++i) {
+        sum += m_core.get_memory().peek(addr + i);
+    }
+    return Value((double)sum);
+}
+
+Expression::Value Expression::function_char(const std::vector<Value>& args) {
+    char c = (char)args[0].get_scalar(m_core);
+    return Value(std::string(1, c));
 }
 
 Expression::Value Expression::function_asm(const std::vector<Value>& args) {
@@ -334,10 +378,28 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"HIGH", {1, &Expression::function_high, {
             {T::Number}, {T::Register}, {T::Symbol}
         }}},
-        {"WORD", {2, &Expression::function_word, {
+        {"BYTE", {1, &Expression::function_byte, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"WORD", {-1, &Expression::function_word, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"MEM", {2, &Expression::function_mem, {
+            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
+        }}},
+        {"FILL", {2, &Expression::function_fill, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"CHECKSUM", {2, &Expression::function_checksum, {
+            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
+        }}},
+        {"CHAR", {1, &Expression::function_char, {
+            {T::Number}, {T::Register}, {T::Symbol}
         }}},
         {"ASM", {-1, &Expression::function_asm, {
             {T::String},
