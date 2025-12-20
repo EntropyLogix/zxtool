@@ -427,34 +427,204 @@ static std::string format_value(const Expression::Value& val) {
     return ss.str();
 }
 
+static std::string format_bin_dotted(uint16_t val, int bits) {
+    std::string s;
+    for (int i = bits - 1; i >= 0; --i) {
+        s += ((val >> i) & 1) ? '1' : '0';
+        if (i > 0 && i % 4 == 0) s += ".";
+    }
+    return "%" + s;
+}
+
+static std::string format_flags_detailed(uint8_t f) {
+    std::stringstream ss;
+    ss << "[";
+    ss << "S:" << ((f >> 7) & 1) << " ";
+    ss << "Z:" << ((f >> 6) & 1) << " ";
+    ss << "H:" << ((f >> 4) & 1) << " ";
+    ss << "P:" << ((f >> 2) & 1) << " ";
+    ss << "N:" << ((f >> 1) & 1) << " ";
+    ss << "C:" << ((f >> 0) & 1);
+    ss << "]";
+    return ss.str();
+}
+
 void Dashboard::perform_eval(const std::string& expr) {
     Expression eval(m_debugger.get_core());
     Expression::Value val = eval.evaluate(expr);
+
+    auto format_ops = [](const auto& line, std::ostream& os) {
+        if (line.operands.empty()) return;
+        using Operand = Z80Analyzer<Memory>::CodeLine::Operand;
+        for (size_t i = 0; i < line.operands.size(); ++i) {
+            if (i > 0) os << ", ";
+            const auto& op = line.operands[i];
+            switch (op.type) {
+                case Operand::REG8: case Operand::REG16: case Operand::CONDITION: os << op.s_val; break;
+                case Operand::IMM8: os << "$" << Strings::hex((uint8_t)op.num_val); break;
+                case Operand::IMM16: os << "$" << Strings::hex((uint16_t)op.num_val); break;
+                case Operand::MEM_IMM16: os << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
+                case Operand::PORT_IMM8: os << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
+                case Operand::MEM_REG16: os << "(" << op.s_val << ")"; break;
+                case Operand::MEM_INDEXED: os << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
+                case Operand::STRING: os << "\"" << op.s_val << "\""; break;
+                case Operand::CHAR_LITERAL: os << "'" << (char)op.num_val << "'"; break;
+                default: break;
+            }
+        }
+    };
+
+    std::string prefix = "";
+    if (!expr.empty() && expr[0] == '@') {
+         std::string var_name = expr.substr(1);
+         bool is_var_name = true;
+         for(char c : var_name) if(!isalnum(c) && c != '_') is_var_name = false;
+         if (is_var_name) prefix = expr + " = ";
+    }
+
     if (val.is_number()) {
         double v = val.number();
-        m_output_buffer << "Result: " << (int)v << " ($" << Strings::hex((uint16_t)v) << ") %" << Strings::bin((uint16_t)v) << "\n";
+        uint16_t u = (uint16_t)v;
+        m_output_buffer << prefix << (int)v << " ($" << Strings::hex(u) << ") " << format_bin_dotted(u, 16) << "\n";
     } else if (val.is_register()) {
+        std::string name = val.reg().getName();
         uint16_t v = val.reg().read(m_debugger.get_core().get_cpu());
-        m_output_buffer << "Register: " << val.reg().getName() << " = " << (int)v << " ($";
-        if (val.reg().is_16bit()) {
-            m_output_buffer << Strings::hex(v) << ") %" << Strings::bin(v);
+        
+        if (prefix.empty()) {
+            if (name == "F") {
+                 m_output_buffer << "F = $" << Strings::hex((uint8_t)v) << " " << format_bin_dotted((uint8_t)v, 8) 
+                                 << " " << format_flags_detailed((uint8_t)v) << "\n";
+            } else {
+                m_output_buffer << name << " = " << (int)v << " ($";
+                if (val.reg().is_16bit()) {
+                    m_output_buffer << Strings::hex(v) << ") " 
+                                    << Strings::hex((uint8_t)(v >> 8)) << ":" << Strings::hex((uint8_t)(v & 0xFF)) 
+                                    << " " << format_bin_dotted(v, 16);
+                } else {
+                    m_output_buffer << Strings::hex((uint8_t)v) << ") " << format_bin_dotted((uint8_t)v, 8);
+                }
+                m_output_buffer << "\n";
+            }
         } else {
-            m_output_buffer << Strings::hex((uint8_t)v) << ") %" << Strings::bin((uint8_t)v);
+             m_output_buffer << prefix << name << " = " << (int)v << " ($" << Strings::hex(v) << ")\n";
         }
-        m_output_buffer << "\n";
     } else if (val.is_symbol()) {
         uint16_t v = val.symbol().read();
-        m_output_buffer << "Symbol: " << val.symbol().getName() << " = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
+        m_output_buffer << prefix << val.symbol().getName() << " = $" << Strings::hex(v) << " (" << (int)v << ")";
+        if (prefix.empty()) {
+            auto line = m_debugger.get_core().get_analyzer().parse_instruction(v);
+            if (!line.mnemonic.empty()) {
+                 m_output_buffer << " [Code: " << line.mnemonic << "]";
+            }
+        }
+        m_output_buffer << "\n";
     } else if (val.is_address()) {
         auto& mem = m_debugger.get_core().get_memory();
-        for (uint16_t addr : val.address()) {
+        const auto& addrs = val.address();
+        
+        if (addrs.size() == 1) {
+            uint16_t addr = addrs[0];
             uint8_t v = mem.peek(addr);
-            m_output_buffer << "[" << Strings::hex(addr) << "] = " << (int)v << " ($" << Strings::hex(v) << ") " << Strings::bin(v) << "\n";
+            m_output_buffer << prefix << "[" << Strings::hex(addr) << "] -> $" << Strings::hex(v) 
+                            << " (" << (int)v << ") " << format_bin_dotted(v, 8);
+            
+            auto line = m_debugger.get_core().get_analyzer().parse_instruction(addr);
+            if (!line.mnemonic.empty()) {
+                 m_output_buffer << " " << m_theme.mnemonic << line.mnemonic << Terminal::RESET;
+                 if (!line.operands.empty()) m_output_buffer << " ";
+                 format_ops(line, m_output_buffer);
+            }
+            m_output_buffer << "\n";
+        } else {
+            m_output_buffer << prefix << "Address[" << addrs.size() << "]\n";
+            size_t limit = 10;
+            for (size_t i = 0; i < addrs.size(); ++i) {
+                if (i >= limit) {
+                    m_output_buffer << "... (hidden " << (addrs.size() - i) << " items, use " << (prefix.empty() ? "indexing" : expr + "[n]") << ")\n";
+                    break;
+                }
+                uint16_t addr = addrs[i];
+                uint8_t v = mem.peek(addr);
+                m_output_buffer << "[" << i << "] $" << Strings::hex(addr) << " -> $" << Strings::hex(v);
+                auto line = m_debugger.get_core().get_analyzer().parse_instruction(addr);
+                if (!line.mnemonic.empty()) {
+                    m_output_buffer << " (" << line.mnemonic;
+                    if (!line.operands.empty()) m_output_buffer << " ";
+                    format_ops(line, m_output_buffer);
+                    m_output_buffer << ")";
+                }
+                m_output_buffer << "\n";
+            }
+        }
+    } else if (val.is_bytes()) {
+        const auto& bytes = val.bytes();
+        if (bytes.size() <= 16) {
+            m_output_buffer << prefix << "[ ";
+            std::string ascii;
+            for (size_t i = 0; i < bytes.size(); ++i) {
+                if (i > 0) m_output_buffer << " ";
+                m_output_buffer << Strings::hex(bytes[i]);
+                ascii += (std::isprint(bytes[i]) ? (char)bytes[i] : '.');
+            }
+            m_output_buffer << " ] (ASCII: \"" << ascii << "\")\n";
+        } else {
+            m_output_buffer << prefix << "Bytes(" << bytes.size() << ")\n";
+            size_t limit_lines = 10;
+            size_t lines_printed = 0;
+            const int row_len = 16;
+            for (size_t i = 0; i < bytes.size(); i += row_len) {
+                if (lines_printed >= limit_lines) {
+                    m_output_buffer << "... (hidden " << (bytes.size() - i) << " bytes)\n";
+                    break;
+                }
+                std::stringstream line_ss;
+                std::string ascii;
+                for (size_t j = 0; j < row_len; ++j) {
+                    if (i + j < bytes.size()) {
+                        uint8_t b = bytes[i+j];
+                        line_ss << Strings::hex(b) << " ";
+                        ascii += (std::isprint(b) ? (char)b : '.');
+                    } else {
+                        line_ss << "   ";
+                    }
+                }
+                m_output_buffer << Strings::hex((uint16_t)i) << ": " << line_ss.str() << " " << ascii << "\n";
+                lines_printed++;
+            }
+        }
+    } else if (val.is_words()) {
+        const auto& words = val.words();
+        if (words.size() <= 8) {
+            m_output_buffer << prefix << "W[ ";
+            for (size_t i = 0; i < words.size(); ++i) {
+                if (i > 0) m_output_buffer << " ";
+                m_output_buffer << "$" << Strings::hex(words[i]);
+            }
+            m_output_buffer << " ]\n";
+        } else {
+            m_output_buffer << prefix << "Words(" << words.size() << ")\n";
+            size_t limit_lines = 10;
+            size_t lines_printed = 0;
+            const int row_len = 8;
+            for (size_t i = 0; i < words.size(); i += row_len) {
+                if (lines_printed >= limit_lines) {
+                    m_output_buffer << "... (hidden " << (words.size() - i) << " words)\n";
+                    break;
+                }
+                m_output_buffer << Strings::hex((uint16_t)(i*2)) << ": ";
+                for (size_t j = 0; j < row_len; ++j) {
+                    if (i + j < words.size()) {
+                        m_output_buffer << "$" << Strings::hex(words[i+j]) << " ";
+                    }
+                }
+                m_output_buffer << "\n";
+                lines_printed++;
+            }
         }
     } else if (val.is_string()) {
-        m_output_buffer << "String: " << format_value(val) << "\n";
+        m_output_buffer << prefix << "\"" << val.string() << "\" (len: " << val.string().length() << ")\n";
     } else {
-        m_output_buffer << format_value(val) << "\n";
+        m_output_buffer << prefix << format_value(val) << "\n";
     }
 }
 
