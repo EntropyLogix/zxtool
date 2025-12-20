@@ -27,8 +27,8 @@ Expression::Error::Error(ErrorCode code, const std::string& detail) : m_code(cod
         case ErrorCode::EVAL_NOT_ENOUGH_ARGUMENTS:
             m_message = "Not enough arguments";
             break;
-        case ErrorCode::EVAL_MIXING_CONTAINERS:
-            m_message = "Mixing containers";
+        case ErrorCode::EVAL_TYPE_MISMATCH:
+            m_message = "Type mismatch";
             break;
         case ErrorCode::EVAL_INVALID_INDEXING:
             m_message = "Invalid indexing";
@@ -768,7 +768,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 std::reverse(args.begin(), args.end());
                 for (const auto& v : args) {
                     if (v.is_address())
-                        syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS);
+                        syntax_error(ErrorCode::EVAL_TYPE_MISMATCH);
                     if (v.is_string()) {
                         const std::string& s = v.string();
                         bytes.insert(bytes.end(), s.begin(), s.end());
@@ -812,7 +812,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 std::reverse(args.begin(), args.end());
                 for (const auto& v : args) {
                     if (v.is_address())
-                        syntax_error(ErrorCode::EVAL_MIXING_CONTAINERS);
+                        syntax_error(ErrorCode::EVAL_TYPE_MISMATCH);
                     
                     if (v.is_string()) {
                         const std::string& s = v.string();
