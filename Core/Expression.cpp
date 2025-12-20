@@ -5,6 +5,11 @@
 #include "Assembler.h"
 #include <cctype>
 #include <algorithm>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 Expression::Error::Error(ErrorCode code, const std::string& detail) : m_code(code), m_detail(detail) {
     switch (code) {
@@ -170,6 +175,95 @@ Expression::Value Expression::operator_minus(const std::vector<Value>& args) {
     return Value(args[0].get_scalar(m_core) - args[1].get_scalar(m_core));
 }
 
+Expression::Value Expression::operator_mul(const std::vector<Value>& args) {
+    if (args[0].is_string()) {
+        std::string s = args[0].string();
+        int count = (int)args[1].get_scalar(m_core);
+        std::string res;
+        for(int i=0; i<count; ++i) res += s;
+        return Value(res);
+    }
+    return Value(args[0].get_scalar(m_core) * args[1].get_scalar(m_core));
+}
+
+Expression::Value Expression::operator_div(const std::vector<Value>& args) {
+    double div = args[1].get_scalar(m_core);
+    if (div == 0.0) syntax_error(ErrorCode::GENERIC, "Division by zero");
+    return Value(args[0].get_scalar(m_core) / div);
+}
+
+Expression::Value Expression::operator_mod(const std::vector<Value>& args) {
+    int div = (int)args[1].get_scalar(m_core);
+    if (div == 0) syntax_error(ErrorCode::GENERIC, "Division by zero");
+    return Value((double)((int)args[0].get_scalar(m_core) % div));
+}
+
+Expression::Value Expression::operator_and(const std::vector<Value>& args) {
+    return Value((double)((int)args[0].get_scalar(m_core) & (int)args[1].get_scalar(m_core)));
+}
+
+Expression::Value Expression::operator_or(const std::vector<Value>& args) {
+    return Value((double)((int)args[0].get_scalar(m_core) | (int)args[1].get_scalar(m_core)));
+}
+
+Expression::Value Expression::operator_xor(const std::vector<Value>& args) {
+    return Value((double)((int)args[0].get_scalar(m_core) ^ (int)args[1].get_scalar(m_core)));
+}
+
+Expression::Value Expression::operator_not(const std::vector<Value>& args) {
+    return Value((double)(~(int)args[0].get_scalar(m_core)));
+}
+
+Expression::Value Expression::operator_shl(const std::vector<Value>& args) {
+    return Value((double)((int)args[0].get_scalar(m_core) << (int)args[1].get_scalar(m_core)));
+}
+
+Expression::Value Expression::operator_shr(const std::vector<Value>& args) {
+    return Value((double)((int)args[0].get_scalar(m_core) >> (int)args[1].get_scalar(m_core)));
+}
+
+Expression::Value Expression::operator_logical_and(const std::vector<Value>& args) {
+    return Value((args[0].get_scalar(m_core) != 0.0 && args[1].get_scalar(m_core) != 0.0) ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::operator_logical_or(const std::vector<Value>& args) {
+    return Value((args[0].get_scalar(m_core) != 0.0 || args[1].get_scalar(m_core) != 0.0) ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::operator_logical_not(const std::vector<Value>& args) {
+    return Value((args[0].get_scalar(m_core) == 0.0) ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::operator_eq(const std::vector<Value>& args) {
+    if (args[0].is_string() && args[1].is_string()) {
+        return Value(args[0].string() == args[1].string() ? 1.0 : 0.0);
+    }
+    return Value(args[0].get_scalar(m_core) == args[1].get_scalar(m_core) ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::operator_neq(const std::vector<Value>& args) {
+    if (args[0].is_string() && args[1].is_string()) {
+        return Value(args[0].string() != args[1].string() ? 1.0 : 0.0);
+    }
+    return Value(args[0].get_scalar(m_core) != args[1].get_scalar(m_core) ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::operator_lt(const std::vector<Value>& args) {
+    return Value(args[0].get_scalar(m_core) < args[1].get_scalar(m_core) ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::operator_gt(const std::vector<Value>& args) {
+    return Value(args[0].get_scalar(m_core) > args[1].get_scalar(m_core) ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::operator_lte(const std::vector<Value>& args) {
+    return Value(args[0].get_scalar(m_core) <= args[1].get_scalar(m_core) ? 1.0 : 0.0);
+}
+
+Expression::Value Expression::operator_gte(const std::vector<Value>& args) {
+    return Value(args[0].get_scalar(m_core) >= args[1].get_scalar(m_core) ? 1.0 : 0.0);
+}
+
 Expression::Value Expression::operator_index(const std::vector<Value>& args) {
     auto check_bounds = [&](size_t idx, size_t size) {
         if (idx >= size)
@@ -275,6 +369,95 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
             // Scalar - Address
             {T::Number, T::Address}, {T::Register, T::Address}, {T::Symbol, T::Address}
         }}},
+        {"*",   {90, true, false, &Expression::operator_mul, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
+            {T::String, T::Number}
+        }}},
+        {"/",   {90, true, false, &Expression::operator_div, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"%",   {90, true, false, &Expression::operator_mod, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"<<",  {70, true, false, &Expression::operator_shl, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {">>",  {70, true, false, &Expression::operator_shr, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"==",  {66, true, false, &Expression::operator_eq, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
+            {T::String, T::String}
+        }}},
+        {"!=",  {66, true, false, &Expression::operator_neq, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
+            {T::String, T::String}
+        }}},
+        {"<",   {68, true, false, &Expression::operator_lt, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {">",   {68, true, false, &Expression::operator_gt, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"<=",  {68, true, false, &Expression::operator_lte, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {">=",  {68, true, false, &Expression::operator_gte, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"&",   {60, true, false, &Expression::operator_and, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"^",   {50, true, false, &Expression::operator_xor, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"|",   {40, true, false, &Expression::operator_or, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"~",   {100, false, true, &Expression::operator_not, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"&&",  {30, true, false, &Expression::operator_logical_and, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"||",  {20, true, false, &Expression::operator_logical_or, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"!",   {100, false, true, &Expression::operator_logical_not, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
     };
     return ops;
 }
@@ -335,6 +518,408 @@ Expression::Value Expression::function_char(const std::vector<Value>& args) {
     return Value(std::string(1, c));
 }
 
+Expression::Value Expression::function_str(const std::vector<Value>& args) {
+    double d = args[0].get_scalar(m_core);
+    if (d == (long long)d) {
+        return Value(std::to_string((long long)d));
+    }
+    return Value(std::to_string(d));
+}
+
+Expression::Value Expression::function_len(const std::vector<Value>& args) {
+    const auto& v = args[0];
+    if (v.is_string()) return Value((double)v.string().length());
+    if (v.is_bytes()) return Value((double)v.bytes().size());
+    if (v.is_words()) return Value((double)v.words().size());
+    if (v.is_address()) return Value((double)v.address().size());
+    return Value(0.0);
+}
+
+Expression::Value Expression::function_substr(const std::vector<Value>& args) {
+    const std::string& str = args[0].string();
+    int start = (int)args[1].get_scalar(m_core);
+    
+    if (start < 0) start = 0;
+    if ((size_t)start >= str.length()) {
+        return Value(std::string(""));
+    }
+
+    if (args.size() == 2) {
+        return Value(str.substr(start));
+    }
+    
+    int length = (int)args[2].get_scalar(m_core);
+    if (length < 0) length = 0;
+    return Value(str.substr(start, length));
+}
+
+Expression::Value Expression::function_hex(const std::vector<Value>& args) {
+    uint32_t val = (uint32_t)args[0].get_scalar(m_core);
+    int width = 0;
+    if (args.size() > 1) {
+        width = (int)args[1].get_scalar(m_core);
+    }
+    std::stringstream ss;
+    ss << std::hex << std::uppercase;
+    if (width > 0) ss << std::setw(width) << std::setfill('0');
+    ss << val;
+    return Value(ss.str());
+}
+
+Expression::Value Expression::function_bit(const std::vector<Value>& args) {
+    int n = (int)args[0].get_scalar(m_core);
+    int val = (int)args[1].get_scalar(m_core);
+    return Value((double)((val >> n) & 1));
+}
+
+Expression::Value Expression::function_setbit(const std::vector<Value>& args) {
+    int n = (int)args[0].get_scalar(m_core);
+    int val = (int)args[1].get_scalar(m_core);
+    return Value((double)(val | (1 << n)));
+}
+
+Expression::Value Expression::function_resbit(const std::vector<Value>& args) {
+    int n = (int)args[0].get_scalar(m_core);
+    int val = (int)args[1].get_scalar(m_core);
+    return Value((double)(val & ~(1 << n)));
+}
+
+Expression::Value Expression::function_read_str(const std::vector<Value>& args) {
+    uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
+    int len = -1;
+    if (args.size() > 1) {
+        len = (int)args[1].get_scalar(m_core);
+    }
+
+    std::string s;
+    if (len >= 0) {
+        for (int i = 0; i < len; ++i) {
+            s += (char)m_core.get_memory().peek(addr + i);
+        }
+    } else {
+        // C-String (read until 0x00), limit to 256 chars for safety
+        for (int i = 0; i < 256; ++i) {
+            char c = (char)m_core.get_memory().peek(addr + i);
+            if (c == 0) break;
+            s += c;
+        }
+    }
+    return Value(s);
+}
+
+Expression::Value Expression::function_asc(const std::vector<Value>& args) {
+    uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
+    return Value((double)m_core.get_memory().peek(addr));
+}
+
+Expression::Value Expression::function_str_p(const std::vector<Value>& args) {
+    uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
+    uint8_t len = m_core.get_memory().peek(addr);
+    std::string s;
+    for (int i = 0; i < len; ++i) {
+        s += (char)m_core.get_memory().peek(addr + 1 + i);
+    }
+    return Value(s);
+}
+
+Expression::Value Expression::function_val(const std::vector<Value>& args) {
+    double d = 0.0;
+    Strings::parse_double(args[0].string(), d);
+    return Value(d);
+}
+
+Expression::Value Expression::function_bin(const std::vector<Value>& args) {
+    uint32_t val = (uint32_t)args[0].get_scalar(m_core);
+    std::string s;
+    if (val == 0) return Value(std::string("00000000"));
+    
+    while (val > 0) {
+        s = ((val & 1) ? '1' : '0') + s;
+        val >>= 1;
+    }
+    // Pad to 8 bits if small
+    while (s.length() < 8) {
+        s = '0' + s;
+    }
+    return Value(s);
+}
+
+Expression::Value Expression::function_left(const std::vector<Value>& args) {
+    std::string s = args[0].string();
+    int len = (int)args[1].get_scalar(m_core);
+    if (len < 0) len = 0;
+    if ((size_t)len > s.length()) len = (int)s.length();
+    return Value(s.substr(0, len));
+}
+
+Expression::Value Expression::function_right(const std::vector<Value>& args) {
+    std::string s = args[0].string();
+    int len = (int)args[1].get_scalar(m_core);
+    if (len < 0) len = 0;
+    if ((size_t)len > s.length()) len = (int)s.length();
+    return Value(s.substr(s.length() - len));
+}
+
+Expression::Value Expression::function_upper(const std::vector<Value>& args) {
+    std::string s = args[0].string();
+    std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+    return Value(s);
+}
+
+Expression::Value Expression::function_lower(const std::vector<Value>& args) {
+    std::string s = args[0].string();
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    return Value(s);
+}
+
+Expression::Value Expression::function_instr(const std::vector<Value>& args) {
+    std::string haystack = args[0].string();
+    std::string needle = args[1].string();
+    size_t pos = haystack.find(needle);
+    return Value(pos == std::string::npos ? -1.0 : (double)pos);
+}
+
+Expression::Value Expression::function_match(const std::vector<Value>& args) {
+    uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
+    std::string pattern = args[1].string();
+    for (size_t i = 0; i < pattern.length(); ++i) {
+        if (m_core.get_memory().peek(addr + i) != (uint8_t)pattern[i]) {
+            return Value(0.0);
+        }
+    }
+    return Value(1.0);
+}
+
+Expression::Value Expression::function_from_bcd(const std::vector<Value>& args) {
+    int val = (int)args[0].get_scalar(m_core);
+    return Value((double)(((val >> 4) & 0xF) * 10 + (val & 0xF)));
+}
+
+Expression::Value Expression::function_to_bcd(const std::vector<Value>& args) {
+    int val = (int)args[0].get_scalar(m_core);
+    return Value((double)((((val / 10) % 10) << 4) | (val % 10)));
+}
+
+Expression::Value Expression::function_s8(const std::vector<Value>& args) {
+    int val = (int)args[0].get_scalar(m_core);
+    return Value((double)(int8_t)(val & 0xFF));
+}
+
+Expression::Value Expression::function_abs(const std::vector<Value>& args) {
+    return Value(std::abs(args[0].get_scalar(m_core)));
+}
+
+Expression::Value Expression::function_sign(const std::vector<Value>& args) {
+    double v = args[0].get_scalar(m_core);
+    return Value((v > 0.0) ? 1.0 : ((v < 0.0) ? -1.0 : 0.0));
+}
+
+Expression::Value Expression::function_sqrt(const std::vector<Value>& args) {
+    return Value(std::sqrt(args[0].get_scalar(m_core)));
+}
+
+Expression::Value Expression::function_min(const std::vector<Value>& args) {
+    double min_v = 0.0;
+    bool first = true;
+    auto process = [&](double val) {
+        if (first) { min_v = val; first = false; }
+        else if (val < min_v) min_v = val;
+    };
+
+    for (const auto& v : args) {
+        if (v.is_bytes()) {
+            for (auto b : v.bytes()) process((double)b);
+        } else if (v.is_words()) {
+            for (auto w : v.words()) process((double)w);
+        } else if (v.is_address()) {
+            for (auto a : v.address()) process((double)a);
+        } else {
+            process(v.get_scalar(m_core));
+        }
+    }
+    return Value(min_v);
+}
+
+Expression::Value Expression::function_max(const std::vector<Value>& args) {
+    double max_v = 0.0;
+    bool first = true;
+    auto process = [&](double val) {
+        if (first) { max_v = val; first = false; }
+        else if (val > max_v) max_v = val;
+    };
+
+    for (const auto& v : args) {
+        if (v.is_bytes()) {
+            for (auto b : v.bytes()) process((double)b);
+        } else if (v.is_words()) {
+            for (auto w : v.words()) process((double)w);
+        } else if (v.is_address()) {
+            for (auto a : v.address()) process((double)a);
+        } else {
+            process(v.get_scalar(m_core));
+        }
+    }
+    return Value(max_v);
+}
+
+Expression::Value Expression::function_clamp(const std::vector<Value>& args) {
+    double v = args[0].get_scalar(m_core);
+    double lo = args[1].get_scalar(m_core);
+    double hi = args[2].get_scalar(m_core);
+    return Value(std::max(lo, std::min(v, hi)));
+}
+
+Expression::Value Expression::function_sin(const std::vector<Value>& args) {
+    return Value(std::sin(args[0].get_scalar(m_core)));
+}
+
+Expression::Value Expression::function_cos(const std::vector<Value>& args) {
+    return Value(std::cos(args[0].get_scalar(m_core)));
+}
+
+Expression::Value Expression::function_deg(const std::vector<Value>& args) {
+    return Value(args[0].get_scalar(m_core) * 180.0 / M_PI);
+}
+
+Expression::Value Expression::function_rad(const std::vector<Value>& args) {
+    return Value(args[0].get_scalar(m_core) * M_PI / 180.0);
+}
+
+Expression::Value Expression::function_int(const std::vector<Value>& args) {
+    return Value(std::floor(args[0].get_scalar(m_core)));
+}
+
+Expression::Value Expression::function_round(const std::vector<Value>& args) {
+    return Value(std::round(args[0].get_scalar(m_core)));
+}
+
+Expression::Value Expression::function_ceil(const std::vector<Value>& args) {
+    return Value(std::ceil(args[0].get_scalar(m_core)));
+}
+
+Expression::Value Expression::function_pow2(const std::vector<Value>& args) {
+    return Value(std::pow(2.0, args[0].get_scalar(m_core)));
+}
+
+Expression::Value Expression::function_align(const std::vector<Value>& args) {
+    int val = (int)args[0].get_scalar(m_core);
+    int base = (int)args[1].get_scalar(m_core);
+    if (base == 0) return Value((double)val);
+    return Value((double)(((val + base - 1) / base) * base));
+}
+
+Expression::Value Expression::function_is_bit_set(const std::vector<Value>& args) {
+    int val = (int)args[0].get_scalar(m_core);
+    int n = (int)args[1].get_scalar(m_core);
+    return Value((double)((val >> n) & 1));
+}
+
+Expression::Value Expression::function_wrap(const std::vector<Value>& args) {
+    int val = (int)args[0].get_scalar(m_core);
+    int limit = (int)args[1].get_scalar(m_core);
+    if (limit == 0) return Value(0.0);
+    return Value((double)(val % limit));
+}
+
+Expression::Value Expression::function_sum(const std::vector<Value>& args) {
+    const auto& v = args[0];
+    double sum = 0.0;
+    if (v.is_bytes()) {
+        for (auto b : v.bytes()) sum += b;
+    } else if (v.is_words()) {
+        for (auto w : v.words()) sum += w;
+    } else if (v.is_address()) {
+        for (auto a : v.address()) sum += a;
+    } else {
+        sum = v.get_scalar(m_core);
+    }
+    return Value(sum);
+}
+
+Expression::Value Expression::function_avg(const std::vector<Value>& args) {
+    const auto& v = args[0];
+    double sum = 0.0;
+    size_t count = 0;
+    if (v.is_bytes()) {
+        for (auto b : v.bytes()) sum += b;
+        count = v.bytes().size();
+    } else if (v.is_words()) {
+        for (auto w : v.words()) sum += w;
+        count = v.words().size();
+    } else if (v.is_address()) {
+        for (auto a : v.address()) sum += a;
+        count = v.address().size();
+    } else {
+        return v;
+    }
+    if (count == 0) return Value(0.0);
+    return Value(sum / count);
+}
+
+Expression::Value Expression::function_argmax(const std::vector<Value>& args) {
+    double max_v = 0.0;
+    int max_idx = -1;
+    int current_idx = 0;
+    bool first = true;
+
+    auto process = [&](double val) {
+        if (first) {
+            max_v = val;
+            max_idx = current_idx;
+            first = false;
+        } else if (val > max_v) {
+            max_v = val;
+            max_idx = current_idx;
+        }
+        current_idx++;
+    };
+
+    for (const auto& v : args) {
+        if (v.is_bytes()) {
+            for (auto b : v.bytes()) process((double)b);
+        } else if (v.is_words()) {
+            for (auto w : v.words()) process((double)w);
+        } else if (v.is_address()) {
+            for (auto a : v.address()) process((double)a);
+        } else {
+            process(v.get_scalar(m_core));
+        }
+    }
+    return Value((double)max_idx);
+}
+
+Expression::Value Expression::function_argmin(const std::vector<Value>& args) {
+    double min_v = 0.0;
+    int min_idx = -1;
+    int current_idx = 0;
+    bool first = true;
+
+    auto process = [&](double val) {
+        if (first) {
+            min_v = val;
+            min_idx = current_idx;
+            first = false;
+        } else if (val < min_v) {
+            min_v = val;
+            min_idx = current_idx;
+        }
+        current_idx++;
+    };
+
+    for (const auto& v : args) {
+        if (v.is_bytes()) {
+            for (auto b : v.bytes()) process((double)b);
+        } else if (v.is_words()) {
+            for (auto w : v.words()) process((double)w);
+        } else if (v.is_address()) {
+            for (auto a : v.address()) process((double)a);
+        } else {
+            process(v.get_scalar(m_core));
+        }
+    }
+    return Value((double)min_idx);
+}
+
 Expression::Value Expression::function_asm(const std::vector<Value>& args) {
     uint16_t pc = m_core.get_cpu().get_PC();
     std::string code;
@@ -375,7 +960,13 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"LOW",  {1, &Expression::function_low, {
             {T::Number}, {T::Register}, {T::Symbol}
         }}},
+        {"LO",   {1, &Expression::function_low, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
         {"HIGH", {1, &Expression::function_high, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"HI",   {1, &Expression::function_high, {
             {T::Number}, {T::Register}, {T::Symbol}
         }}},
         {"BYTE", {1, &Expression::function_byte, {
@@ -400,6 +991,147 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         }}},
         {"CHAR", {1, &Expression::function_char, {
             {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"CHR", {1, &Expression::function_char, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"STR", {1, &Expression::function_str, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"LEN", {1, &Expression::function_len, {
+            {T::String}, {T::Bytes}, {T::Words}, {T::Address}
+        }}},
+        {"SUBSTR", {-1, &Expression::function_substr, {
+            {T::String, T::Number},
+            {T::String, T::Number, T::Number}
+        }}},
+        {"MID", {-1, &Expression::function_substr, {
+            {T::String, T::Number},
+            {T::String, T::Number, T::Number}
+        }}},
+        {"HEX", {-1, &Expression::function_hex, {
+            {T::Number}, {T::Register}, {T::Symbol},
+            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
+        }}},
+        {"BIN", {1, &Expression::function_bin, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"VAL", {1, &Expression::function_val, {
+            {T::String}
+        }}},
+        {"READ_STR", {-1, &Expression::function_read_str, {
+            {T::Number}, {T::Register}, {T::Symbol},
+            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
+        }}},
+        {"ASC", {1, &Expression::function_asc, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"STR_P", {1, &Expression::function_str_p, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"LEFT", {2, &Expression::function_left, {
+            {T::String, T::Number}
+        }}},
+        {"RIGHT", {2, &Expression::function_right, {
+            {T::String, T::Number}
+        }}},
+        {"UPPER", {1, &Expression::function_upper, {
+            {T::String}
+        }}},
+        {"LOWER", {1, &Expression::function_lower, {
+            {T::String}
+        }}},
+        {"INSTR", {2, &Expression::function_instr, {
+            {T::String, T::String}
+        }}},
+        {"MATCH", {2, &Expression::function_match, {
+            {T::Number, T::String}, {T::Register, T::String}, {T::Symbol, T::String}
+        }}},
+        {"FROM_BCD", {1, &Expression::function_from_bcd, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"TO_BCD", {1, &Expression::function_to_bcd, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"S8", {1, &Expression::function_s8, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"BIT", {2, &Expression::function_bit, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"SETBIT", {2, &Expression::function_setbit, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"RESBIT", {2, &Expression::function_resbit, {
+            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
+            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
+            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
+        }}},
+        {"ABS", {1, &Expression::function_abs, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"SIGN", {1, &Expression::function_sign, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"SQRT", {1, &Expression::function_sqrt, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"MIN", {-1, &Expression::function_min, {
+        }}},
+        {"MAX", {-1, &Expression::function_max, {
+        }}},
+        {"CLAMP", {3, &Expression::function_clamp, {
+            {T::Number, T::Number, T::Number}
+        }}},
+        {"SIN", {1, &Expression::function_sin, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"COS", {1, &Expression::function_cos, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"DEG", {1, &Expression::function_deg, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"RAD", {1, &Expression::function_rad, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"INT", {1, &Expression::function_int, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"FLOOR", {1, &Expression::function_int, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"ROUND", {1, &Expression::function_round, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"CEIL", {1, &Expression::function_ceil, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"POW2", {1, &Expression::function_pow2, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"ALIGN", {2, &Expression::function_align, {
+            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
+        }}},
+        {"IS_BIT_SET", {2, &Expression::function_is_bit_set, {
+            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
+        }}},
+        {"WRAP", {2, &Expression::function_wrap, {
+            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
+        }}},
+        {"SUM", {1, &Expression::function_sum, {
+            {T::Bytes}, {T::Words}, {T::Address}
+        }}},
+        {"AVG", {1, &Expression::function_avg, {
+            {T::Bytes}, {T::Words}, {T::Address}
+        }}},
+        {"ARGMAX", {-1, &Expression::function_argmax, {
+        }}},
+        {"ARGMIN", {-1, &Expression::function_argmin, {
         }}},
         {"ASM", {-1, &Expression::function_asm, {
             {T::String},
