@@ -591,6 +591,77 @@ void Dashboard::cmd_set(const std::string& args_str) {
 
     try {
         Expression eval(m_debugger.get_core());
+
+        // Handle indexed variable assignment: @var[index] = value
+        if (lhs_str.size() > 1 && lhs_str[0] == '@') {
+            size_t bracket_start = lhs_str.find('[');
+            size_t bracket_end = lhs_str.rfind(']');
+            if (bracket_start != std::string::npos && bracket_end != std::string::npos && bracket_end > bracket_start) {
+                std::string var_name = lhs_str.substr(1, bracket_start - 1);
+                Strings::trim(var_name);
+                
+                bool is_valid_name = true;
+                for(char c : var_name) if(!isalnum(c) && c != '_') is_valid_name = false;
+                
+                if (is_valid_name) {
+                    auto* var = m_debugger.get_core().get_context().getVariables().find(var_name);
+                    if (var) {
+                        std::string index_expr = lhs_str.substr(bracket_start + 1, bracket_end - bracket_start - 1);
+                        Expression::Value index_val = eval.evaluate(index_expr);
+                        Expression::Value rhs_val = eval.evaluate(rhs_str);
+                        
+                        int index = (int)index_val.get_scalar(m_debugger.get_core());
+                        Expression::Value current_val = var->getValue();
+                        bool updated = false;
+                        Expression::Value new_val;
+
+                        if (current_val.is_bytes()) {
+                            std::vector<uint8_t> vec = current_val.bytes();
+                            if (index >= 0 && index < (int)vec.size()) {
+                                vec[index] = (uint8_t)rhs_val.get_scalar(m_debugger.get_core());
+                                new_val = Expression::Value(vec);
+                                updated = true;
+                            }
+                        } else if (current_val.is_words()) {
+                            std::vector<uint16_t> vec = current_val.words();
+                            if (index >= 0 && index < (int)vec.size()) {
+                                vec[index] = (uint16_t)rhs_val.get_scalar(m_debugger.get_core());
+                                new_val = Expression::Value(vec, true);
+                                updated = true;
+                            }
+                        } else if (current_val.is_address()) {
+                            std::vector<uint16_t> vec = current_val.address();
+                            if (index >= 0 && index < (int)vec.size()) {
+                                vec[index] = (uint16_t)rhs_val.get_scalar(m_debugger.get_core());
+                                new_val = Expression::Value(vec);
+                                updated = true;
+                            }
+                        } else if (current_val.is_string()) {
+                            std::string s = current_val.string();
+                            if (index >= 0 && index < (int)s.size()) {
+                                s[index] = (char)rhs_val.get_scalar(m_debugger.get_core());
+                                new_val = Expression::Value(s);
+                                updated = true;
+                            }
+                        } else {
+                             m_output_buffer << "Error: Variable @" << var_name << " is not a collection.\n";
+                             return;
+                        }
+
+                        if (updated) {
+                            Variable v(var_name, new_val, ""); 
+                            m_debugger.get_core().get_context().getVariables().add(v);
+                            m_output_buffer << "Updated variable @" << var_name << "[" << index << "] = " << Formatter::format_value(rhs_val) << "\n";
+                            return;
+                        } else {
+                            m_output_buffer << "Error: Index " << index << " out of bounds for variable @" << var_name << ".\n";
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         Expression::Value target = eval.evaluate(lhs_str);
         Expression::Value val = eval.evaluate(rhs_str);
         
