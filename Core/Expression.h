@@ -211,12 +211,10 @@ private:
     Value function_high(const std::vector<Value>& args);
     Value function_byte(const std::vector<Value>& args);
     Value function_word(const std::vector<Value>& args);
-    Value function_fill(const std::vector<Value>& args);
     Value function_checksum(const std::vector<Value>& args);
     Value function_char(const std::vector<Value>& args);
     Value function_to_str(const std::vector<Value>& args);
     Value function_len(const std::vector<Value>& args);
-    Value function_substr(const std::vector<Value>& args);
     Value function_hex(const std::vector<Value>& args);
     Value function_bit(const std::vector<Value>& args);
     Value function_setbit(const std::vector<Value>& args);
@@ -261,8 +259,6 @@ private:
     Value function_copy(const std::vector<Value>& args);
     Value function_bytes(const std::vector<Value>& args);
     Value function_words(const std::vector<Value>& args);
-    Value function_range(const std::vector<Value>& args);
-    Value function_range_addr(const std::vector<Value>& args);
 
     std::vector<uint8_t> flatten_to_bytes(const Value& v);
     std::vector<uint16_t> flatten_to_words(const Value& v);

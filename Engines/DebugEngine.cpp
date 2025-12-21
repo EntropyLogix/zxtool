@@ -389,6 +389,48 @@ void Dashboard::validate_focus() {
 }
 
 void Dashboard::perform_eval(const std::string& expr) {
+    int depth = 0;
+    bool in_string = false;
+    char quote_char = 0;
+    bool is_assignment = false;
+
+    for (size_t i = 0; i < expr.length(); ++i) {
+        char c = expr[i];
+        if (in_string) {
+            if (c == quote_char) in_string = false;
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            in_string = true;
+            quote_char = c;
+            continue;
+        }
+        if (c == '(' || c == '[' || c == '{') {
+            depth++;
+        } else if (c == ')' || c == ']' || c == '}') {
+            depth--;
+        } else if (c == '=' && depth == 0) {
+            bool is_cmp = false;
+            if (i > 0) {
+                char prev = expr[i-1];
+                if (prev == '!' || prev == '<' || prev == '>' || prev == '=') is_cmp = true;
+            }
+            if (i + 1 < expr.length()) {
+                char next = expr[i+1];
+                if (next == '=') is_cmp = true;
+            }
+            if (!is_cmp) {
+                is_assignment = true;
+                break;
+            }
+        }
+    }
+
+    if (is_assignment) {
+        cmd_set(expr);
+        return;
+    }
+
     Expression eval(m_debugger.get_core());
     Expression::Value val = eval.evaluate(expr);
 
@@ -675,6 +717,21 @@ void Dashboard::cmd_set(const std::string& args_str) {
             }
         }
 
+        // Check for direct variable assignment (overwrite value)
+        if (lhs_str.size() > 1 && lhs_str[0] == '@') {
+            std::string var_name = lhs_str.substr(1);
+            bool is_valid_name = true;
+            for(char c : var_name) if(!isalnum(c) && c != '_') is_valid_name = false;
+            
+            if (is_valid_name) {
+                Expression::Value val = eval.evaluate(rhs_str);
+                Variable v(var_name, val, rhs_str);
+                m_debugger.get_core().get_context().getVariables().add(v);
+                m_output_buffer << "Updated variable @" << var_name << " = " << Formatter::format_value(val) << "\n";
+                return;
+            }
+        }
+
         Expression::Value target = eval.evaluate(lhs_str);
         Expression::Value val = eval.evaluate(rhs_str);
         
@@ -764,21 +821,9 @@ void Dashboard::cmd_set(const std::string& args_str) {
             }
         } else {
             // Jeśli dotarliśmy tutaj, to lewa strona została poprawnie ewaluowana do wartości (np. liczby, stringa),
-            // co oznacza, że może to być aktualizacja istniejącej zmiennej (Expression zwraca wartość zmiennej, nie referencję).
-            if (lhs_str.size() > 1 && lhs_str[0] == '@') {
-                std::string var_name = lhs_str.substr(1);
-                // Sprawdzamy czy nazwa jest poprawnym identyfikatorem, aby uniknąć przypadków typu "set @a+1 = 10"
-                bool is_valid = true;
-                for(char c : var_name) if(!isalnum(c) && c != '_') is_valid = false;
-                
-                if (is_valid) {
-                    Variable v(var_name, val, rhs_str);
-                    m_debugger.get_core().get_context().getVariables().add(v);
-                    m_output_buffer << "Updated variable @" << var_name << " = " << Formatter::format_value(val) << "\n";
-                    return;
-                }
-            }
-            m_output_buffer << "Error: Left side must be a register, symbol, variable or address list.\n";
+            // ale nie jest to rejestr, symbol ani lista adresów.
+            // Ponieważ obsłużyliśmy przypisanie do zmiennej wyżej, tutaj zgłaszamy błąd.
+            m_output_buffer << "Error: Left side must be a register, symbol, or address list.\n";
         }
 
     } catch (const Expression::Error& e) {
@@ -848,6 +893,15 @@ void Dashboard::handle_command(const std::string& input) {
     std::string args;
     for (size_t i = 1; i < parts.size(); ++i)
         args += (i > 1 ? " " : "") + parts[i];
+
+    if (cmd == "!") {
+        m_output_buffer << "Unknown command: " << cmd << "\n";
+        return;
+    }
+    if (cmd == "?") {
+        cmd_eval(args);
+        return;
+    }
 
     auto it = m_commands.find(cmd);
     if (it != m_commands.end()) {

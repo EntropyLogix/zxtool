@@ -535,14 +535,6 @@ Expression::Value Expression::function_word(const std::vector<Value>& args) {
     return (double)((((int)args[0].get_scalar(m_core) & 0xFF) << 8) | ((int)args[1].get_scalar(m_core) & 0xFF));
 }
 
-Expression::Value Expression::function_fill(const std::vector<Value>& args) {
-    int count = (int)args[0].get_scalar(m_core);
-    uint8_t val = (uint8_t)args[1].get_scalar(m_core);
-    if (count < 0) count = 0;
-    std::vector<uint8_t> bytes((size_t)count, val);
-    return Value(bytes);
-}
-
 Expression::Value Expression::function_checksum(const std::vector<Value>& args) {
     uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
     int count = (int)args[1].get_scalar(m_core);
@@ -1134,48 +1126,6 @@ Expression::Value Expression::function_words(const std::vector<Value>& args) {
     return Value(result, true);
 }
 
-Expression::Value Expression::function_range(const std::vector<Value>& args) {
-    if (args.size() < 2 || args.size() > 3) syntax_error(ErrorCode::EVAL_NOT_ENOUGH_ARGUMENTS);
-    for (const auto& v : args) {
-        if (!v.is_scalar()) syntax_error(ErrorCode::EVAL_TYPE_MISMATCH, "RANGE requires scalar arguments");
-    }
-
-    int start = (int)args[0].get_scalar(m_core);
-    int end = (int)args[1].get_scalar(m_core);
-    int step = (args.size() > 2) ? std::abs((int)args[2].get_scalar(m_core)) : 1;
-
-    if (step == 0) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Step cannot be zero");
-
-    std::vector<uint8_t> res;
-    if (start <= end) {
-        for (int i = start; i <= end; i += step) res.push_back((uint8_t)i);
-    } else {
-        for (int i = start; i >= end; i -= step) res.push_back((uint8_t)i);
-    }
-    return Value(res);
-}
-
-Expression::Value Expression::function_range_addr(const std::vector<Value>& args) {
-    if (args.size() < 2 || args.size() > 3) syntax_error(ErrorCode::EVAL_NOT_ENOUGH_ARGUMENTS);
-    for (const auto& v : args) {
-        if (!v.is_scalar()) syntax_error(ErrorCode::EVAL_TYPE_MISMATCH, "RANGE_ADDR requires scalar arguments");
-    }
-
-    int start = (int)args[0].get_scalar(m_core);
-    int end = (int)args[1].get_scalar(m_core);
-    int step = (args.size() > 2) ? std::abs((int)args[2].get_scalar(m_core)) : 1;
-
-    if (step == 0) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Step cannot be zero");
-
-    std::vector<uint16_t> res;
-    if (start <= end) {
-        for (int i = start; i <= end; i += step) res.push_back((uint16_t)i);
-    } else {
-        for (int i = start; i >= end; i -= step) res.push_back((uint16_t)i);
-    }
-    return Value(res);
-}
-
 const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions() {
     using T = Expression::Value::Type;
     static const std::map<std::string, FunctionInfo> funcs = {
@@ -1194,34 +1144,11 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"BYTE", {1, &Expression::function_byte, {
             {T::Number}, {T::Register}, {T::Symbol}
         }}},
-        {"PEEK", {1, &Expression::function_byte, {
-            {T::Number}, {T::Register}, {T::Symbol}
-        }}},
-        {"B", {1, &Expression::function_byte, {
-            {T::Number}, {T::Register}, {T::Symbol}
-        }}},
         {"WORD", {-1, &Expression::function_word, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
-        {"W", {-1, &Expression::function_word, {
-            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
-            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
-            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
-            {T::Number}, {T::Register}, {T::Symbol}
-        }}},
-        {"DPEEK", {-1, &Expression::function_word, {
-            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
-            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
-            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
-            {T::Number}, {T::Register}, {T::Symbol}
-        }}},
-        {"FILL", {2, &Expression::function_fill, {
-            {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
-            {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
-            {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
         }}},
         {"CHECKSUM", {2, &Expression::function_checksum, {
             {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
@@ -1243,14 +1170,6 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         }}},
         {"LEN", {1, &Expression::function_len, {
             {T::String}, {T::Bytes}, {T::Words}, {T::Address}
-        }}},
-        {"SUBSTR", {-1, &Expression::function_substr, {
-            {T::String, T::Number},
-            {T::String, T::Number, T::Number}
-        }}},
-        {"MID", {-1, &Expression::function_substr, {
-            {T::String, T::Number},
-            {T::String, T::Number, T::Number}
         }}},
         {"HEX", {-1, &Expression::function_hex, {
             {T::Number}, {T::Register}, {T::Symbol},
@@ -1400,10 +1319,6 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"BYTES", {-1, &Expression::function_bytes, {
         }}},
         {"WORDS", {-1, &Expression::function_words, {
-        }}}
-        ,{"RANGE", {-1, &Expression::function_range, {
-        }}},
-        {"RANGE_ADDR", {-1, &Expression::function_range_addr, {
         }}}
     };
     return funcs;
