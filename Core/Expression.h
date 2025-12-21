@@ -221,9 +221,8 @@ private:
     Value function_bit(const std::vector<Value>& args);
     Value function_setbit(const std::vector<Value>& args);
     Value function_resbit(const std::vector<Value>& args);
-    Value function_read_str(const std::vector<Value>& args);
+    Value function_str(const std::vector<Value>& args);
     Value function_asc(const std::vector<Value>& args);
-    Value function_str_p(const std::vector<Value>& args);
     Value function_val(const std::vector<Value>& args);
     Value function_bin(const std::vector<Value>& args);
     Value function_left(const std::vector<Value>& args);
