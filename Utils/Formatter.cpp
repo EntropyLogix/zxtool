@@ -33,12 +33,8 @@ static std::string format_sequence(const std::vector<T>& data,
                     j++;
                 }
                 size_t len = j - i + 1;
-                // Collapse rule: Step 1 -> >= 2 elements, Step != 1 -> >= 3 elements
-                if (std::abs(diff) == 1) {
-                    if (len >= 2) { best_len = len; best_step = diff; }
-                } else {
-                    if (len >= 3) { best_len = len; best_step = diff; }
-                }
+                // Collapse rule: Only collapse if sequence length > 5
+                if (len > 5) { best_len = len; best_step = diff; }
             }
         }
 

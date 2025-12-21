@@ -314,6 +314,33 @@ Expression::Value Expression::operator_step(const std::vector<Value>& args) {
     return v;
 }
 
+Expression::Value Expression::operator_repeat(const std::vector<Value>& args) {
+    int count = (int)args[1].get_scalar(m_core);
+    if (count < 0) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Repeat count cannot be negative");
+    
+    const auto& v = args[0];
+    if (v.is_bytes()) {
+        std::vector<uint8_t> res;
+        const auto& src = v.bytes();
+        for(int k=0; k<count; ++k) res.insert(res.end(), src.begin(), src.end());
+        return Value(res);
+    }
+    if (v.is_words()) {
+        std::vector<uint16_t> res;
+        const auto& src = v.words();
+        for(int k=0; k<count; ++k) res.insert(res.end(), src.begin(), src.end());
+        return Value(res, true);
+    }
+    if (v.is_address()) {
+        std::vector<uint16_t> res;
+        const auto& src = v.address();
+        for(int k=0; k<count; ++k) res.insert(res.end(), src.begin(), src.end());
+        return Value(res);
+    }
+    syntax_error(ErrorCode::EVAL_TYPE_MISMATCH, "Left operand must be a collection");
+    return Value(0.0);
+}
+
 Expression::Value Expression::operator_index(const std::vector<Value>& args) {
     auto check_bounds = [&](size_t idx, size_t size) {
         if (idx >= size)
@@ -507,6 +534,9 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
         }}},
         {"!",   {100, false, true, &Expression::operator_logical_not, {
             {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"x",   {90, true, false, &Expression::operator_repeat, {
+            {T::Bytes, T::Number}, {T::Words, T::Number}, {T::Address, T::Number}
         }}},
     };
     return ops;
@@ -1315,38 +1345,55 @@ Expression::Value Expression::evaluate(const std::string& expression) {
 }
 
 bool Expression::parse_operator(const std::string& expr, size_t& i, std::vector<Token>& tokens) {
-    auto& ops_map = get_operators();
+    const auto& ops_map = get_operators();
     std::string matched_op;
     const OperatorInfo* op_info = nullptr;
+
     for (const auto& pair : ops_map) {
         const std::string& op_sym = pair.first;
+        if (op_sym == "_" || op_sym == "#")
+            continue;
         if (expr.substr(i, op_sym.length()) == op_sym) {
-            if (op_sym == "-" && (tokens.empty() || tokens.back().type == TokenType::OPERATOR || tokens.back().type == TokenType::LPAREN || tokens.back().type == TokenType::COMMA)) {
-                auto it = ops_map.find("_");
-                if (it != ops_map.end()) {
-                    matched_op = "_";
-                    op_info = &it->second;
+            bool is_valid_candidate = true;
+            if (op_sym == "x") {
+                if (tokens.empty() || !(tokens.back().type == TokenType::BYTES || tokens.back().type == TokenType::WORDS || tokens.back().type == TokenType::ADDRESS || tokens.back().type == TokenType::RPAREN || tokens.back().type == TokenType::RBRACKET || tokens.back().type == TokenType::RBRACE)) {
+                    is_valid_candidate = false;
+                }
+            } else if (std::isalnum(op_sym[0])) {
+                size_t next_idx = i + op_sym.length();
+                if (next_idx < expr.length() && (std::isalnum(expr[next_idx]) || expr[next_idx] == '_')) {
+                    is_valid_candidate = false;
                 }
             }
-            else if (op_sym == "+" && (tokens.empty() || tokens.back().type == TokenType::OPERATOR || tokens.back().type == TokenType::LPAREN || tokens.back().type == TokenType::COMMA)) {
-                auto it = ops_map.find("#");
-                if (it != ops_map.end()) {
-                    matched_op = "#";
-                    op_info = &it->second;
-                }
+            
+            if (is_valid_candidate && op_sym.length() > matched_op.length()) {
+                matched_op = op_sym;
+                op_info = &pair.second;
             }
-            else {
-                if (op_sym.length() > matched_op.length()) {
-                    matched_op = op_sym;
-                    op_info = &pair.second;
-                }
+        }
+    }
+
+    size_t consume_len = matched_op.length();
+    if (!matched_op.empty() && (matched_op == "-" || matched_op == "+")) {
+        bool is_unary_context = tokens.empty();
+        if (!is_unary_context) {
+            TokenType t = tokens.back().type;
+            is_unary_context = (t == TokenType::OPERATOR || t == TokenType::LPAREN || t == TokenType::COMMA ||
+                                t == TokenType::LBRACKET || t == TokenType::LBRACE || t == TokenType::LBRACE_W);
+        }
+        if (is_unary_context) {
+            if (matched_op == "-") {
+                matched_op = "_";
+                op_info = &ops_map.at("_");
+            } else {
+                matched_op = "#";
+                op_info = &ops_map.at("#");
             }
         }
     }
     if (!matched_op.empty()) {
-        size_t consume = (matched_op == "_" || matched_op == "#") ? 1 : matched_op.length();
         tokens.push_back({TokenType::OPERATOR, Value(0.0), matched_op, op_info});
-        i += consume;
+        i += consume_len;
         return true;
     }
     return false;

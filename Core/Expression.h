@@ -209,6 +209,7 @@ private:
     Value operator_gte(const std::vector<Value>& args);
     Value operator_range(const std::vector<Value>& args);
     Value operator_step(const std::vector<Value>& args);
+    Value operator_repeat(const std::vector<Value>& args);
 
     Value function_low(const std::vector<Value>& args);
     Value function_high(const std::vector<Value>& args);
