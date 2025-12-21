@@ -268,13 +268,23 @@ Expression::Value Expression::operator_gte(const std::vector<Value>& args) {
 Expression::Value Expression::operator_range(const std::vector<Value>& args) {
     int start = (int)args[0].get_scalar(m_core);
     int end = (int)args[1].get_scalar(m_core);
+
+    if (start >= -128 && start <= 255 && end >= -128 && end <= 255) {
+        std::vector<uint8_t> vals;
+        if (start <= end) {
+            for (int i = start; i <= end; ++i) vals.push_back((uint8_t)i);
+        } else {
+            for (int i = start; i >= end; --i) vals.push_back((uint8_t)i);
+        }
+        return Value(vals);
+    }
     std::vector<uint16_t> vals;
     if (start <= end) {
         for (int i = start; i <= end; ++i) vals.push_back((uint16_t)i);
     } else {
         for (int i = start; i >= end; --i) vals.push_back((uint16_t)i);
     }
-    return Value(vals);
+    return Value(vals, true);
 }
 
 Expression::Value Expression::operator_step(const std::vector<Value>& args) {
@@ -1033,14 +1043,24 @@ std::vector<uint8_t> Expression::flatten_to_bytes(const Value& v) {
     std::vector<uint8_t> res;
     
     if (v.is_scalar()) {
-        // Używamy int64_t, aby poprawnie obsłużyć liczby ujemne (U2)
-        uint64_t val = static_cast<uint64_t>(static_cast<int64_t>(v.get_scalar(m_core)));
-        if (val == 0) {
-            res.push_back(0);
-        } else {
-            while (val > 0) {
-                res.push_back(static_cast<uint8_t>(val & 0xFF));
-                val >>= 8;
+        double d = v.get_scalar(m_core);
+        int64_t val = static_cast<int64_t>(d);
+
+        // Liczby 8-bitowe (signed i unsigned)
+        if (val >= -128 && val <= 255) {
+            res.push_back(static_cast<uint8_t>(val & 0xFF));
+        } 
+        // Liczby 16-bitowe
+        else if (val >= -32768 && val <= 65535) {
+            res.push_back(static_cast<uint8_t>(val & 0xFF));
+            res.push_back(static_cast<uint8_t>((val >> 8) & 0xFF));
+        }
+        // Większe liczby (automatyczne rozbijanie do 4 bajtów)
+        else {
+            uint32_t v32 = static_cast<uint32_t>(val);
+            for (int i = 0; i < 4; ++i) {
+                res.push_back(v32 & 0xFF);
+                v32 >>= 8;
             }
         }
     } else if (v.is_string()) {
@@ -1049,8 +1069,8 @@ std::vector<uint8_t> Expression::flatten_to_bytes(const Value& v) {
         return v.bytes();
     } else if (v.is_words()) {
         for (uint16_t w : v.words()) {
-            res.push_back(static_cast<uint8_t>(w & 0xFF));
-            res.push_back(static_cast<uint8_t>(w >> 8));
+            res.push_back(w & 0xFF);
+            res.push_back(w >> 8);
         }
     } else if (v.is_address()) {
         for (uint16_t addr : v.address()) {
@@ -1579,6 +1599,7 @@ bool Expression::parse_function(const std::string& word, std::vector<Token>& tok
 std::vector<Expression::Token> Expression::tokenize(const std::string& expr) {
     std::vector<Token> tokens;
     size_t i = 0;
+    int collection_depth = 0;
     while (i < expr.length()) {
         if (std::isspace(expr[i])) {
             i++;
@@ -1587,9 +1608,12 @@ std::vector<Expression::Token> Expression::tokenize(const std::string& expr) {
         if (expr[i] == 'W' && i + 1 < expr.length() && expr[i+1] == '{') {
             tokens.push_back({TokenType::LBRACE_W});
             i += 2;
+            collection_depth++;
             continue;
         }
         if (i + 1 < expr.length() && expr[i] == '.' && expr[i+1] == '.') {
+            if (collection_depth <= 0)
+                syntax_error(ErrorCode::SYNTAX_UNEXPECTED_CHARACTER, "Range operator '..' is only allowed inside [] or {}");
             using T = Expression::Value::Type;
             static const OperatorInfo range_op = {20, true, false, &Expression::operator_range, {
                 {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number},
@@ -1615,8 +1639,12 @@ std::vector<Expression::Token> Expression::tokenize(const std::string& expr) {
             continue;
         if (parse_operator(expr, i, tokens))
             continue;
-        if (parse_punctuation(expr, i, tokens))
+        if (parse_punctuation(expr, i, tokens)) {
+            TokenType t = tokens.back().type;
+            if (t == TokenType::LBRACKET || t == TokenType::LBRACE) collection_depth++;
+            else if (t == TokenType::RBRACKET || t == TokenType::RBRACE) collection_depth--;
             continue;
+        }
         size_t j = i;
         std::string word = parse_word(expr, j);
         if (!word.empty()) {
