@@ -2,7 +2,6 @@
 #include "Core.h"
 #include "Variables.h"
 #include "../Utils/Strings.h"
-#include "../Utils/Formatter.h"
 #include "Assembler.h"
 #include <cctype>
 #include <algorithm>
@@ -526,16 +525,6 @@ Expression::Value Expression::function_word(const std::vector<Value>& args) {
     return (double)((((int)args[0].get_scalar(m_core) & 0xFF) << 8) | ((int)args[1].get_scalar(m_core) & 0xFF));
 }
 
-Expression::Value Expression::function_copy_mem(const std::vector<Value>& args) {
-    uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
-    int count = (int)args[1].get_scalar(m_core);
-    std::vector<uint8_t> bytes;
-    for (int i = 0; i < count; ++i) {
-        bytes.push_back(m_core.get_memory().peek(addr + i));
-    }
-    return Value(bytes);
-}
-
 Expression::Value Expression::function_fill(const std::vector<Value>& args) {
     int count = (int)args[0].get_scalar(m_core);
     uint8_t val = (uint8_t)args[1].get_scalar(m_core);
@@ -626,31 +615,31 @@ Expression::Value Expression::function_resbit(const std::vector<Value>& args) {
 }
 
 Expression::Value Expression::function_read_str(const std::vector<Value>& args) {
-    uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
-    int len = -1;
-    int terminator = 0;
-    if (args.size() > 1) len = (int)args[1].get_scalar(m_core);
-    if (args.size() > 2) terminator = (int)args[2].get_scalar(m_core);
+    uint32_t addr = static_cast<uint32_t>(args[0].get_scalar(m_core));
+    int len = (args.size() > 1) ? static_cast<int>(args[1].get_scalar(m_core)) : -1;
+    int terminator = (args.size() > 2) ? static_cast<int>(args[2].get_scalar(m_core)) : 0;
 
     std::string s;
     if (len >= 0) {
-        for (int i = 0; i < len; ++i) {
-            s += (char)m_core.get_memory().peek(addr + i);
+        for (int i = 0; i < len && (addr + i) <= 0xFFFF; ++i) {
+            s += static_cast<char>(m_core.get_memory().peek(static_cast<uint16_t>(addr + i)));
         }
     } else {
-        // Read until terminator (default 0x00), limit to 256 chars for safety
-        for (int i = 0; i < 256; ++i) {
-            char c = (char)m_core.get_memory().peek(addr + i);
-            if (c == (char)terminator) break;
-            s += c;
+        // Read until terminator (default 0x00)
+        for (uint32_t current = addr; current <= 0xFFFF; ++current) {
+            uint8_t b = m_core.get_memory().peek(static_cast<uint16_t>(current));
+            if (b == static_cast<uint8_t>(terminator)) break;
+            s += static_cast<char>(b);
         }
     }
     return Value(s);
 }
 
 Expression::Value Expression::function_asc(const std::vector<Value>& args) {
-    uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
-    return Value((double)m_core.get_memory().peek(addr));
+    const auto& v = args[0];
+    auto data = flatten_to_bytes(v);
+    if (data.empty()) return Value(0.0);
+    return Value((double)data[0]);
 }
 
 Expression::Value Expression::function_str_p(const std::vector<Value>& args) {
@@ -997,97 +986,6 @@ Expression::Value Expression::function_any(const std::vector<Value>& args) {
     return Value(result ? 1.0 : 0.0);
 }
 
-Expression::Value Expression::function_find(const std::vector<Value>& args) {
-    std::vector<uint8_t> needle;
-    if (args[1].is_bytes()) {
-        needle = args[1].bytes();
-    } else {
-        needle.push_back((uint8_t)args[1].get_scalar(m_core));
-    }
-
-    if (needle.empty()) return Value(-1.0);
-    
-    if (args[0].is_address()) {
-        const auto& addrs = args[0].address();
-        for (size_t i = 0; i < addrs.size(); ++i) {
-            bool match = true;
-            uint16_t addr = addrs[i];
-            for (size_t j = 0; j < needle.size(); ++j) {
-                if (m_core.get_memory().peek(addr + j) != needle[j]) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) return Value((double)i);
-        }
-        return Value(-1.0);
-    }
-
-    const auto& haystack = args[0].is_bytes() ? args[0].bytes() : std::vector<uint8_t>{(uint8_t)args[0].get_scalar(m_core)};
-    
-    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());
-    if (it == haystack.end()) return Value(-1.0);
-    
-    return Value((double)std::distance(haystack.begin(), it));
-}
-
-Expression::Value Expression::function_dump(const std::vector<Value>& args) {
-    uint16_t addr = (uint16_t)args[0].get_scalar(m_core);
-    int len = (int)args[1].get_scalar(m_core);
-    std::stringstream ss;
-    int row_len = 8;
-    for (int i = 0; i < len; i += row_len) {
-        if (i > 0) ss << "\n";
-        uint16_t row_addr = addr + i;
-        ss << std::hex << std::setw(4) << std::setfill('0') << std::uppercase << row_addr << ": ";
-        std::string ascii;
-        for (int j = 0; j < row_len; ++j) {
-            if (i + j < len) {
-                uint8_t b = m_core.get_memory().peek(row_addr + j);
-                ss << std::setw(2) << (int)b << " ";
-                ascii += (b >= 32 && b <= 126) ? (char)b : '.';
-            } else {
-                ss << "   ";
-            }
-        }
-        ss << " " << ascii;
-    }
-    return Value(ss.str());
-}
-
-Expression::Value Expression::function_is_var(const std::vector<Value>& args) {
-    std::string name = args[0].string();
-    if (name.empty()) return Value(0.0);
-    if (name[0] == '@') name.erase(0, 1);
-    return Value(m_core.get_context().getVariables().find(name) ? 1.0 : 0.0);
-}
-
-Expression::Value Expression::function_is_symbol(const std::vector<Value>& args) {
-    std::string name = args[0].string();
-    return Value(m_core.get_context().getSymbols().find(name) ? 1.0 : 0.0);
-}
-
-Expression::Value Expression::function_flag(const std::vector<Value>& args) {
-    double val = args[0].get_scalar(m_core);
-    if (val < 0 || val > 255) {
-        syntax_error(ErrorCode::GENERIC, "FLAG function requires a byte value (0-255)");
-    }
-    return Value(Formatter::format_flags_detailed((uint8_t)val));
-}
-
-Expression::Value Expression::function_type(const std::vector<Value>& args) {
-    switch (args[0].type()) {
-        case Value::Type::Number:   return Value(std::string("NUMBER"));
-        case Value::Type::Register: return Value(std::string("REGISTER"));
-        case Value::Type::Address:  return Value(std::string("ADDRESS"));
-        case Value::Type::Symbol:   return Value(std::string("SYMBOL"));
-        case Value::Type::String:   return Value(std::string("STRING"));
-        case Value::Type::Bytes:    return Value(std::string("BYTES"));
-        case Value::Type::Words:    return Value(std::string("WORDS"));
-        default:                    return Value(std::string("UNKNOWN"));
-    }
-}
-
 Expression::Value Expression::function_asm(const std::vector<Value>& args) {
     uint16_t pc = m_core.get_cpu().get_PC();
     std::string code;
@@ -1120,6 +1018,141 @@ Expression::Value Expression::function_asm(const std::vector<Value>& args) {
     assembler.assemble(code, symbols, pc, bytes);
 
     return Value(bytes);
+}
+
+Expression::Value Expression::function_copy(const std::vector<Value>& args) {
+    const auto& v = args[0];
+    if (v.is_bytes()) return Value(v.bytes());
+    if (v.is_words()) return Value(v.words(), true);
+    if (v.is_address()) return Value(v.address());
+    if (v.is_string()) return Value(v.string());
+    return v;
+}
+
+std::vector<uint8_t> Expression::flatten_to_bytes(const Value& v) {
+    std::vector<uint8_t> res;
+    
+    if (v.is_scalar()) {
+        // Używamy int64_t, aby poprawnie obsłużyć liczby ujemne (U2)
+        uint64_t val = static_cast<uint64_t>(static_cast<int64_t>(v.get_scalar(m_core)));
+        if (val == 0) {
+            res.push_back(0);
+        } else {
+            while (val > 0) {
+                res.push_back(static_cast<uint8_t>(val & 0xFF));
+                val >>= 8;
+            }
+        }
+    } else if (v.is_string()) {
+        for (char c : v.string()) res.push_back(static_cast<uint8_t>(c));
+    } else if (v.is_bytes()) {
+        return v.bytes();
+    } else if (v.is_words()) {
+        for (uint16_t w : v.words()) {
+            res.push_back(static_cast<uint8_t>(w & 0xFF));
+            res.push_back(static_cast<uint8_t>(w >> 8));
+        }
+    } else if (v.is_address()) {
+        for (uint16_t addr : v.address()) {
+            res.push_back(m_core.get_memory().peek(addr));
+        }
+    }
+    return res;
+}
+
+std::vector<uint16_t> Expression::flatten_to_words(const Value& v) {
+    std::vector<uint16_t> res;
+    if (v.is_scalar()) {
+        uint64_t val = static_cast<uint64_t>(static_cast<int64_t>(v.get_scalar(m_core)));
+        if (val == 0) {
+            res.push_back(0);
+        } else {
+            while (val > 0) {
+                res.push_back(static_cast<uint16_t>(val & 0xFFFF));
+                val >>= 16;
+            }
+        }
+    } else if (v.is_string()) {
+        for (char c : v.string()) res.push_back(static_cast<uint16_t>(static_cast<unsigned char>(c)));
+    } else if (v.is_words()) {
+        return v.words();
+    } else if (v.is_bytes()) {
+        const auto& b = v.bytes();
+        for (size_t i = 0; i < b.size(); i += 2) {
+            uint16_t w = b[i];
+            if (i + 1 < b.size()) w |= (static_cast<uint16_t>(b[i + 1]) << 8);
+            res.push_back(w);
+        }
+    } else if (v.is_address()) {
+        for (uint16_t addr : v.address()) {
+            // Z80 DPEEK (Little Endian)
+            uint16_t val = m_core.get_memory().peek(addr);
+            // Uwaga na przepełnienie adresu przy peek(addr + 1)
+            val |= (static_cast<uint16_t>(m_core.get_memory().peek((addr + 1) & 0xFFFF)) << 8);
+            res.push_back(val);
+        }
+    }
+    return res;
+}
+
+Expression::Value Expression::function_bytes(const std::vector<Value>& args) {
+    std::vector<uint8_t> result;
+    for (const auto& arg : args) {
+        auto flattened = flatten_to_bytes(arg);
+        result.insert(result.end(), flattened.begin(), flattened.end());
+    }
+    return Value(result);
+}
+
+Expression::Value Expression::function_words(const std::vector<Value>& args) {
+    std::vector<uint16_t> result;
+    for (const auto& arg : args) {
+        auto flattened = flatten_to_words(arg);
+        result.insert(result.end(), flattened.begin(), flattened.end());
+    }
+    return Value(result, true);
+}
+
+Expression::Value Expression::function_range(const std::vector<Value>& args) {
+    if (args.size() < 2 || args.size() > 3) syntax_error(ErrorCode::EVAL_NOT_ENOUGH_ARGUMENTS);
+    for (const auto& v : args) {
+        if (!v.is_scalar()) syntax_error(ErrorCode::EVAL_TYPE_MISMATCH, "RANGE requires scalar arguments");
+    }
+
+    int start = (int)args[0].get_scalar(m_core);
+    int end = (int)args[1].get_scalar(m_core);
+    int step = (args.size() > 2) ? std::abs((int)args[2].get_scalar(m_core)) : 1;
+
+    if (step == 0) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Step cannot be zero");
+
+    std::vector<uint8_t> res;
+    if (start <= end) {
+        for (int i = start; i <= end; i += step) res.push_back((uint8_t)i);
+    } else {
+        for (int i = start; i >= end; i -= step) res.push_back((uint8_t)i);
+    }
+    return Value(res);
+}
+
+Expression::Value Expression::function_range_addr(const std::vector<Value>& args) {
+    if (args.size() < 2 || args.size() > 3) syntax_error(ErrorCode::EVAL_NOT_ENOUGH_ARGUMENTS);
+    for (const auto& v : args) {
+        if (!v.is_scalar()) syntax_error(ErrorCode::EVAL_TYPE_MISMATCH, "RANGE_ADDR requires scalar arguments");
+    }
+
+    int start = (int)args[0].get_scalar(m_core);
+    int end = (int)args[1].get_scalar(m_core);
+    int step = (args.size() > 2) ? std::abs((int)args[2].get_scalar(m_core)) : 1;
+
+    if (step == 0) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Step cannot be zero");
+
+    std::vector<uint16_t> res;
+    if (start <= end) {
+        for (int i = start; i <= end; i += step) res.push_back((uint16_t)i);
+    } else {
+        for (int i = start; i >= end; i -= step) res.push_back((uint16_t)i);
+    }
+    return Value(res);
 }
 
 const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions() {
@@ -1163,9 +1196,6 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
-        {"COPY_MEM", {2, &Expression::function_copy_mem, {
-            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
         }}},
         {"FILL", {2, &Expression::function_fill, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
@@ -1216,7 +1246,7 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
             {T::Number, T::Number, T::Number}
         }}},
         {"ASC", {1, &Expression::function_asc, {
-            {T::Number}, {T::Register}, {T::Symbol}
+            {T::Number}, {T::Register}, {T::Symbol}, {T::String}, {T::Address}, {T::Bytes}
         }}},
         {"STR_P", {1, &Expression::function_str_p, {
             {T::Number}, {T::Register}, {T::Symbol}
@@ -1331,26 +1361,21 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"ANY", {2, &Expression::function_any, {
             {T::Bytes, T::Number}, {T::Words, T::Number}, {T::Address, T::Number}
         }}},
-        {"FIND", {2, &Expression::function_find, {
-            {T::Bytes, T::Bytes}, {T::Bytes, T::Number}, {T::Number, T::Bytes}, {T::Number, T::Number},
-            {T::Address, T::Bytes}, {T::Address, T::Number}
-        }}},
-        {"DUMP", {2, &Expression::function_dump, {
-            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
-        }}},
-        {"IS_VAR", {1, &Expression::function_is_var, {
-            {T::String}
-        }}},
-        {"IS_SYMBOL", {1, &Expression::function_is_symbol, {
-            {T::String}
-        }}},
-        {"FLAG", {1, &Expression::function_flag, {
-            {T::Number}, {T::Register}, {T::Symbol}
-        }}},
-        {"TYPE", {1, &Expression::function_type, {}}},
         {"ASM", {-1, &Expression::function_asm, {
             {T::String},
             {T::Number, T::String}, {T::Register, T::String}, {T::Symbol, T::String}
+        }}},
+        {"COPY", {1, &Expression::function_copy, {
+            {T::Number}, {T::Register}, {T::Symbol},
+            {T::String}, {T::Bytes}, {T::Words}, {T::Address}
+        }}},
+        {"BYTES", {-1, &Expression::function_bytes, {
+        }}},
+        {"WORDS", {-1, &Expression::function_words, {
+        }}}
+        ,{"RANGE", {-1, &Expression::function_range, {
+        }}},
+        {"RANGE_ADDR", {-1, &Expression::function_range_addr, {
         }}}
     };
     return funcs;
@@ -1877,35 +1902,8 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 }
                 std::reverse(args.begin(), args.end());
                 for (const auto& v : args) {
-                    if (v.is_address())
-                        syntax_error(ErrorCode::EVAL_TYPE_MISMATCH);
-                    if (v.is_string()) {
-                        const std::string& s = v.string();
-                        bytes.insert(bytes.end(), s.begin(), s.end());
-                    } else if (v.is_bytes()) {
-                        const auto& b = v.bytes();
-                        bytes.insert(bytes.end(), b.begin(), b.end());
-                    } else if (v.is_words()) {
-                        for (uint16_t word : v.words()) {
-                            bytes.push_back(word & 0xFF);
-                            bytes.push_back(word >> 8);
-                        }
-                    } else {
-                        if (v.is_register() && v.reg().is_16bit()) {
-                            uint16_t val = (uint16_t)v.get_scalar(m_core);
-                            bytes.push_back(val & 0xFF);
-                            bytes.push_back(val >> 8);
-                        } else {
-                            double val = v.get_scalar(m_core);
-                            if (val > 255 || val < -128) {
-                                uint16_t w = (uint16_t)val;
-                                bytes.push_back(w & 0xFF);
-                                bytes.push_back(w >> 8);
-                            } else {
-                                bytes.push_back((uint8_t)val);
-                            }
-                        }
-                    }
+                    auto flattened = flatten_to_bytes(v);
+                    bytes.insert(bytes.end(), flattened.begin(), flattened.end());
                 }
                 stack.push_back(Value(bytes));
             }
@@ -1923,31 +1921,62 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 }
                 std::reverse(args.begin(), args.end());
                 for (const auto& v : args) {
-                    if (v.is_address())
-                        syntax_error(ErrorCode::EVAL_TYPE_MISMATCH);
-                    
-                    if (v.is_string()) {
-                        const std::string& s = v.string();
-                        for (char c : s) words.push_back((uint16_t)(unsigned char)c);
-                    } else if (v.is_bytes()) {
-                        const auto& b = v.bytes();
-                        for (size_t i = 0; i < b.size(); i += 2) {
-                            uint16_t word = b[i];
-                            if (i + 1 < b.size())
-                                word |= (uint16_t)b[i+1] << 8;
-                            words.push_back(word);
-                        }
-                    } else if (v.is_words()) {
-                        const auto& w = v.words();
-                        words.insert(words.end(), w.begin(), w.end());
-                    } else {
-                        double val = v.get_scalar(m_core);
-                        words.push_back((uint16_t)val);
-                    }
+                    auto flattened = flatten_to_words(v);
+                    words.insert(words.end(), flattened.begin(), flattened.end());
                 }
                 stack.push_back(Value(words, true));
             }
         }
     }
     return stack.empty() ? Value(0.0) : stack.back();
+}
+
+void Expression::assign(const std::string& lhs, const Value& rhs) {
+    size_t i = 0;
+    while (i < lhs.length() && std::isspace(lhs[i])) i++;
+    if (i >= lhs.length()) return;
+
+    if (lhs[i] == '@') {
+        i++;
+        std::string name = parse_word(lhs, i);
+        Variable* var = m_core.get_context().getVariables().find(name);
+        if (!var) syntax_error(ErrorCode::LOOKUP_UNKNOWN_VARIABLE, name);
+
+        while (i < lhs.length() && std::isspace(lhs[i])) i++;
+        
+        if (i < lhs.length() && lhs[i] == '[') {
+            i++;
+            size_t start = i;
+            int depth = 1;
+            while (i < lhs.length() && depth > 0) {
+                if (lhs[i] == '[') depth++;
+                if (lhs[i] == ']') depth--;
+                if (depth > 0) i++;
+            }
+            if (depth != 0) syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, "]");
+            
+            std::string idx_str = lhs.substr(start, i - start - 1);
+            Value idx_val = evaluate(idx_str);
+            int idx = (int)idx_val.get_scalar(m_core);
+            
+            Value current = var->getValue();
+            if (current.is_bytes()) {
+                auto data = current.bytes();
+                auto patch = flatten_to_bytes(rhs);
+                for (size_t k = 0; k < patch.size(); ++k) {
+                    if (idx + k < data.size()) data[idx + k] = patch[k];
+                }
+                var->setValue(Value(data));
+            } else if (current.is_words()) {
+                auto data = current.words();
+                auto patch = flatten_to_words(rhs);
+                for (size_t k = 0; k < patch.size(); ++k) {
+                    if (idx + k < data.size()) data[idx + k] = patch[k];
+                }
+                var->setValue(Value(data, true));
+            }
+        } else {
+            var->setValue(rhs);
+        }
+    }
 }

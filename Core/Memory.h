@@ -14,17 +14,17 @@ public:
     void reset() {
         std::fill(m_ram.begin(), m_ram.end(), 0);
     }
-    uint8_t read(uint16_t address) {
-        return m_ram[address];
+    uint8_t read(size_t address) {
+        return m_ram[address & 0xFFFF];
     }
-    void write(uint16_t address, uint8_t value) {
-        m_ram[address] = value;
+    void write(size_t address, uint8_t value) {
+        m_ram[address & 0xFFFF] = value;
     }
-    uint8_t peek(uint16_t address) const {
-        return m_ram[address];
+    uint8_t peek(size_t address) const {
+        return m_ram[address & 0xFFFF];
     }
-    void poke(uint16_t address, uint8_t value) {
-        m_ram[address] = value;
+    void poke(size_t address, uint8_t value) {
+        m_ram[address & 0xFFFF] = value;
     }
     uint8_t in(uint16_t port) {
         return 0xFF;

@@ -402,8 +402,16 @@ void Dashboard::perform_eval(const std::string& expr) {
 
     if (val.is_number()) {
         double v = val.number();
-        uint16_t u = (uint16_t)v;
-        m_output_buffer << prefix << (int)v << " ($" << Strings::hex(u) << ") " << Formatter::format_bin_dotted(u, 16) << "\n";
+        if (v >= 0 && v <= 255 && (int64_t)v == v) {
+            uint8_t b = (uint8_t)v;
+            m_output_buffer << prefix << (int)v << " ($" << Strings::hex(b) << ") "
+                            << "'" << (std::isprint(b) ? (char)b : '.') << "' "
+                            << Formatter::format_bin_dotted(b, 8) << " "
+                            << Formatter::format_flags_detailed(b) << "\n";
+        } else {
+            uint16_t u = (uint16_t)v;
+            m_output_buffer << prefix << (int)v << " ($" << Strings::hex(u) << ") " << Formatter::format_bin_dotted(u, 16) << "\n";
+        }
     } else if (val.is_register()) {
         std::string name = val.reg().getName();
         uint16_t v = val.reg().read(m_debugger.get_core().get_cpu());
@@ -419,7 +427,10 @@ void Dashboard::perform_eval(const std::string& expr) {
                                     << Strings::hex((uint8_t)(v >> 8)) << ":" << Strings::hex((uint8_t)(v & 0xFF)) 
                                     << " " << Formatter::format_bin_dotted(v, 16);
                 } else {
-                    m_output_buffer << Strings::hex((uint8_t)v) << ") " << Formatter::format_bin_dotted((uint8_t)v, 8);
+                    uint8_t b = (uint8_t)v;
+                    m_output_buffer << Strings::hex(b) << ") " << "'" << (std::isprint(b) ? (char)b : '.') << "' "
+                                    << Formatter::format_bin_dotted(b, 8) << " "
+                                    << Formatter::format_flags_detailed(b);
                 }
                 m_output_buffer << "\n";
             }
@@ -443,8 +454,10 @@ void Dashboard::perform_eval(const std::string& expr) {
         if (addrs.size() == 1) {
             uint16_t addr = addrs[0];
             uint8_t v = mem.peek(addr);
-            m_output_buffer << prefix << "[" << Strings::hex(addr) << "] -> $" << Strings::hex(v) 
-                            << " (" << (int)v << ") " << Formatter::format_bin_dotted(v, 8);
+            m_output_buffer << prefix << "[" << Strings::hex(addr) << "] -> $" << Strings::hex(v)
+                            << " (" << (int)v << ") " << "'" << (std::isprint(v) ? (char)v : '.') << "' "
+                            << Formatter::format_bin_dotted(v, 8) << " "
+                            << Formatter::format_flags_detailed(v);
             
             auto line = m_debugger.get_core().get_analyzer().parse_instruction(addr);
             if (!line.mnemonic.empty()) {

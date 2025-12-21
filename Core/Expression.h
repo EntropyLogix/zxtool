@@ -211,7 +211,6 @@ private:
     Value function_high(const std::vector<Value>& args);
     Value function_byte(const std::vector<Value>& args);
     Value function_word(const std::vector<Value>& args);
-    Value function_copy_mem(const std::vector<Value>& args);
     Value function_fill(const std::vector<Value>& args);
     Value function_checksum(const std::vector<Value>& args);
     Value function_char(const std::vector<Value>& args);
@@ -259,13 +258,16 @@ private:
     Value function_argmin(const std::vector<Value>& args);
     Value function_all(const std::vector<Value>& args);
     Value function_any(const std::vector<Value>& args);
-    Value function_find(const std::vector<Value>& args);
-    Value function_dump(const std::vector<Value>& args);
-    Value function_is_var(const std::vector<Value>& args);
-    Value function_is_symbol(const std::vector<Value>& args);
-    Value function_flag(const std::vector<Value>& args);
-    Value function_type(const std::vector<Value>& args);
     Value function_asm(const std::vector<Value>& args);
+    Value function_copy(const std::vector<Value>& args);
+    Value function_bytes(const std::vector<Value>& args);
+    Value function_words(const std::vector<Value>& args);
+    Value function_range(const std::vector<Value>& args);
+    Value function_range_addr(const std::vector<Value>& args);
+
+    std::vector<uint8_t> flatten_to_bytes(const Value& v);
+    std::vector<uint16_t> flatten_to_words(const Value& v);
+    void assign(const std::string& lhs, const Value& rhs);
 };
 
 #endif//__EXPRESSION_H__
