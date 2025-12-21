@@ -2,37 +2,91 @@
 #include "Strings.h"
 #include <iomanip>
 #include <cctype>
+#include <cmath>
+#include <vector>
+#include <sstream>
+
+// Helper to format sequences with collapsing logic
+template <typename T>
+static std::string format_sequence(const std::vector<T>& data, 
+                                   const std::string& prefix, 
+                                   const std::string& suffix, 
+                                   const std::string& separator,
+                                   bool use_hex_prefix,
+                                   bool allow_step_gt_1) {
+    std::stringstream ss;
+    ss << prefix;
+    for (size_t i = 0; i < data.size(); ) {
+        if (i > 0) ss << separator;
+        
+        size_t best_len = 1;
+        int64_t best_step = 0;
+
+        if (i + 1 < data.size()) {
+            int64_t diff = (int64_t)data[i+1] - (int64_t)data[i];
+            bool valid_step = (std::abs(diff) == 1) || (allow_step_gt_1 && diff != 0);
+            
+            if (valid_step) {
+                size_t j = i + 1;
+                while (j + 1 < data.size()) {
+                    if ((int64_t)data[j+1] - (int64_t)data[j] != diff) break;
+                    j++;
+                }
+                size_t len = j - i + 1;
+                // Collapse rule: Step 1 -> >= 2 elements, Step != 1 -> >= 3 elements
+                if (std::abs(diff) == 1) {
+                    if (len >= 2) { best_len = len; best_step = diff; }
+                } else {
+                    if (len >= 3) { best_len = len; best_step = diff; }
+                }
+            }
+        }
+
+        auto fmt_item = [&](T v) {
+            if (use_hex_prefix) ss << "$";
+            ss << Strings::hex(v);
+        };
+
+        if (best_len > 1) {
+            fmt_item(data[i]);
+            ss << "..";
+            fmt_item(data[i + best_len - 1]);
+            if (std::abs(best_step) != 1) {
+                ss << ":";
+                ss << std::dec << std::abs(best_step);
+            }
+            i += best_len;
+        } else {
+            fmt_item(data[i]);
+            i++;
+        }
+    }
+    ss << suffix;
+    return ss.str();
+}
 
 std::string Formatter::format_value(const Expression::Value& val) {
     std::stringstream ss;
     if (val.is_number()) {
-        ss << Strings::hex((uint16_t)val.number());
+        double d = val.number();
+        if (d == (int64_t)d) {
+            int64_t i = (int64_t)d;
+            if (i >= 0 && i <= 255) {
+                ss << "$" << Strings::hex((uint8_t)i) << " (" << i << ")";
+            } else {
+                ss << "$" << Strings::hex((uint16_t)i) << " (" << i << ")";
+            }
+        } else {
+            ss << d;
+        }
     } else if (val.is_string()) {
         ss << "\"" << val.string() << "\"";
     } else if (val.is_bytes()) {
-        ss << "{ ";
-        const auto& bytes = val.bytes();
-        for (size_t i = 0; i < bytes.size(); ++i) {
-            if (i > 0) ss << ", ";
-            ss << "$" << Strings::hex(bytes[i]);
-        }
-        ss << " }";
+        return format_sequence(val.bytes(), "{", "}", " ", true, true);
     } else if (val.is_words()) {
-        ss << "W{ ";
-        const auto& words = val.words();
-        for (size_t i = 0; i < words.size(); ++i) {
-            if (i > 0) ss << ", ";
-            ss << "$" << Strings::hex(words[i]);
-        }
-        ss << " }";
+        return format_sequence(val.words(), "W{", "}", " ", true, true);
     } else if (val.is_address()) {
-        ss << "[ ";
-        const auto& addrs = val.address();
-        for (size_t i = 0; i < addrs.size(); ++i) {
-            if (i > 0) ss << ", ";
-            ss << "$" << Strings::hex(addrs[i]);
-        }
-        ss << " ]";
+        return format_sequence(val.address(), "[", "]", ", ", true, true);
     } else if (val.is_register()) {
         ss << val.reg().getName();
     } else if (val.is_symbol()) {

@@ -442,160 +442,17 @@ void Dashboard::perform_eval(const std::string& expr) {
          if (is_var_name) prefix = expr + " = ";
     }
 
-    if (val.is_number()) {
-        double v = val.number();
-        if (v >= 0 && v <= 255 && (int64_t)v == v) {
-            uint8_t b = (uint8_t)v;
-            m_output_buffer << prefix << (int)v << " ($" << Strings::hex(b) << ") "
-                            << "'" << (std::isprint(b) ? (char)b : '.') << "' "
-                            << Formatter::format_bin_dotted(b, 8) << " "
-                            << Formatter::format_flags_detailed(b) << "\n";
-        } else {
-            uint16_t u = (uint16_t)v;
-            m_output_buffer << prefix << (int)v << " ($" << Strings::hex(u) << ") " << Formatter::format_bin_dotted(u, 16) << "\n";
-        }
-    } else if (val.is_register()) {
+    if (val.is_register()) {
         std::string name = val.reg().getName();
         uint16_t v = val.reg().read(m_debugger.get_core().get_cpu());
-        
-        if (prefix.empty()) {
-            if (name == "F") {
-                 m_output_buffer << "F = $" << Strings::hex((uint8_t)v) << " " << Formatter::format_bin_dotted((uint8_t)v, 8) 
-                                 << " " << Formatter::format_flags_detailed((uint8_t)v) << "\n";
-            } else {
-                m_output_buffer << name << " = " << (int)v << " ($";
-                if (val.reg().is_16bit()) {
-                    m_output_buffer << Strings::hex(v) << ") " 
-                                    << Strings::hex((uint8_t)(v >> 8)) << ":" << Strings::hex((uint8_t)(v & 0xFF)) 
-                                    << " " << Formatter::format_bin_dotted(v, 16);
-                } else {
-                    uint8_t b = (uint8_t)v;
-                    m_output_buffer << Strings::hex(b) << ") " << "'" << (std::isprint(b) ? (char)b : '.') << "' "
-                                    << Formatter::format_bin_dotted(b, 8) << " "
-                                    << Formatter::format_flags_detailed(b);
-                }
-                m_output_buffer << "\n";
-            }
+        if (val.reg().is_16bit()) {
+            m_output_buffer << prefix << name << "=$" << Strings::hex(v) << " (" << v << ")\n";
         } else {
-             m_output_buffer << prefix << name << " = " << (int)v << " ($" << Strings::hex(v) << ")\n";
+            m_output_buffer << prefix << name << "=$" << Strings::hex((uint8_t)v) << " (" << v << ")\n";
         }
     } else if (val.is_symbol()) {
         uint16_t v = val.symbol().read();
-        m_output_buffer << prefix << val.symbol().getName() << " = $" << Strings::hex(v) << " (" << (int)v << ")";
-        if (prefix.empty()) {
-            auto line = m_debugger.get_core().get_analyzer().parse_instruction(v);
-            if (!line.mnemonic.empty()) {
-                 m_output_buffer << " [Code: " << line.mnemonic << "]";
-            }
-        }
-        m_output_buffer << "\n";
-    } else if (val.is_address()) {
-        auto& mem = m_debugger.get_core().get_memory();
-        const auto& addrs = val.address();
-        
-        if (addrs.size() == 1) {
-            uint16_t addr = addrs[0];
-            uint8_t v = mem.peek(addr);
-            m_output_buffer << prefix << "[" << Strings::hex(addr) << "] -> $" << Strings::hex(v)
-                            << " (" << (int)v << ") " << "'" << (std::isprint(v) ? (char)v : '.') << "' "
-                            << Formatter::format_bin_dotted(v, 8) << " "
-                            << Formatter::format_flags_detailed(v);
-            
-            auto line = m_debugger.get_core().get_analyzer().parse_instruction(addr);
-            if (!line.mnemonic.empty()) {
-                 m_output_buffer << " " << m_theme.mnemonic << line.mnemonic << Terminal::RESET;
-                 if (!line.operands.empty()) m_output_buffer << " ";
-                Formatter::format_ops(line, m_output_buffer);
-            }
-            m_output_buffer << "\n";
-        } else {
-            m_output_buffer << prefix << "Address[" << addrs.size() << "]\n";
-            size_t limit = 10;
-            for (size_t i = 0; i < addrs.size(); ++i) {
-                if (i >= limit) {
-                    m_output_buffer << "... (hidden " << (addrs.size() - i) << " items, use " << (prefix.empty() ? "indexing" : expr + "[n]") << ")\n";
-                    break;
-                }
-                uint16_t addr = addrs[i];
-                uint8_t v = mem.peek(addr);
-                m_output_buffer << "[" << i << "] $" << Strings::hex(addr) << " -> $" << Strings::hex(v);
-                auto line = m_debugger.get_core().get_analyzer().parse_instruction(addr);
-                if (!line.mnemonic.empty()) {
-                    m_output_buffer << " (" << line.mnemonic;
-                    if (!line.operands.empty()) m_output_buffer << " ";
-                    Formatter::format_ops(line, m_output_buffer);
-                    m_output_buffer << ")";
-                }
-                m_output_buffer << "\n";
-            }
-        }
-    } else if (val.is_bytes()) {
-        const auto& bytes = val.bytes();
-        if (bytes.size() <= 16) {
-            m_output_buffer << prefix << "[ ";
-            std::string ascii;
-            for (size_t i = 0; i < bytes.size(); ++i) {
-                if (i > 0) m_output_buffer << " ";
-                m_output_buffer << Strings::hex(bytes[i]);
-                ascii += (std::isprint(bytes[i]) ? (char)bytes[i] : '.');
-            }
-            m_output_buffer << " ] (ASCII: \"" << ascii << "\")\n";
-        } else {
-            m_output_buffer << prefix << "Bytes(" << bytes.size() << ")\n";
-            size_t limit_lines = 10;
-            size_t lines_printed = 0;
-            const int row_len = 16;
-            for (size_t i = 0; i < bytes.size(); i += row_len) {
-                if (lines_printed >= limit_lines) {
-                    m_output_buffer << "... (hidden " << (bytes.size() - i) << " bytes)\n";
-                    break;
-                }
-                std::stringstream line_ss;
-                std::string ascii;
-                for (size_t j = 0; j < row_len; ++j) {
-                    if (i + j < bytes.size()) {
-                        uint8_t b = bytes[i+j];
-                        line_ss << Strings::hex(b) << " ";
-                        ascii += (std::isprint(b) ? (char)b : '.');
-                    } else {
-                        line_ss << "   ";
-                    }
-                }
-                m_output_buffer << Strings::hex((uint16_t)i) << ": " << line_ss.str() << " " << ascii << "\n";
-                lines_printed++;
-            }
-        }
-    } else if (val.is_words()) {
-        const auto& words = val.words();
-        if (words.size() <= 8) {
-            m_output_buffer << prefix << "W[ ";
-            for (size_t i = 0; i < words.size(); ++i) {
-                if (i > 0) m_output_buffer << " ";
-                m_output_buffer << "$" << Strings::hex(words[i]);
-            }
-            m_output_buffer << " ]\n";
-        } else {
-            m_output_buffer << prefix << "Words(" << words.size() << ")\n";
-            size_t limit_lines = 10;
-            size_t lines_printed = 0;
-            const int row_len = 8;
-            for (size_t i = 0; i < words.size(); i += row_len) {
-                if (lines_printed >= limit_lines) {
-                    m_output_buffer << "... (hidden " << (words.size() - i) << " words)\n";
-                    break;
-                }
-                m_output_buffer << Strings::hex((uint16_t)(i*2)) << ": ";
-                for (size_t j = 0; j < row_len; ++j) {
-                    if (i + j < words.size()) {
-                        m_output_buffer << "$" << Strings::hex(words[i+j]) << " ";
-                    }
-                }
-                m_output_buffer << "\n";
-                lines_printed++;
-            }
-        }
-    } else if (val.is_string()) {
-        m_output_buffer << prefix << "\"" << val.string() << "\" (len: " << val.string().length() << ")\n";
+        m_output_buffer << prefix << val.symbol().getName() << " ($" << Strings::hex(v) << ")\n";
     } else {
         m_output_buffer << prefix << Formatter::format_value(val) << "\n";
     }
@@ -735,19 +592,12 @@ void Dashboard::cmd_set(const std::string& args_str) {
         Expression::Value target = eval.evaluate(lhs_str);
         Expression::Value val = eval.evaluate(rhs_str);
         
-        auto get_num = [&](const Expression::Value& v) -> double {
-            if (v.is_number()) return v.number();
-            if (v.is_register()) return (double)v.reg().read(m_debugger.get_core().get_cpu());
-            if (v.is_symbol()) return (double)v.symbol().read();
-            throw std::runtime_error("Expected number, register or symbol");
-        };
-
         if (target.is_register()) {
-            uint16_t num = (uint16_t)get_num(val);
+            uint16_t num = (uint16_t)val.get_scalar(m_debugger.get_core());
             target.reg().write(m_debugger.get_core().get_cpu(), num);
             m_output_buffer << "Set register " << target.reg().getName() << " to " << Strings::hex(num) << "\n";
         } else if (target.is_symbol()) {
-            uint16_t num = (uint16_t)get_num(val);
+            uint16_t num = (uint16_t)val.get_scalar(m_debugger.get_core());
             std::string name = target.symbol().getName();
             auto& ctx = m_debugger.get_core().get_context();
             Symbol::Type type = target.symbol().getType();
@@ -759,54 +609,22 @@ void Dashboard::cmd_set(const std::string& args_str) {
             const auto& addrs = target.address();
             std::vector<std::pair<uint16_t, uint8_t>> writes;
             
-            if (val.is_words()) {
-                const auto& words = val.words();
-                if (addrs.empty()) {
-                    m_output_buffer << "Error: Target address list is empty.\n";
-                    return;
+            if (addrs.empty()) {
+                m_output_buffer << "Error: Target address list is empty.\n";
+                return;
+            }
+
+            std::vector<uint8_t> data = eval.flatten_to_bytes(val);
+            
+            for (size_t i = 0; i < data.size(); ++i) {
+                uint16_t addr;
+                if (i < addrs.size()) {
+                    addr = addrs[i];
+                } else {
+                    addr = addrs.back() + (uint16_t)(i - (addrs.size() - 1));
                 }
-                for (size_t i = 0; i < words.size(); ++i) {
-                    uint16_t addr;
-                    if (i < addrs.size()) {
-                        addr = addrs[i];
-                    } else {
-                        addr = addrs.back() + (uint16_t)((i - (addrs.size() - 1)) * 2);
-                    }
-                    mem.write(addr, words[i] & 0xFF);
-                    mem.write(addr + 1, words[i] >> 8);
-                    writes.push_back({addr, (uint8_t)(words[i] & 0xFF)});
-                    writes.push_back({(uint16_t)(addr + 1), (uint8_t)(words[i] >> 8)});
-                }
-            } else if (val.is_bytes()) {
-                const auto& bytes = val.bytes();
-                if (addrs.empty()) {
-                    m_output_buffer << "Error: Target address list is empty.\n";
-                    return;
-                }
-                for (size_t i = 0; i < bytes.size(); ++i) {
-                    uint16_t addr;
-                    if (i < addrs.size()) {
-                        addr = addrs[i];
-                    } else {
-                        addr = addrs.back() + (uint16_t)(i - (addrs.size() - 1));
-                    }
-                    mem.write(addr, bytes[i]);
-                    writes.push_back({addr, bytes[i]});
-                }
-            } else if (val.is_string()) {
-                const std::string& s = val.string();
-                for (uint16_t addr : addrs) {
-                    for (size_t i = 0; i < s.length(); ++i) {
-                        mem.write(addr + i, (uint8_t)s[i]);
-                        writes.push_back({(uint16_t)(addr + i), (uint8_t)s[i]});
-                    }
-                }
-            } else {
-                uint8_t byte_val = (uint8_t)get_num(val);
-                for (uint16_t addr : addrs) {
-                    mem.write(addr, byte_val);
-                    writes.push_back({addr, byte_val});
-                }
+                mem.write(addr, data[i]);
+                writes.push_back({addr, data[i]});
             }
 
             m_output_buffer << "Written " << writes.size() << " byte(s):\n";

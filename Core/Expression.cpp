@@ -567,24 +567,6 @@ Expression::Value Expression::function_len(const std::vector<Value>& args) {
     return Value(0.0);
 }
 
-Expression::Value Expression::function_substr(const std::vector<Value>& args) {
-    const std::string& str = args[0].string();
-    int start = (int)args[1].get_scalar(m_core);
-    
-    if (start < 0) start = 0;
-    if ((size_t)start >= str.length()) {
-        return Value(std::string(""));
-    }
-
-    if (args.size() == 2) {
-        return Value(str.substr(start));
-    }
-    
-    int length = (int)args[2].get_scalar(m_core);
-    if (length < 0) length = 0;
-    return Value(str.substr(start, length));
-}
-
 Expression::Value Expression::function_hex(const std::vector<Value>& args) {
     uint32_t val = (uint32_t)args[0].get_scalar(m_core);
     int width = 0;
@@ -1823,21 +1805,42 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                     stack.pop_back();
                 }
                 std::reverse(args.begin(), args.end());
+                
+                bool address_mode = false;
+                bool dereference_mode = false;
+
                 for (const auto& v : args) {
-                    if (v.is_address()) {
-                        const auto& vec = v.address();
-                        addrs.insert(addrs.end(), vec.begin(), vec.end());
+                    if (v.is_scalar()) {
+                        address_mode = true;
+                        addrs.push_back((uint16_t)v.get_scalar(m_core));
+                    } else if (v.is_address()) {
+                        dereference_mode = true;
+                        for (auto addr : v.address()) {
+                            addrs.push_back(m_core.get_memory().peek(addr));
+                        }
                     } else if (v.is_words()) {
+                        address_mode = true;
                         const auto& vec = v.words();
                         addrs.insert(addrs.end(), vec.begin(), vec.end());
-                    } else if (v.is_bytes()) {
-                        const auto& vec = v.bytes();
-                        for(auto b : vec) addrs.push_back((uint16_t)b);
                     } else {
-                        addrs.push_back((uint16_t)v.get_scalar(m_core));
+                        syntax_error(ErrorCode::EVAL_TYPE_MISMATCH, "Invalid type in []: expected scalar, address, or words");
                     }
                 }
-                stack.push_back(Value(addrs));
+                
+                if (address_mode) {
+                    stack.push_back(Value(addrs));
+                } else if (dereference_mode) {
+                    if (addrs.size() == 1) {
+                        stack.push_back(Value((double)addrs[0]));
+                    } else {
+                        std::vector<uint8_t> bytes;
+                        bytes.reserve(addrs.size());
+                        for(auto w : addrs) bytes.push_back((uint8_t)w);
+                        stack.push_back(Value(bytes));
+                    }
+                } else {
+                    stack.push_back(Value(addrs));
+                }
             }
         }
         else if (token.type == TokenType::BYTES) {

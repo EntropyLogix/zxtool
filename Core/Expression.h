@@ -96,6 +96,9 @@ public:
     ~Expression() = default;
 
     Value evaluate(const std::string& expression);
+    std::vector<uint8_t> flatten_to_bytes(const Value& v);
+    std::vector<uint16_t> flatten_to_words(const Value& v);
+    void assign(const std::string& lhs, const Value& rhs);
 
 private:
     enum class TokenType {
@@ -260,9 +263,6 @@ private:
     Value function_bytes(const std::vector<Value>& args);
     Value function_words(const std::vector<Value>& args);
 
-    std::vector<uint8_t> flatten_to_bytes(const Value& v);
-    std::vector<uint16_t> flatten_to_words(const Value& v);
-    void assign(const std::string& lhs, const Value& rhs);
 };
 
 #endif//__EXPRESSION_H__
