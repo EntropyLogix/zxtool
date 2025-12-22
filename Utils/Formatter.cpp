@@ -69,8 +69,12 @@ std::string Formatter::format_value(const Expression::Value& val) {
             int64_t i = (int64_t)d;
             if (i >= 0 && i <= 255) {
                 ss << "$" << Strings::hex((uint8_t)i) << " (" << i << ")";
-            } else {
+            } else if (i >= -32768 && i <= 65535) {
                 ss << "$" << Strings::hex((uint16_t)i) << " (" << i << ")";
+            } else {
+                std::stringstream temp_ss;
+                temp_ss << std::hex << std::uppercase << i;
+                ss << "$" << temp_ss.str() << " (" << i << ")";
             }
         } else {
             ss << d;

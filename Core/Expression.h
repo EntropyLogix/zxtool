@@ -81,6 +81,19 @@ public:
         Type type() const { return m_type; }
         double get_scalar(Core& core) const;
 
+        static std::string type_to_string(Type t) {
+            switch (t) {
+                case Type::Number: return "Number";
+                case Type::Register: return "Register";
+                case Type::Address: return "Address";
+                case Type::Symbol: return "Symbol";
+                case Type::String: return "String";
+                case Type::Bytes: return "Bytes";
+                case Type::Words: return "Words";
+            }
+            return "Unknown";
+        }
+
     private:
         Type m_type = Type::Number;
         double m_number = 0.0;
@@ -179,7 +192,28 @@ private:
             }
             if (match) return;
         }
-        throw Error(ErrorCode::EVAL_TYPE_MISMATCH, "Type mismatch for " + name);
+
+        std::stringstream ss;
+        ss << "Got (";
+        for (size_t i = 0; i < args.size(); ++i) {
+            ss << Value::type_to_string(args[i].type());
+            if (i < args.size() - 1) ss << ", ";
+        }
+        ss << "), expected ";
+
+        bool first_sig = true;
+        for (const auto& sig : signatures) {
+            if (sig.size() != args.size()) continue;
+            if (!first_sig) ss << " or ";
+            ss << "(";
+            for (size_t i = 0; i < sig.size(); ++i) {
+                ss << Value::type_to_string(sig[i]);
+                if (i < sig.size() - 1) ss << ", ";
+            }
+            ss << ")";
+            first_sig = false;
+        }
+        throw Error(ErrorCode::EVAL_TYPE_MISMATCH, ss.str());
     }
 
     static void syntax_error(ErrorCode code, const std::string& detail = "");
@@ -213,28 +247,11 @@ private:
 
     Value function_low(const std::vector<Value>& args);
     Value function_high(const std::vector<Value>& args);
-    Value function_byte(const std::vector<Value>& args);
-    Value function_word(const std::vector<Value>& args);
     Value function_checksum(const std::vector<Value>& args);
-    Value function_char(const std::vector<Value>& args);
-    Value function_to_str(const std::vector<Value>& args);
+    Value function_crc(const std::vector<Value>& args);
     Value function_len(const std::vector<Value>& args);
-    Value function_hex(const std::vector<Value>& args);
-    Value function_bit(const std::vector<Value>& args);
-    Value function_setbit(const std::vector<Value>& args);
-    Value function_resbit(const std::vector<Value>& args);
-    Value function_str(const std::vector<Value>& args);
-    Value function_asc(const std::vector<Value>& args);
-    Value function_val(const std::vector<Value>& args);
-    Value function_bin(const std::vector<Value>& args);
-    Value function_left(const std::vector<Value>& args);
-    Value function_right(const std::vector<Value>& args);
     Value function_upper(const std::vector<Value>& args);
     Value function_lower(const std::vector<Value>& args);
-    Value function_instr(const std::vector<Value>& args);
-    Value function_match(const std::vector<Value>& args);
-    Value function_from_bcd(const std::vector<Value>& args);
-    Value function_to_bcd(const std::vector<Value>& args);
     Value function_s8(const std::vector<Value>& args);
     Value function_abs(const std::vector<Value>& args);
     Value function_sign(const std::vector<Value>& args);
@@ -251,12 +268,9 @@ private:
     Value function_ceil(const std::vector<Value>& args);
     Value function_pow2(const std::vector<Value>& args);
     Value function_align(const std::vector<Value>& args);
-    Value function_is_bit_set(const std::vector<Value>& args);
     Value function_wrap(const std::vector<Value>& args);
     Value function_sum(const std::vector<Value>& args);
     Value function_avg(const std::vector<Value>& args);
-    Value function_argmax(const std::vector<Value>& args);
-    Value function_argmin(const std::vector<Value>& args);
     Value function_all(const std::vector<Value>& args);
     Value function_any(const std::vector<Value>& args);
     Value function_asm(const std::vector<Value>& args);
