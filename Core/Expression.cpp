@@ -319,6 +319,17 @@ Expression::Value Expression::operator_repeat(const std::vector<Value>& args) {
     if (count < 0) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Repeat count cannot be negative");
     
     const auto& v = args[0];
+    if (v.is_scalar()) {
+        double val = v.get_scalar(m_core);
+        int ival = (int)val;
+        if (ival >= -128 && ival <= 255) {
+            std::vector<uint8_t> res(count, (uint8_t)ival);
+            return Value(res);
+        } else {
+            std::vector<uint16_t> res(count, (uint16_t)ival);
+            return Value(res, true);
+        }
+    }
     if (v.is_bytes()) {
         std::vector<uint8_t> res;
         const auto& src = v.bytes();
@@ -535,8 +546,13 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
         {"!",   {100, false, true, &Expression::operator_logical_not, {
             {T::Number}, {T::Register}, {T::Symbol}
         }}},
-        {"x",   {90, true, false, &Expression::operator_repeat, {
-            {T::Bytes, T::Number}, {T::Words, T::Number}, {T::Address, T::Number}
+        {"x",   {15, true, false, &Expression::operator_repeat, {
+            {T::Bytes, T::Number}, {T::Words, T::Number}, {T::Address, T::Number},
+            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number},
+            {T::Bytes, T::Register}, {T::Words, T::Register}, {T::Address, T::Register},
+            {T::Number, T::Register}, {T::Register, T::Register}, {T::Symbol, T::Register},
+            {T::Bytes, T::Symbol}, {T::Words, T::Symbol}, {T::Address, T::Symbol},
+            {T::Number, T::Symbol}, {T::Register, T::Symbol}, {T::Symbol, T::Symbol}
         }}},
     };
     return ops;
@@ -1047,7 +1063,15 @@ Expression::Value Expression::function_copy(const std::vector<Value>& args) {
 std::vector<uint8_t> Expression::flatten_to_bytes(const Value& v) {
     std::vector<uint8_t> res;
     
-    if (v.is_scalar()) {
+    if (v.is_register()) {
+        uint16_t val = v.reg().read(m_core.get_cpu());
+        if (v.reg().is_16bit()) {
+            res.push_back(static_cast<uint8_t>(val & 0xFF));
+            res.push_back(static_cast<uint8_t>((val >> 8) & 0xFF));
+        } else {
+            res.push_back(static_cast<uint8_t>(val & 0xFF));
+        }
+    } else if (v.is_scalar()) {
         double d = v.get_scalar(m_core);
         int64_t val = static_cast<int64_t>(d);
 
@@ -1356,7 +1380,7 @@ bool Expression::parse_operator(const std::string& expr, size_t& i, std::vector<
         if (expr.substr(i, op_sym.length()) == op_sym) {
             bool is_valid_candidate = true;
             if (op_sym == "x") {
-                if (tokens.empty() || !(tokens.back().type == TokenType::BYTES || tokens.back().type == TokenType::WORDS || tokens.back().type == TokenType::ADDRESS || tokens.back().type == TokenType::RPAREN || tokens.back().type == TokenType::RBRACKET || tokens.back().type == TokenType::RBRACE)) {
+                if (tokens.empty() || !(tokens.back().type == TokenType::BYTES || tokens.back().type == TokenType::WORDS || tokens.back().type == TokenType::ADDRESS || tokens.back().type == TokenType::RPAREN || tokens.back().type == TokenType::RBRACKET || tokens.back().type == TokenType::RBRACE || tokens.back().type == TokenType::NUMBER || tokens.back().type == TokenType::REGISTER || tokens.back().type == TokenType::SYMBOL)) {
                     is_valid_candidate = false;
                 }
             } else if (std::isalnum(op_sym[0])) {
@@ -1434,9 +1458,15 @@ bool Expression::parse_punctuation(const std::string& expr, size_t& i, std::vect
 
 std::string Expression::parse_word(const std::string& expr, size_t& index) {
     std::string word;
+    bool starts_digit = false;
+    if (index < expr.length() && std::isdigit(expr[index])) starts_digit = true;
+
     while (index < expr.length()) {
         char c = expr[index];
         if (c == '.' && index + 1 < expr.length() && expr[index+1] == '.') {
+            break;
+        }
+        if (starts_digit && c == 'x' && word != "0") {
             break;
         }
         if (std::isalnum(c) || c == '$' || c == '_' || c == '.' || c == '%') {
@@ -1869,6 +1899,10 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                         address_mode = true;
                         const auto& vec = v.words();
                         addrs.insert(addrs.end(), vec.begin(), vec.end());
+                    } else if (v.is_bytes()) {
+                        address_mode = true;
+                        const auto& vec = v.bytes();
+                        for(auto b : vec) addrs.push_back((uint16_t)b);
                     } else {
                         syntax_error(ErrorCode::EVAL_TYPE_MISMATCH, "Invalid type in []: expected scalar, address, or words");
                     }
