@@ -319,17 +319,6 @@ Expression::Value Expression::operator_repeat(const std::vector<Value>& args) {
     if (count < 0) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Repeat count cannot be negative");
     
     const auto& v = args[0];
-    if (v.is_scalar()) {
-        double val = v.get_scalar(m_core);
-        int ival = (int)val;
-        if (ival >= -128 && ival <= 255) {
-            std::vector<uint8_t> res(count, (uint8_t)ival);
-            return Value(res);
-        } else {
-            std::vector<uint16_t> res(count, (uint16_t)ival);
-            return Value(res, true);
-        }
-    }
     if (v.is_bytes()) {
         std::vector<uint8_t> res;
         const auto& src = v.bytes();
@@ -548,10 +537,10 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
         }}},
         {"x",   {15, true, false, &Expression::operator_repeat, {
             {T::Bytes, T::Number}, {T::Words, T::Number}, {T::Address, T::Number},
-            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number},
             {T::Bytes, T::Register}, {T::Words, T::Register}, {T::Address, T::Register},
-            {T::Number, T::Register}, {T::Register, T::Register}, {T::Symbol, T::Register},
             {T::Bytes, T::Symbol}, {T::Words, T::Symbol}, {T::Address, T::Symbol},
+            {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number},
+            {T::Number, T::Register}, {T::Register, T::Register}, {T::Symbol, T::Register},
             {T::Number, T::Symbol}, {T::Register, T::Symbol}, {T::Symbol, T::Symbol}
         }}},
     };
