@@ -194,7 +194,7 @@ private:
         }
 
         std::stringstream ss;
-        ss << "Got (";
+        ss << "got (";
         for (size_t i = 0; i < args.size(); ++i) {
             ss << Value::type_to_string(args[i].type());
             if (i < args.size() - 1) ss << ", ";

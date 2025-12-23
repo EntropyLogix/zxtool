@@ -311,13 +311,11 @@ Expression::Value Expression::operator_step(const std::vector<Value>& args) {
         using T = typename std::decay<decltype(vec)>::type::value_type;
         std::vector<T> res;
         if (step > 0) {
-            for (size_t i = 0; i < vec.size(); i += step) {
+            for (size_t i = 0; i < vec.size(); i += step)
                 res.push_back(vec[i]);
-            }
         } else {
-            for (int i = (int)vec.size() - 1; i >= 0; i += step) {
+            for (int i = (int)vec.size() - 1; i >= 0; i += step)
                 res.push_back(vec[i]);
-            }
         }
         return res;
     };
@@ -575,27 +573,31 @@ Expression::Value Expression::function_high(const std::vector<Value>& args) {
 }
 
 Expression::Value Expression::function_checksum(const std::vector<Value>& args) {
-    const auto& bytes = args[0].bytes();
     uint32_t sum = 0;
-    for (uint8_t b : bytes) {
-        sum += b;
+    for (const auto& arg : args) {
+        auto bytes = arg.to_bytes(m_core);
+        for (uint8_t b : bytes)
+            sum += b;
     }
     return Value((double)sum);
 }
 
 Expression::Value Expression::function_crc(const std::vector<Value>& args) {
-    const auto& bytes = args[0].bytes();
     uint32_t crc = 0xFFFFFFFF;
-    for (uint8_t b : bytes) {
-        crc ^= b;
-        for (int k = 0; k < 8; k++) {
-            crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320 : (crc >> 1);
+    for (const auto& arg : args) {
+        auto bytes = arg.to_bytes(m_core);
+        for (uint8_t b : bytes) {
+            crc ^= b;
+            for (int k = 0; k < 8; k++)
+                crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320 : (crc >> 1);
         }
     }
     return Value((double)(~crc));
 }
 
 Expression::Value Expression::function_len(const std::vector<Value>& args) {
+    if (args.size() > 1)
+        return Value((double)args.size());
     const auto& v = args[0];
     if (v.is_string())
         return Value((double)v.string().length());
@@ -605,7 +607,7 @@ Expression::Value Expression::function_len(const std::vector<Value>& args) {
         return Value((double)v.words().size());
     if (v.is_address())
         return Value((double)v.address().size());
-    return Value(0.0);
+    return Value(1.0);
 }
 
 Expression::Value Expression::function_upper(const std::vector<Value>& args) {
@@ -618,11 +620,6 @@ Expression::Value Expression::function_lower(const std::vector<Value>& args) {
     std::string s = args[0].string();
     std::transform(s.begin(), s.end(), s.begin(), ::tolower);
     return Value(s);
-}
-
-Expression::Value Expression::function_s8(const std::vector<Value>& args) {
-    int val = (int)args[0].get_scalar(m_core);
-    return Value((double)(int8_t)(val & 0xFF));
 }
 
 Expression::Value Expression::function_abs(const std::vector<Value>& args) {
@@ -683,10 +680,28 @@ Expression::Value Expression::function_max(const std::vector<Value>& args) {
 }
 
 Expression::Value Expression::function_clamp(const std::vector<Value>& args) {
-    double v = args[0].get_scalar(m_core);
     double lo = args[1].get_scalar(m_core);
     double hi = args[2].get_scalar(m_core);
-    return Value(std::max(lo, std::min(v, hi)));
+    const auto& v = args[0];
+    if (v.is_bytes()) {
+        std::vector<uint8_t> res;
+        for (auto b : v.bytes())
+            res.push_back((uint8_t)std::max(lo, std::min((double)b, hi)));
+        return Value(res);
+    } else if (v.is_words()) {
+        std::vector<uint16_t> res;
+        for (auto w : v.words())
+            res.push_back((uint16_t)std::max(lo, std::min((double)w, hi)));
+        return Value(res, true);
+    } else if (v.is_address()) {
+        std::vector<uint16_t> res;
+        for (auto a : v.address())
+            res.push_back((uint16_t)std::max(lo, std::min((double)a, hi)));
+        return Value(res);
+    } else {
+        double val = v.get_scalar(m_core);
+        return Value(std::max(lo, std::min(val, hi)));
+    }
 }
 
 Expression::Value Expression::function_sin(const std::vector<Value>& args) {
@@ -738,80 +753,96 @@ Expression::Value Expression::function_wrap(const std::vector<Value>& args) {
 }
 
 Expression::Value Expression::function_sum(const std::vector<Value>& args) {
-    const auto& v = args[0];
     double sum = 0.0;
-    if (v.is_bytes()) {
-        for (auto b : v.bytes())
-            sum += b;
-    } else if (v.is_words()) {
-        for (auto w : v.words())
-            sum += w;
-    } else if (v.is_address()) {
-        for (auto a : v.address())
-            sum += a;
-    } else
-        sum = v.get_scalar(m_core);
+    for (const auto& v : args) {
+        if (v.is_bytes()) {
+            for (auto b : v.bytes())
+                sum += b;
+        } else if (v.is_words()) {
+            for (auto w : v.words())
+                sum += w;
+        } else if (v.is_address()) {
+            for (auto a : v.address())
+                sum += a;
+        } else
+            sum += v.get_scalar(m_core);
+    }
     return Value(sum);
 }
 
 Expression::Value Expression::function_avg(const std::vector<Value>& args) {
-    const auto& v = args[0];
     double sum = 0.0;
     size_t count = 0;
-    if (v.is_bytes()) {
-        for (auto b : v.bytes())
-            sum += b;
-        count = v.bytes().size();
-    } else if (v.is_words()) {
-        for (auto w : v.words())
-            sum += w;
-        count = v.words().size();
-    } else if (v.is_address()) {
-        for (auto a : v.address())
-            sum += a;
-        count = v.address().size();
-    } else
-        return v;
+    for (const auto& v : args) {
+        if (v.is_bytes()) {
+            for (auto b : v.bytes())
+                sum += b;
+            count += v.bytes().size();
+        } else if (v.is_words()) {
+            for (auto w : v.words())
+                sum += w;
+            count += v.words().size();
+        } else if (v.is_address()) {
+            for (auto a : v.address())
+                sum += a;
+            count += v.address().size();
+        } else {
+            sum += v.get_scalar(m_core);
+            count++;
+        }
+    }
     if (count == 0)
         return Value(0.0);
     return Value(sum / count);
 }
 
 Expression::Value Expression::function_all(const std::vector<Value>& args) {
-    double target = args[1].get_scalar(m_core);
+    if (args.empty())
+        return Value(0.0);
+    double target = args.back().get_scalar(m_core);
     bool result = true;
     auto process = [&](double val) { if (val != target) result = false; };
-
-    const auto& v = args[0];
-    if (v.is_bytes()) {
-        for (auto b : v.bytes()) process((double)b);
-    } else if (v.is_words()) {
-        for (auto w : v.words()) process((double)w);
-    } else if (v.is_address()) {
-        for (auto a : v.address()) process((double)a);
-    } else {
-        process(v.get_scalar(m_core));
+    for (size_t i = 0; i < args.size() - 1; ++i) {
+        const auto& v = args[i];
+        if (v.is_bytes()) {
+            for (auto b : v.bytes())
+                process((double)b);
+        } else if (v.is_words()) {
+            for (auto w : v.words())
+                process((double)w);
+        } else if (v.is_address()) {
+            for (auto a : v.address())
+                process((double)a);
+        } else
+            process(v.get_scalar(m_core));
+        if (!result)
+            break;
     }
     return Value(result ? 1.0 : 0.0);
 }
 
 Expression::Value Expression::function_any(const std::vector<Value>& args) {
-    double target = args[1].get_scalar(m_core);
+    if (args.empty())
+        return Value(0.0);
+    double target = args.back().get_scalar(m_core);
     bool result = false;
     auto process = [&](double val) { if (val == target) result = true; };
-
-    const auto& v = args[0];
-    if (v.is_bytes())
-        for (auto b : v.bytes())
-            process((double)b);
-    else if (v.is_words())
-        for (auto w : v.words())
-            process((double)w);
-    else if (v.is_address())
-        for (auto a : v.address())
-        process((double)a);
-    else
-        process(v.get_scalar(m_core));
+    for (size_t i = 0; i < args.size() - 1; ++i) {
+        const auto& v = args[i];
+        if (v.is_bytes()) {
+            for (auto b : v.bytes())
+                process((double)b);
+        } else if (v.is_words()) {
+            for (auto w : v.words())
+                process((double)w);
+        } else if (v.is_address()) {
+            for (auto a : v.address())
+                process((double)a);
+        } else
+            process(v.get_scalar(m_core));
+        if (result)
+            break;
+    }
     return Value(result ? 1.0 : 0.0);
 }
 
@@ -981,23 +1012,17 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"HI",   {1, &Expression::function_high, {
             {T::Number}, {T::Register}, {T::Symbol}
         }}},
-        {"CHECKSUM", {1, &Expression::function_checksum, {
-            {T::Bytes}
+        {"CHECKSUM", {-1, &Expression::function_checksum, {
         }}},
-        {"CRC", {1, &Expression::function_crc, {
-            {T::Bytes}
+        {"CRC", {-1, &Expression::function_crc, {
         }}},
-        {"LEN", {1, &Expression::function_len, {
-            {T::String}, {T::Bytes}, {T::Words}, {T::Address}
+        {"LEN", {-1, &Expression::function_len, {
         }}},
         {"UPPER", {1, &Expression::function_upper, {
             {T::String}
         }}},
         {"LOWER", {1, &Expression::function_lower, {
             {T::String}
-        }}},
-        {"S8", {1, &Expression::function_s8, {
-            {T::Number}, {T::Register}, {T::Symbol}
         }}},
         {"ABS", {1, &Expression::function_abs, {
             {T::Number}, {T::Register}, {T::Symbol}
@@ -1013,7 +1038,10 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"MAX", {-1, &Expression::function_max, {
         }}},
         {"CLAMP", {3, &Expression::function_clamp, {
-            {T::Number, T::Number, T::Number}
+            {T::Number, T::Number, T::Number},
+            {T::Bytes, T::Number, T::Number},
+            {T::Words, T::Number, T::Number},
+            {T::Address, T::Number, T::Number}
         }}},
         {"SIN", {1, &Expression::function_sin, {
             {T::Number}, {T::Register}, {T::Symbol}
@@ -1048,17 +1076,13 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"WRAP", {2, &Expression::function_wrap, {
             {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
         }}},
-        {"SUM", {1, &Expression::function_sum, {
-            {T::Bytes}, {T::Words}, {T::Address}
+        {"SUM", {-1, &Expression::function_sum, {
         }}},
-        {"AVG", {1, &Expression::function_avg, {
-            {T::Bytes}, {T::Words}, {T::Address}
+        {"AVG", {-1, &Expression::function_avg, {
         }}},
-        {"ALL", {2, &Expression::function_all, {
-            {T::Bytes, T::Number}, {T::Words, T::Number}, {T::Address, T::Number}
+        {"ALL", {-1, &Expression::function_all, {
         }}},
-        {"ANY", {2, &Expression::function_any, {
-            {T::Bytes, T::Number}, {T::Words, T::Number}, {T::Address, T::Number}
+        {"ANY", {-1, &Expression::function_any, {
         }}},
         {"ASM", {-1, &Expression::function_asm, {
             {T::String},
