@@ -16,7 +16,7 @@
 #include <map>
 
 struct Theme {
-    std::string header_focus = Terminal::rgb_fg(255, 255, 10);
+    std::string header_focus = Terminal::rgb_fg(109, 222, 111) + Terminal::BOLD;
     std::string header_blur = Terminal::rgb_fg(109, 222, 111);
     std::string separator = Terminal::rgb_fg(137, 137, 137);
     std::string address = Terminal::rgb_fg(20, 208, 255);
@@ -169,15 +169,15 @@ public:
             {"quit", &Dashboard::cmd_quit},
             {"q", &Dashboard::cmd_quit},
             {"set", &Dashboard::cmd_set},
-            {"!", &Dashboard::cmd_set},
+            {"! ", &Dashboard::cmd_set},
             {"undef", &Dashboard::cmd_undef}
         };
     }
     void run();
 
 private:    
-    enum Focus { FOCUS_MEMORY, FOCUS_REGS, FOCUS_STACK, FOCUS_CODE, FOCUS_WATCH, FOCUS_BREAKPOINTS, FOCUS_COUNT };
-    Focus m_focus = FOCUS_CODE;
+    enum Focus { FOCUS_MEMORY, FOCUS_REGS, FOCUS_STACK, FOCUS_CODE, FOCUS_WATCH, FOCUS_BREAKPOINTS, FOCUS_CMD, FOCUS_COUNT };
+    Focus m_focus = FOCUS_CMD;
 
     Debugger& m_debugger;
     replxx::Replxx& m_repl;

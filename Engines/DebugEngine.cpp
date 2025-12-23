@@ -14,6 +14,8 @@
 #include "../Core/Variables.h"
 #include "../Utils/Formatter.h"
 
+static constexpr const char* HISTORY_FILE = ".zxtool_history";
+
 std::string DebugView::format_header(const std::string& title, const std::string& extra) const {
     std::stringstream ss;
     if (m_has_focus)
@@ -353,24 +355,40 @@ void Debugger::next() {
 
 void Dashboard::run() {
     init();
-    m_repl.history_load(".zxtool_history");
+    m_repl.history_load(HISTORY_FILE);
     update_code_view();
     m_memory_view.set_address(m_debugger.get_core().get_cpu().get_PC());
     m_stack_view.set_address(m_debugger.get_core().get_cpu().get_SP());
     validate_focus();
+    const std::string prompt_str = "[COMMAND] ";
+    std::string last_command;
     while (m_running) {
         print_dashboard();
-        const char* input_cstr = m_repl.input("> ");
+        std::string prompt = (m_focus == FOCUS_CMD) ? (m_theme.header_focus + prompt_str + Terminal::RESET) : (Terminal::RESET + m_theme.header_blur + prompt_str + Terminal::RESET);
+        Focus start_focus = m_focus;
+        const char* input_cstr = m_repl.input(prompt.c_str());
         if (input_cstr == nullptr)
             break;
-        std::string input(input_cstr);
-        if (input.empty())
+        if (m_focus != start_focus) {
+            std::string buf = input_cstr;
+            if (!buf.empty()) {
+                m_repl.history_add(buf);
+                m_repl.invoke(replxx::Replxx::ACTION::HISTORY_LAST, 0);
+            }
             continue;
-        m_repl.history_add(input);
-        m_output_buffer << "> " << input << "\n";
+        }
+        std::string input(input_cstr);
+        if (input.empty()) {
+            if (!last_command.empty()) input = last_command;
+            else continue;
+        } else {
+            last_command = input;
+            m_repl.history_add(input);
+        }
+        m_output_buffer << input << "\n";
         handle_command(input);
     }
-    m_repl.history_save(".zxtool_history");
+    m_repl.history_save(HISTORY_FILE);
 }
 
 void Dashboard::validate_focus() {
@@ -734,6 +752,11 @@ void Dashboard::init() {
     
     auto bind_scroll = [&](char32_t key, int mem_delta, int code_delta, int stack_delta) {
         m_repl.bind_key(key, [this, mem_delta, code_delta, stack_delta](char32_t code) {
+        if (m_focus == FOCUS_CMD) {
+            if (code == replxx::Replxx::KEY::UP) return m_repl.invoke(replxx::Replxx::ACTION::HISTORY_PREVIOUS, code);
+            if (code == replxx::Replxx::KEY::DOWN) return m_repl.invoke(replxx::Replxx::ACTION::HISTORY_NEXT, code);
+            return replxx::Replxx::ACTION_RESULT::CONTINUE;
+        }
         if (m_focus == FOCUS_MEMORY)
             m_memory_view.scroll(mem_delta);
         else if (m_focus == FOCUS_CODE) {
@@ -754,8 +777,7 @@ void Dashboard::init() {
         m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT);
         validate_focus();
         print_dashboard();
-        m_repl.invoke(replxx::Replxx::ACTION::REPAINT, code);
-        return replxx::Replxx::ACTION_RESULT::CONTINUE;
+        return replxx::Replxx::ACTION_RESULT::RETURN;
     };
     m_repl.bind_key(replxx::Replxx::KEY::TAB, tab_handler);
 }
@@ -881,7 +903,7 @@ void Dashboard::print_dashboard() {
 
 void Dashboard::print_output_buffer() {
     if (m_output_buffer.tellp() > 0) {
-        std::cout << m_theme.highlight << "[OUTPUT]" << Terminal::RESET << "\n";
+        std::cout << m_theme.header_blur << "[OUTPUT]" << Terminal::RESET << "\n";
         std::cout << m_output_buffer.str();
         m_output_buffer.str("");
         m_output_buffer.clear();
