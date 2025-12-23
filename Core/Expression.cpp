@@ -1076,7 +1076,6 @@ bool Expression::parse_operator(const std::string& expr, size_t& i, std::vector<
     const auto& ops_map = get_operators();
     std::string matched_op;
     const OperatorInfo* op_info = nullptr;
-
     for (const auto& pair : ops_map) {
         const std::string& op_sym = pair.first;
         if (op_sym == "_" || op_sym == "#")
@@ -1672,7 +1671,6 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
         Variable* var = m_core.get_context().getVariables().find(name);
         while (i < lhs.length() && std::isspace(lhs[i]))
             i++;
-        
         if (i < lhs.length() && lhs[i] == '[') {
             if (!var) syntax_error(ErrorCode::LOOKUP_UNKNOWN_VARIABLE, name);
             i++;
@@ -1683,12 +1681,11 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
                 if (lhs[i] == ']') depth--;
                 if (depth > 0) i++;
             }
-            if (depth != 0) syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, "]");
-            
+            if (depth != 0)
+                syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, "]");
             std::string idx_str = lhs.substr(start, i - start - 1);
             Value idx_val = evaluate(idx_str);
             int idx = (int)idx_val.get_scalar(m_core);
-            
             Value current = var->getValue();
             if (current.is_bytes()) {
                 auto data = current.bytes();
@@ -1710,16 +1707,15 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
                 }
             }
         } else {
-            if (var) {
+            if (var)
                 var->setValue(rhs);
-            } else {
+            else {
                 Variable v(name, rhs, "");
                 m_core.get_context().getVariables().add(v);
             }
         }
         return;
     }
-
     Value target;
     try {
         target = evaluate(lhs);
@@ -1733,7 +1729,6 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
         }
         throw;
     }
-
     if (target.is_register()) {
         uint16_t num = (uint16_t)rhs.get_scalar(m_core);
         target.reg().write(m_core.get_cpu(), num);
@@ -1747,16 +1742,17 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
     } else if (target.is_address()) {
         auto& mem = m_core.get_memory();
         const auto& addrs = target.address();
-        if (addrs.empty()) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Target address list is empty");
-        
+        if (addrs.empty())
+            syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Target address list is empty");
         std::vector<uint8_t> data = rhs.to_bytes(m_core);
         for (size_t k = 0; k < data.size(); ++k) {
             uint16_t addr;
-            if (k < addrs.size()) addr = addrs[k];
-            else addr = addrs.back() + (uint16_t)(k - (addrs.size() - 1));
+            if (k < addrs.size())
+                addr = addrs[k];
+            else
+                addr = addrs.back() + (uint16_t)(k - (addrs.size() - 1));
             mem.write(addr, data[k]);
         }
-    } else {
+    } else
         syntax_error(ErrorCode::EVAL_TYPE_MISMATCH, "Left side must be a register, symbol, variable or address list");
-    }
 }
