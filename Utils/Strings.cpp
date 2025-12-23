@@ -188,7 +188,7 @@ std::pair<std::string, std::string> Strings::split_once(const std::string& s, ch
     return {s.substr(0, pos), s.substr(pos + 1)};
 }
 
-std::pair<std::string, std::string> Strings::split_once_any(const std::string& s, const std::string& delimiters) {
+std::pair<std::string, std::string> Strings::split_once(const std::string& s, const std::string& delimiters) {
     size_t pos = s.find_first_of(delimiters);
     if (pos == std::string::npos)
         return {s, ""};

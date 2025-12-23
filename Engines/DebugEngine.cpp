@@ -401,39 +401,18 @@ void Dashboard::validate_focus() {
     }
 }
 
-void Dashboard::cmd_eval(const std::string& expr) {
+void Dashboard::perform_evaluate(const std::string& expr, bool detailed) {
     try {
-        if (is_assignment(expr)) {
-            cmd_set(expr);
-            return;
-        }
         Expression eval(m_debugger.get_core());
         Expression::Value val = eval.evaluate(expr);
-
-        std::string prefix = "";
-        if (!expr.empty() && expr[0] == '@') {
-            std::string var_name = expr.substr(1);
-            bool is_var_name = true;
-            for(char c : var_name)
-                if(!isalnum(c) && c != '_') is_var_name = false;
-            if (is_var_name)
-                prefix = expr + " = ";
-        }
-        if (val.is_register()) {
-            std::string name = val.reg().getName();
-            uint16_t v = val.reg().read(m_debugger.get_core().get_cpu());
-            if (val.reg().is_16bit())
-                m_output_buffer << prefix << name << "=$" << Strings::hex(v) << " (" << v << ")\n";
-            else
-                m_output_buffer << prefix << name << "=$" << Strings::hex((uint8_t)v) << " (" << v << ")\n";
-        } else if (val.is_symbol()) {
-            uint16_t v = val.symbol().read();
-            m_output_buffer << prefix << val.symbol().getName() << " ($" << Strings::hex(v) << ")\n";
-        } else
-            m_output_buffer << prefix << format(val) << "\n";
+        m_output_buffer << format(val, detailed) << "\n";
     } catch (const std::exception& e) {
         m_output_buffer << "Error: " << e.what() << "\n";
     }
+}
+
+void Dashboard::cmd_evaluate(const std::string& args) {
+    perform_evaluate(args, false);
 }
 
 void Dashboard::cmd_quit(const std::string&) {
@@ -451,7 +430,7 @@ void Dashboard::cmd_set(const std::string& args_str) {
     if (args.find('=') != std::string::npos)
         parts = Strings::split_once(args, '=');
     else
-        parts = Strings::split_once_any(args, " \t");
+        parts = Strings::split_once(args, " \t");
     lhs_str = Strings::trim(parts.first);
     rhs_str = Strings::trim(parts.second);
     if (lhs_str.empty() || rhs_str.empty()) {
@@ -484,17 +463,11 @@ void Dashboard::handle_command(const std::string& input) {
     std::string clean_input = Strings::trim(input);
     if (clean_input.empty())
         return;
-    auto parts = Strings::split(clean_input);
-    if (parts.empty())
-        return;
-    std::string cmd = parts[0];
-    std::string args;
-    for (size_t i = 1; i < parts.size(); ++i)
-        args += (i > 1 ? " " : "") + parts[i];
-    if (cmd == "?") {
-        cmd_eval(args);
-        return;
-    }
+
+    auto parts = Strings::split_once(clean_input, " \t");
+    std::string cmd = parts.first;
+    std::string args = Strings::trim(parts.second);
+
     auto it = m_commands.find(cmd);
     if (it != m_commands.end())
         (this->*(it->second))(args);
@@ -828,12 +801,20 @@ std::string Dashboard::format(const Expression::Value& val, bool detailed) {
         case Expression::Value::Type::Address:
             ss << format_sequence(val.address(), "[", "]", ", ", true, true);
             break;
-        case Expression::Value::Type::Register:
-            ss << val.reg().getName();
+        case Expression::Value::Type::Register: {
+            std::string name = val.reg().getName();
+            uint16_t v = val.reg().read(m_debugger.get_core().get_cpu());
+            if (val.reg().is_16bit())
+                ss << name << "=$" << Strings::hex(v) << " (" << v << ")";
+            else
+                ss << name << "=$" << Strings::hex((uint8_t)v) << " (" << v << ")";
             break;
-        case Expression::Value::Type::Symbol:
-            ss << val.symbol().getName();
+        }
+        case Expression::Value::Type::Symbol: {
+            uint16_t v = val.symbol().read();
+            ss << val.symbol().getName() << " ($" << Strings::hex(v) << ")";
             break;
+        }
     }
     return ss.str();
 }

@@ -23,7 +23,7 @@ public:
     static std::string trim(const std::string& s);
     static std::vector<std::string> split(const std::string& s, char delimiter = ' ');
     static std::pair<std::string, std::string> split_once(const std::string& s, char delimiter);
-    static std::pair<std::string, std::string> split_once_any(const std::string& s, const std::string& delimiters);
+    static std::pair<std::string, std::string> split_once(const std::string& s, const std::string& delimiters);
 };
 
 #endif//__STRINGS_H__

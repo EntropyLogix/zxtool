@@ -2,12 +2,7 @@
 #define __DEBUGENGINE_H__
 
 #include "Engine.h"
-#include "../Core/Core.h"
-#include "../Core/CodeMap.h"
-#include "../Cmd/Options.h"
-#include "../Core/Expression.h"
-#include "../Utils/Terminal.h"
-#include <replxx.hxx>
+
 #include <vector>
 #include <string>
 #include <functional>
@@ -15,6 +10,13 @@
 #include <algorithm>
 #include <iostream>
 #include <map>
+#include <replxx.hxx>
+
+#include "../Core/Core.h"
+#include "../Core/CodeMap.h"
+#include "../Cmd/Options.h"
+#include "../Core/Expression.h"
+#include "../Utils/Terminal.h"
 
 struct Theme {
     std::string header_focus = Terminal::rgb_fg(109, 222, 111) + Terminal::BOLD;
@@ -164,13 +166,11 @@ public:
     {
         m_debugger.set_logger([this](const std::string& msg){ log(msg); });
         m_commands = {
-            {"evaluate", &Dashboard::cmd_eval},
-            {"eval", &Dashboard::cmd_eval},
-            {"?", &Dashboard::cmd_eval},
+            {"evaluate", &Dashboard::cmd_evaluate},
+            {"eval", &Dashboard::cmd_evaluate},
             {"quit", &Dashboard::cmd_quit},
             {"q", &Dashboard::cmd_quit},
             {"set", &Dashboard::cmd_set},
-            {"! ", &Dashboard::cmd_set},
             {"undef", &Dashboard::cmd_undef}
         };
     }
@@ -209,20 +209,16 @@ private:
     void log(const std::string& msg) { m_output_buffer << msg << "\n"; }
     void update_code_view();
 
-    void cmd_eval(const std::string& args);
+    void cmd_evaluate(const std::string& args);
     void cmd_quit(const std::string& args);
     void cmd_set(const std::string& args);
     void cmd_undef(const std::string& args);
+    
+    void perform_evaluate(const std::string& expr, bool detailed);
     std::string format(const Expression::Value& val, bool detailed = false);
     bool is_assignment(const std::string& expr);
 
-    template <typename T>
-    std::string format_sequence(const std::vector<T>& data, 
-                               const std::string& prefix, 
-                               const std::string& suffix, 
-                               const std::string& separator,
-                               bool use_hex_prefix,
-                               bool allow_step_gt_1);
+    template <typename T> std::string format_sequence(const std::vector<T>& data, const std::string& prefix, const std::string& suffix, const std::string& separator, bool use_hex_prefix, bool allow_step_gt_1);
 };
 
 class DebugEngine : public Engine {
