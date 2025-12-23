@@ -305,8 +305,8 @@ Expression::Value Expression::operator_range(const std::vector<Value>& args) {
 
 Expression::Value Expression::operator_step(const std::vector<Value>& args) {
     int step = (int)args[1].get_scalar(m_core);
-    if (step == 0) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Step cannot be zero");
-
+    if (step == 0)
+        syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Step cannot be zero");
     auto process = [&](const auto& vec) {
         using T = typename std::decay<decltype(vec)>::type::value_type;
         std::vector<T> res;
