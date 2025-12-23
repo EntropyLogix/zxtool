@@ -5,6 +5,7 @@
 #include "../Core/Core.h"
 #include "../Core/CodeMap.h"
 #include "../Cmd/Options.h"
+#include "../Core/Expression.h"
 #include "../Utils/Terminal.h"
 #include <replxx.hxx>
 #include <vector>
@@ -208,11 +209,20 @@ private:
     void log(const std::string& msg) { m_output_buffer << msg << "\n"; }
     void update_code_view();
 
-    void perform_eval(const std::string& expr);
     void cmd_eval(const std::string& args);
     void cmd_quit(const std::string& args);
     void cmd_set(const std::string& args);
     void cmd_undef(const std::string& args);
+    std::string format(const Expression::Value& val, bool detailed = false);
+    bool is_assignment(const std::string& expr);
+
+    template <typename T>
+    std::string format_sequence(const std::vector<T>& data, 
+                               const std::string& prefix, 
+                               const std::string& suffix, 
+                               const std::string& separator,
+                               bool use_hex_prefix,
+                               bool allow_step_gt_1);
 };
 
 class DebugEngine : public Engine {

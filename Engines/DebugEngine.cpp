@@ -12,7 +12,6 @@
 #include "../Utils/Terminal.h"
 #include "../Core/Expression.h"
 #include "../Core/Variables.h"
-#include "../Utils/Formatter.h"
 
 static constexpr const char* HISTORY_FILE = ".zxtool_history";
 
@@ -237,7 +236,8 @@ std::vector<std::string> CodeView::render() {
             hex_ss << Strings::hex(line.bytes[0]) << " " << Strings::hex(line.bytes[1]) << " ..";
         else {
             for(size_t i=0; i<line.bytes.size(); ++i) {
-                if (i > 0) hex_ss << " ";
+                if (i > 0)
+                    hex_ss << " ";
                 hex_ss << Strings::hex(line.bytes[i]);
             }
         }
@@ -258,32 +258,33 @@ std::vector<std::string> CodeView::render() {
             mn_ss << " ";
             format_operands(line, mn_ss, m_theme.operand_num, rst);
         }
-        
         std::string mn_str = mn_ss.str();
-        // Truncate if too long, then pad if too short (or just right)
         ss << Strings::padding(Strings::truncate(mn_str, 15), 15);
-
-        // ZONE 5: Comment (35-79)
         const Comment* inline_cmt = ctx.getComments().find((uint16_t)line.address, Comment::Type::Inline);
         if (inline_cmt) {
              const auto& comment = inline_cmt->getText();
              if (!comment.empty()) {
                  std::string cmt_full = "; " + comment;
-                 if (cmt_full.length() > 45) {
+                 if (cmt_full.length() > 45)
                      cmt_full = cmt_full.substr(0, 42) + "...";
-                 }
                  ss << m_theme.comment << cmt_full << Terminal::RESET;
              }
         }
-
         if (m_width > 0) {
             std::string s = ss.str();
-            if (is_pc) s += m_theme.pc_bg;
+            if (is_pc)
+                s += m_theme.pc_bg;
             s = Strings::padding(s, m_width);
             s += Terminal::RESET; 
-            if (lines_count < m_rows) { lines_out.push_back(s); lines_count++; }
+            if (lines_count < m_rows) {
+                lines_out.push_back(s);
+                lines_count++;
+            }
         } else
-            if (lines_count < m_rows) { lines_out.push_back(ss.str()); lines_count++; }
+            if (lines_count < m_rows) {
+                lines_out.push_back(ss.str());
+                lines_count++;
+            }
         first_line = false;
     }
     return lines_out;
@@ -300,10 +301,9 @@ void CodeView::scroll(int delta) {
 }
 
 bool Debugger::check_breakpoints(uint16_t pc) {
-    for (const auto& bp : m_breakpoints) {
+    for (const auto& bp : m_breakpoints)
         if (bp.enabled && bp.addr == pc)
             return true;
-    }
     return false;
 }
 
@@ -379,8 +379,9 @@ void Dashboard::run() {
         }
         std::string input(input_cstr);
         if (input.empty()) {
-            if (!last_command.empty()) input = last_command;
-            else continue;
+            if (last_command.empty())
+                continue;
+            input = last_command;
         } else {
             last_command = input;
             m_repl.history_add(input);
@@ -393,58 +394,16 @@ void Dashboard::run() {
 
 void Dashboard::validate_focus() {
     int attempts = 0;
-    while (attempts < FOCUS_COUNT && (
-        (m_focus == FOCUS_MEMORY && !m_show_mem) ||
-            (m_focus == FOCUS_REGS && !m_show_regs) ||
-            (m_focus == FOCUS_STACK && !m_show_stack) ||
-            (m_focus == FOCUS_CODE && !m_show_code) ||
-            (m_focus == FOCUS_WATCH && !m_show_watch) ||
-            (m_focus == FOCUS_BREAKPOINTS && !m_show_watch)
-        )) {
-            m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT);
-            attempts++;
-        }
+    while (attempts < FOCUS_COUNT && ((m_focus == FOCUS_MEMORY && !m_show_mem) || (m_focus == FOCUS_REGS && !m_show_regs) || (m_focus == FOCUS_STACK && !m_show_stack) ||
+                                      (m_focus == FOCUS_CODE && !m_show_code) || (m_focus == FOCUS_WATCH && !m_show_watch) || (m_focus == FOCUS_BREAKPOINTS && !m_show_watch))) {
+        m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT);
+        attempts++;
+    }
 }
 
-void Dashboard::perform_eval(const std::string& expr) {
-    int depth = 0;
-    bool in_string = false;
-    char quote_char = 0;
-    bool is_assignment = false;
-
-    for (size_t i = 0; i < expr.length(); ++i) {
-        char c = expr[i];
-        if (in_string) {
-            if (c == quote_char) in_string = false;
-            continue;
-        }
-        if (c == '"' || c == '\'') {
-            in_string = true;
-            quote_char = c;
-            continue;
-        }
-        if (c == '(' || c == '[' || c == '{') {
-            depth++;
-        } else if (c == ')' || c == ']' || c == '}') {
-            depth--;
-        } else if (c == '=' && depth == 0) {
-            bool is_cmp = false;
-            if (i > 0) {
-                char prev = expr[i-1];
-                if (prev == '!' || prev == '<' || prev == '>' || prev == '=') is_cmp = true;
-            }
-            if (i + 1 < expr.length()) {
-                char next = expr[i+1];
-                if (next == '=') is_cmp = true;
-            }
-            if (!is_cmp) {
-                is_assignment = true;
-                break;
-            }
-        }
-    }
-
-    if (is_assignment) {
+void Dashboard::cmd_eval(const std::string& expr) {
+    try {
+    if (is_assignment(expr)) {
         cmd_set(expr);
         return;
     }
@@ -472,13 +431,8 @@ void Dashboard::perform_eval(const std::string& expr) {
         uint16_t v = val.symbol().read();
         m_output_buffer << prefix << val.symbol().getName() << " ($" << Strings::hex(v) << ")\n";
     } else {
-        m_output_buffer << prefix << Formatter::format_value(val) << "\n";
+        m_output_buffer << prefix << format(val) << "\n";
     }
-}
-
-void Dashboard::cmd_eval(const std::string& expr) {
-    try {
-        perform_eval(expr);
     } catch (const std::exception& e) {
         m_output_buffer << "Error: " << e.what() << "\n";
     }
@@ -521,182 +475,9 @@ void Dashboard::cmd_set(const std::string& args_str) {
 
     try {
         Expression eval(m_debugger.get_core());
-
-        // Handle indexed variable assignment: @var[index] = value
-        if (lhs_str.size() > 1 && lhs_str[0] == '@') {
-            size_t bracket_start = lhs_str.find('[');
-            size_t bracket_end = lhs_str.rfind(']');
-            if (bracket_start != std::string::npos && bracket_end != std::string::npos && bracket_end > bracket_start) {
-                std::string var_name = lhs_str.substr(1, bracket_start - 1);
-                Strings::trim(var_name);
-                
-                bool is_valid_name = true;
-                for(char c : var_name) if(!isalnum(c) && c != '_') is_valid_name = false;
-                
-                if (is_valid_name) {
-                    auto* var = m_debugger.get_core().get_context().getVariables().find(var_name);
-                    if (var) {
-                        std::string index_expr = lhs_str.substr(bracket_start + 1, bracket_end - bracket_start - 1);
-                        Expression::Value index_val = eval.evaluate(index_expr);
-                        Expression::Value rhs_val = eval.evaluate(rhs_str);
-                        
-                        int index = (int)index_val.get_scalar(m_debugger.get_core());
-                        Expression::Value current_val = var->getValue();
-                        bool updated = false;
-                        Expression::Value new_val;
-
-                        if (current_val.is_bytes()) {
-                            std::vector<uint8_t> vec = current_val.bytes();
-                            if (index >= 0 && index < (int)vec.size()) {
-                                vec[index] = (uint8_t)rhs_val.get_scalar(m_debugger.get_core());
-                                new_val = Expression::Value(vec);
-                                updated = true;
-                            }
-                        } else if (current_val.is_words()) {
-                            std::vector<uint16_t> vec = current_val.words();
-                            if (index >= 0 && index < (int)vec.size()) {
-                                vec[index] = (uint16_t)rhs_val.get_scalar(m_debugger.get_core());
-                                new_val = Expression::Value(vec, true);
-                                updated = true;
-                            }
-                        } else if (current_val.is_address()) {
-                            std::vector<uint16_t> vec = current_val.address();
-                            if (index >= 0 && index < (int)vec.size()) {
-                                vec[index] = (uint16_t)rhs_val.get_scalar(m_debugger.get_core());
-                                new_val = Expression::Value(vec);
-                                updated = true;
-                            }
-                        } else if (current_val.is_string()) {
-                            std::string s = current_val.string();
-                            if (index >= 0 && index < (int)s.size()) {
-                                s[index] = (char)rhs_val.get_scalar(m_debugger.get_core());
-                                new_val = Expression::Value(s);
-                                updated = true;
-                            }
-                        } else {
-                             m_output_buffer << "Error: Variable @" << var_name << " is not a collection.\n";
-                             return;
-                        }
-
-                        if (updated) {
-                            Variable v(var_name, new_val, ""); 
-                            m_debugger.get_core().get_context().getVariables().add(v);
-                            m_output_buffer << "Updated variable @" << var_name << "[" << index << "] = " << Formatter::format_value(rhs_val) << "\n";
-                            return;
-                        } else {
-                            m_output_buffer << "Error: Index " << index << " out of bounds for variable @" << var_name << ".\n";
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Check for direct variable assignment (overwrite value)
-        if (lhs_str.size() > 1 && lhs_str[0] == '@') {
-            std::string var_name = lhs_str.substr(1);
-            bool is_valid_name = true;
-            for(char c : var_name) if(!isalnum(c) && c != '_') is_valid_name = false;
-            
-            if (is_valid_name) {
-                Expression::Value val = eval.evaluate(rhs_str);
-                Variable v(var_name, val, rhs_str);
-                m_debugger.get_core().get_context().getVariables().add(v);
-                m_output_buffer << "Updated variable @" << var_name << " = " << Formatter::format_value(val) << "\n";
-                return;
-            }
-        }
-
-        Expression::Value target = eval.evaluate(lhs_str);
         Expression::Value val = eval.evaluate(rhs_str);
-        
-        if (target.is_register()) {
-            uint16_t num = (uint16_t)val.get_scalar(m_debugger.get_core());
-            target.reg().write(m_debugger.get_core().get_cpu(), num);
-            m_output_buffer << "Set register " << target.reg().getName() << " to " << Strings::hex(num) << "\n";
-        } else if (target.is_symbol()) {
-            uint16_t num = (uint16_t)val.get_scalar(m_debugger.get_core());
-            std::string name = target.symbol().getName();
-            auto& ctx = m_debugger.get_core().get_context();
-            Symbol::Type type = target.symbol().getType();
-            ctx.getSymbols().remove(name);
-            ctx.getSymbols().add(Symbol(name, num, type));
-            m_output_buffer << "Set symbol " << name << " to " << Strings::hex(num) << "\n";
-        } else if (target.is_address()) {
-            auto& mem = m_debugger.get_core().get_memory();
-            const auto& addrs = target.address();
-            std::vector<std::pair<uint16_t, uint8_t>> writes;
-            
-            if (addrs.empty()) {
-                m_output_buffer << "Error: Target address list is empty.\n";
-                return;
-            }
-
-            std::vector<uint8_t> data = val.flatten(m_debugger.get_core());
-            
-            for (size_t i = 0; i < data.size(); ++i) {
-                uint16_t addr;
-                if (i < addrs.size()) {
-                    addr = addrs[i];
-                } else {
-                    addr = addrs.back() + (uint16_t)(i - (addrs.size() - 1));
-                }
-                mem.write(addr, data[i]);
-                writes.push_back({addr, data[i]});
-            }
-
-            m_output_buffer << "Written " << writes.size() << " byte(s):\n";
-            size_t limit = 8;
-            for (size_t i = 0; i < writes.size(); ++i) {
-                if (i == limit && writes.size() > limit) {
-                    m_output_buffer << "  ... (" << (writes.size() - limit) << " more)\n";
-                    break;
-                }
-                m_output_buffer << "  [" << Strings::hex(writes[i].first) << "] = $" << Strings::hex(writes[i].second) 
-                                   << " (" << (std::isprint(writes[i].second) ? (char)writes[i].second : '.') << ")\n";
-            }
-        } else {
-            // Jeśli dotarliśmy tutaj, to lewa strona została poprawnie ewaluowana do wartości (np. liczby, stringa),
-            // ale nie jest to rejestr, symbol ani lista adresów.
-            // Ponieważ obsłużyliśmy przypisanie do zmiennej wyżej, tutaj zgłaszamy błąd.
-            m_output_buffer << "Error: Left side must be a register, symbol, or address list.\n";
-        }
-
-    } catch (const Expression::Error& e) {
-        if (e.code() == Expression::ErrorCode::LOOKUP_UNKNOWN_VARIABLE) {
-            // Zmienna nie istnieje - tworzymy nową
-            std::string name = e.detail();
-            try {
-                Expression eval(m_debugger.get_core());
-                Expression::Value val = eval.evaluate(rhs_str);
-                Variable v(name, val, rhs_str);
-                m_debugger.get_core().get_context().getVariables().add(v);
-                m_output_buffer << "Created variable @" << name << " = " << Formatter::format_value(val) << "\n";
-            } catch (const std::exception& rhs_e) {
-                m_output_buffer << "Error evaluating value: " << rhs_e.what() << "\n";
-            }
-        } else if (e.code() == Expression::ErrorCode::LOOKUP_UNKNOWN_SYMBOL) {
-            // Symbol nie istnieje - tworzymy nowy
-            std::string name = e.detail();
-            try {
-                Expression eval(m_debugger.get_core());
-                Expression::Value val = eval.evaluate(rhs_str);
-                
-                double num_val = 0;
-                if (val.is_number()) num_val = val.number();
-                else if (val.is_register()) num_val = val.reg().read(m_debugger.get_core().get_cpu());
-                else if (val.is_symbol()) num_val = val.symbol().read();
-                else throw std::runtime_error("Symbol value must be a number");
-
-                Symbol s(name, (uint16_t)num_val, Symbol::Type::Label);
-                m_debugger.get_core().get_context().getSymbols().add(s);
-                m_output_buffer << "Created symbol " << name << " = " << Formatter::format_value(Expression::Value(num_val)) << "\n";
-            } catch (const std::exception& rhs_e) {
-                m_output_buffer << "Error evaluating value: " << rhs_e.what() << "\n";
-            }
-        } else {
-            m_output_buffer << "Error: " << e.what() << "\n";
-        }
+        eval.assign(lhs_str, val);
+        m_output_buffer << lhs_str << " = " << format(val) << "\n";
     } catch (const std::exception& e) {
         m_output_buffer << "Error: " << e.what() << "\n";
     }
@@ -971,4 +752,156 @@ int DebugEngine::run() {
     Dashboard dashboard(debugger, m_repl);
     dashboard.run();
     return 0;
+}
+
+// Helper to format sequences with collapsing logic
+template <typename T>
+std::string Dashboard::format_sequence(const std::vector<T>& data, 
+                                   const std::string& prefix, 
+                                   const std::string& suffix, 
+                                   const std::string& separator,
+                                   bool use_hex_prefix,
+                                   bool allow_step_gt_1) {
+    std::stringstream ss;
+    ss << prefix;
+    for (size_t i = 0; i < data.size(); ) {
+        if (i > 0) ss << separator;
+        
+        size_t best_len = 1;
+        int64_t best_step = 0;
+
+        if (i + 1 < data.size()) {
+            int64_t diff = (int64_t)data[i+1] - (int64_t)data[i];
+            bool valid_step = (std::abs(diff) == 1) || (allow_step_gt_1 && diff != 0);
+            
+            if (valid_step) {
+                size_t j = i + 1;
+                while (j + 1 < data.size()) {
+                    if ((int64_t)data[j+1] - (int64_t)data[j] != diff) break;
+                    j++;
+                }
+                size_t len = j - i + 1;
+                // Collapse rule: Only collapse if sequence length > 5
+                if (len > 5) { best_len = len; best_step = diff; }
+            }
+        }
+
+        auto fmt_item = [&](T v) {
+            if (use_hex_prefix) ss << "$";
+            ss << Strings::hex(v);
+        };
+
+        if (best_len > 1) {
+            fmt_item(data[i]);
+            ss << "..";
+            fmt_item(data[i + best_len - 1]);
+            if (std::abs(best_step) != 1) {
+                ss << ":";
+                ss << std::dec << std::abs(best_step);
+            }
+            i += best_len;
+        } else {
+            fmt_item(data[i]);
+            i++;
+        }
+    }
+    ss << suffix;
+    return ss.str();
+}
+
+std::string Dashboard::format(const Expression::Value& val, bool detailed) {
+    std::stringstream ss;
+    
+    if (detailed) {
+        switch (val.type()) {
+            case Expression::Value::Type::Number: ss << "Number: "; break;
+            case Expression::Value::Type::Register: ss << "Register: "; break;
+            case Expression::Value::Type::Symbol: ss << "Symbol: "; break;
+            case Expression::Value::Type::String: ss << "String(" << val.string().length() << "): "; break;
+            case Expression::Value::Type::Bytes: ss << "Bytes(" << val.bytes().size() << "): "; break;
+            case Expression::Value::Type::Words: ss << "Words(" << val.words().size() << "): "; break;
+            case Expression::Value::Type::Address: ss << "Address(" << val.address().size() << "): "; break;
+        }
+    }
+
+    switch (val.type()) {
+        case Expression::Value::Type::Number: {
+            double d = val.number();
+            if (d == (int64_t)d) {
+                int64_t i = (int64_t)d;
+                if (i >= 0 && i <= 255) {
+                    ss << "$" << Strings::hex((uint8_t)i) << " (" << i << ")";
+                } else if (i >= -32768 && i <= 65535) {
+                    ss << "$" << Strings::hex((uint16_t)i) << " (" << i << ")";
+                } else {
+                    std::stringstream temp_ss;
+                    temp_ss << std::hex << std::uppercase << i;
+                    ss << "$" << temp_ss.str() << " (" << i << ")";
+                }
+            } else {
+                ss << d;
+            }
+            break;
+        }
+        case Expression::Value::Type::String:
+            ss << "\"" << val.string() << "\"";
+            break;
+        case Expression::Value::Type::Bytes:
+            ss << format_sequence(val.bytes(), "{", "}", " ", true, true);
+            break;
+        case Expression::Value::Type::Words:
+            ss << format_sequence(val.words(), "W{", "}", " ", true, true);
+            break;
+        case Expression::Value::Type::Address:
+            ss << format_sequence(val.address(), "[", "]", ", ", true, true);
+            break;
+        case Expression::Value::Type::Register:
+            ss << val.reg().getName();
+            break;
+        case Expression::Value::Type::Symbol:
+            ss << val.symbol().getName();
+            break;
+    }
+    return ss.str();
+}
+
+bool Dashboard::is_assignment(const std::string& expr) {
+    int depth = 0;
+    bool in_string = false;
+    char quote_char = 0;
+
+    for (size_t i = 0; i < expr.length(); ++i) {
+        char c = expr[i];
+        if (in_string) {
+            if (c == quote_char)
+                in_string = false;
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            in_string = true;
+            quote_char = c;
+            continue;
+        }
+        if (c == '(' || c == '[' || c == '{') {
+            depth++;
+        } else if (c == ')' || c == ']' || c == '}') {
+            depth--;
+        } else if (c == '=' && depth == 0) {
+            bool is_cmp = false;
+            if (i > 0) {
+                char prev = expr[i-1];
+                if (prev == '!' || prev == '<' || prev == '>' || prev == '=')
+                    is_cmp = true;
+            }
+            if (i + 1 < expr.length()) {
+                char next = expr[i+1];
+                if (next == '=')
+                    is_cmp = true;
+            }
+            if (!is_cmp) {
+                return true;
+            }
+        }
+    }
+    return false;
 }

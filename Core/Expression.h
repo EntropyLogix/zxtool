@@ -80,8 +80,8 @@ public:
 
         Type type() const { return m_type; }
         double get_scalar(Core& core) const;
-        std::vector<uint8_t> flatten(Core& core) const;
-        std::vector<uint16_t> flatten_words(Core& core) const;
+        std::vector<uint8_t> to_bytes(Core& core) const;
+        std::vector<uint16_t> to_words(Core& core) const;
 
         static std::string type_to_string(Type t) {
             switch (t) {
@@ -277,6 +277,9 @@ private:
     Value function_copy(const std::vector<Value>& args);
     Value function_bytes(const std::vector<Value>& args);
     Value function_words(const std::vector<Value>& args);
+
+    template <typename T>
+    void copy_at(std::vector<T>& dest, const std::vector<T>& src, int index);
 
 };
 
