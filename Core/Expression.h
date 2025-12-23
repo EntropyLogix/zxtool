@@ -277,6 +277,12 @@ private:
     Value function_copy(const std::vector<Value>& args);
     Value function_bytes(const std::vector<Value>& args);
     Value function_words(const std::vector<Value>& args);
+    Value function_str(const std::vector<Value>& args);
+    Value function_val(const std::vector<Value>& args);
+    Value function_hex(const std::vector<Value>& args);
+    Value function_bin(const std::vector<Value>& args);
+    Value function_bcd(const std::vector<Value>& args);
+    Value function_dec(const std::vector<Value>& args);
 
     template <typename T>
     void copy_at(std::vector<T>& dest, const std::vector<T>& src, int index);

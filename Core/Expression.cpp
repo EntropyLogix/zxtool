@@ -9,17 +9,13 @@
 #include <type_traits>
 #include <cstring>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+static constexpr double PI = 3.14159265358979323846;
 
-template <typename T>
-void Expression::copy_at(std::vector<T>& dest, const std::vector<T>& src, int index) {
+template <typename T> void Expression::copy_at(std::vector<T>& dest, const std::vector<T>& src, int index) {
     for (size_t k = 0; k < src.size(); ++k) {
         long long pos = (long long)index + k;
-        if (pos >= 0 && pos < (long long)dest.size()) {
+        if (pos >= 0 && pos < (long long)dest.size())
             dest[(size_t)pos] = src[k];
-        }
     }
 }
 
@@ -713,11 +709,11 @@ Expression::Value Expression::function_cos(const std::vector<Value>& args) {
 }
 
 Expression::Value Expression::function_deg(const std::vector<Value>& args) {
-    return Value(args[0].get_scalar(m_core) * 180.0 / M_PI);
+    return Value(args[0].get_scalar(m_core) * 180.0 / PI);
 }
 
 Expression::Value Expression::function_rad(const std::vector<Value>& args) {
-    return Value(args[0].get_scalar(m_core) * M_PI / 180.0);
+    return Value(args[0].get_scalar(m_core) * PI / 180.0);
 }
 
 Expression::Value Expression::function_int(const std::vector<Value>& args) {
@@ -997,6 +993,65 @@ Expression::Value Expression::function_words(const std::vector<Value>& args) {
     return Value(result, true);
 }
 
+Expression::Value Expression::function_str(const std::vector<Value>& args) {
+    const auto& v = args[0];
+    if (v.is_string()) return v;
+    double d = v.get_scalar(m_core);
+    if (d == (long long)d) return Value(std::to_string((long long)d));
+    std::stringstream ss;
+    ss << d;
+    return Value(ss.str());
+}
+
+Expression::Value Expression::function_val(const std::vector<Value>& args) {
+    double d = 0.0;
+    Strings::parse_double(args[0].string(), d);
+    return Value(d);
+}
+
+Expression::Value Expression::function_hex(const std::vector<Value>& args) {
+    int64_t v = (int64_t)args[0].get_scalar(m_core);
+    std::stringstream ss;
+    ss << std::hex << std::uppercase << v;
+    return Value(ss.str());
+}
+
+Expression::Value Expression::function_bin(const std::vector<Value>& args) {
+    int64_t v = (int64_t)args[0].get_scalar(m_core);
+    if (v == 0) return Value(std::string("0"));
+    std::string res;
+    uint64_t uv = (uint64_t)v;
+    while (uv > 0) {
+        res = ((uv & 1) ? "1" : "0") + res;
+        uv >>= 1;
+    }
+    return Value(res);
+}
+
+Expression::Value Expression::function_bcd(const std::vector<Value>& args) {
+    int val = (int)args[0].get_scalar(m_core);
+    int bcd = 0;
+    int shift = 0;
+    while (val > 0) {
+        bcd |= (val % 10) << shift;
+        val /= 10;
+        shift += 4;
+    }
+    return Value((double)bcd);
+}
+
+Expression::Value Expression::function_dec(const std::vector<Value>& args) {
+    int val = (int)args[0].get_scalar(m_core);
+    int dec = 0;
+    int mul = 1;
+    while (val > 0) {
+        dec += (val & 0xF) * mul;
+        val >>= 4;
+        mul *= 10;
+    }
+    return Value((double)dec);
+}
+
 const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions() {
     using T = Expression::Value::Type;
     static const std::map<std::string, FunctionInfo> funcs = {
@@ -1095,6 +1150,24 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"BYTES", {-1, &Expression::function_bytes, {
         }}},
         {"WORDS", {-1, &Expression::function_words, {
+        }}}
+        ,{"STR", {1, &Expression::function_str, {
+            {T::Number}, {T::Register}, {T::Symbol}, {T::String}
+        }}},
+        {"VAL", {1, &Expression::function_val, {
+            {T::String}
+        }}},
+        {"HEX", {1, &Expression::function_hex, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"BIN", {1, &Expression::function_bin, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"BCD", {1, &Expression::function_bcd, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }}},
+        {"DEC", {1, &Expression::function_dec, {
+            {T::Number}, {T::Register}, {T::Symbol}
         }}}
     };
     return funcs;
