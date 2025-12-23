@@ -7,11 +7,11 @@
 #include <cctype>
 #include <algorithm>
 #include <replxx.hxx>
+#include <utility>
 
 #include "../Utils/Strings.h"
 #include "../Utils/Terminal.h"
 #include "../Core/Expression.h"
-#include "../Core/Variables.h"
 
 static constexpr const char* HISTORY_FILE = ".zxtool_history";
 
@@ -403,36 +403,34 @@ void Dashboard::validate_focus() {
 
 void Dashboard::cmd_eval(const std::string& expr) {
     try {
-    if (is_assignment(expr)) {
-        cmd_set(expr);
-        return;
-    }
-
-    Expression eval(m_debugger.get_core());
-    Expression::Value val = eval.evaluate(expr);
-
-    std::string prefix = "";
-    if (!expr.empty() && expr[0] == '@') {
-         std::string var_name = expr.substr(1);
-         bool is_var_name = true;
-         for(char c : var_name) if(!isalnum(c) && c != '_') is_var_name = false;
-         if (is_var_name) prefix = expr + " = ";
-    }
-
-    if (val.is_register()) {
-        std::string name = val.reg().getName();
-        uint16_t v = val.reg().read(m_debugger.get_core().get_cpu());
-        if (val.reg().is_16bit()) {
-            m_output_buffer << prefix << name << "=$" << Strings::hex(v) << " (" << v << ")\n";
-        } else {
-            m_output_buffer << prefix << name << "=$" << Strings::hex((uint8_t)v) << " (" << v << ")\n";
+        if (is_assignment(expr)) {
+            cmd_set(expr);
+            return;
         }
-    } else if (val.is_symbol()) {
-        uint16_t v = val.symbol().read();
-        m_output_buffer << prefix << val.symbol().getName() << " ($" << Strings::hex(v) << ")\n";
-    } else {
-        m_output_buffer << prefix << format(val) << "\n";
-    }
+        Expression eval(m_debugger.get_core());
+        Expression::Value val = eval.evaluate(expr);
+
+        std::string prefix = "";
+        if (!expr.empty() && expr[0] == '@') {
+            std::string var_name = expr.substr(1);
+            bool is_var_name = true;
+            for(char c : var_name)
+                if(!isalnum(c) && c != '_') is_var_name = false;
+            if (is_var_name)
+                prefix = expr + " = ";
+        }
+        if (val.is_register()) {
+            std::string name = val.reg().getName();
+            uint16_t v = val.reg().read(m_debugger.get_core().get_cpu());
+            if (val.reg().is_16bit())
+                m_output_buffer << prefix << name << "=$" << Strings::hex(v) << " (" << v << ")\n";
+            else
+                m_output_buffer << prefix << name << "=$" << Strings::hex((uint8_t)v) << " (" << v << ")\n";
+        } else if (val.is_symbol()) {
+            uint16_t v = val.symbol().read();
+            m_output_buffer << prefix << val.symbol().getName() << " ($" << Strings::hex(v) << ")\n";
+        } else
+            m_output_buffer << prefix << format(val) << "\n";
     } catch (const std::exception& e) {
         m_output_buffer << "Error: " << e.what() << "\n";
     }
@@ -443,36 +441,23 @@ void Dashboard::cmd_quit(const std::string&) {
 }
 
 void Dashboard::cmd_set(const std::string& args_str) {
-    std::string args = args_str;
-    Strings::trim(args);
+    std::string args = Strings::trim(args_str);
     if (args.empty()) {
         m_output_buffer << "Error: Missing arguments for set command.\n";
         return;
     }
-    
     std::string lhs_str, rhs_str;
-    size_t eq_pos = args.find('=');
-    if (eq_pos != std::string::npos) {
-        lhs_str = args.substr(0, eq_pos);
-        rhs_str = args.substr(eq_pos + 1);
-    } else {
-        size_t space_pos = args.find_first_of(" \t");
-        if (space_pos != std::string::npos) {
-            lhs_str = args.substr(0, space_pos);
-            rhs_str = args.substr(space_pos + 1);
-        } else {
-            lhs_str = args;
-        }
-    }
-
-    Strings::trim(lhs_str);
-    Strings::trim(rhs_str);
-
+    std::pair<std::string, std::string> parts;
+    if (args.find('=') != std::string::npos)
+        parts = Strings::split_once(args, '=');
+    else
+        parts = Strings::split_once_any(args, " \t");
+    lhs_str = Strings::trim(parts.first);
+    rhs_str = Strings::trim(parts.second);
     if (lhs_str.empty() || rhs_str.empty()) {
-            m_output_buffer << "Error: Invalid syntax for set. Use: set <target> [=] <value>\n";
-            return;
+        m_output_buffer << "Error: Invalid syntax for set. Use: set <target> [=] <value>\n";
+        return;
     }
-
     try {
         Expression eval(m_debugger.get_core());
         Expression::Value val = eval.evaluate(rhs_str);
@@ -484,58 +469,48 @@ void Dashboard::cmd_set(const std::string& args_str) {
 }
 
 void Dashboard::cmd_undef(const std::string& args_str) {
-    std::string name = args_str;
-    Strings::trim(name);
+    std::string name = Strings::trim(args_str);
     if (name.empty()) {
         m_output_buffer << "Error: Missing symbol name.\n";
         return;
     }
-
-    if (m_debugger.get_core().get_context().getSymbols().remove(name)) {
+    if (m_debugger.get_core().get_context().getSymbols().remove(name))
         m_output_buffer << "Symbol '" << name << "' removed.\n";
-    } else {
+    else
         m_output_buffer << "Error: Symbol '" << name << "' not found.\n";
-    }
 }
 
 void Dashboard::handle_command(const std::string& input) {
-    std::string clean_input = input;
-    Strings::trim(clean_input);
-    if (clean_input.empty()) return;
-
+    std::string clean_input = Strings::trim(input);
+    if (clean_input.empty())
+        return;
     auto parts = Strings::split(clean_input);
-    if (parts.empty()) return;
-
+    if (parts.empty())
+        return;
     std::string cmd = parts[0];
     std::string args;
     for (size_t i = 1; i < parts.size(); ++i)
         args += (i > 1 ? " " : "") + parts[i];
-
-    if (cmd == "!") {
-        m_output_buffer << "Unknown command: " << cmd << "\n";
-        return;
-    }
     if (cmd == "?") {
         cmd_eval(args);
         return;
     }
-
     auto it = m_commands.find(cmd);
-    if (it != m_commands.end()) {
+    if (it != m_commands.end())
         (this->*(it->second))(args);
-    } else {
+    else
         m_output_buffer << "Unknown command: " << cmd << "\n";
-    }
 }
 
 void Dashboard::init() {
     m_repl.install_window_change_handler();    
-    
     auto bind_scroll = [&](char32_t key, int mem_delta, int code_delta, int stack_delta) {
         m_repl.bind_key(key, [this, mem_delta, code_delta, stack_delta](char32_t code) {
         if (m_focus == FOCUS_CMD) {
-            if (code == replxx::Replxx::KEY::UP) return m_repl.invoke(replxx::Replxx::ACTION::HISTORY_PREVIOUS, code);
-            if (code == replxx::Replxx::KEY::DOWN) return m_repl.invoke(replxx::Replxx::ACTION::HISTORY_NEXT, code);
+            if (code == replxx::Replxx::KEY::UP)
+                return m_repl.invoke(replxx::Replxx::ACTION::HISTORY_PREVIOUS, code);
+            if (code == replxx::Replxx::KEY::DOWN)
+                return m_repl.invoke(replxx::Replxx::ACTION::HISTORY_NEXT, code);
             return replxx::Replxx::ACTION_RESULT::CONTINUE;
         }
         if (m_focus == FOCUS_MEMORY)
@@ -550,7 +525,6 @@ void Dashboard::init() {
             return replxx::Replxx::ACTION_RESULT::CONTINUE;
         });
     };
-
     bind_scroll(replxx::Replxx::KEY::UP, -16, -1, -2);
     bind_scroll(replxx::Replxx::KEY::DOWN, 16, 1, 2);
 
@@ -696,9 +670,8 @@ void Dashboard::print_footer() {
         {"c", "omment"}, {"g", "o"}, {"s", "tep"}, {"n", "ext"},
         {"r", "eset"}, {"h", "eader"}, {"q", "uit"}
     };
-    for (const auto& c : cmds) {
+    for (const auto& c : cmds)
         std::cout << m_theme.value << "[" << c.k << "]" << c.n << " " << Terminal::RESET;
-    }
     std::cout << "\n";
 }
 

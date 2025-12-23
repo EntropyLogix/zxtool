@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <vector>
+#include <utility>
 
 std::string Strings::hex(uint8_t v) {
     std::stringstream ss;
@@ -159,13 +160,14 @@ std::string Strings::upper(const std::string& s) {
     return result;
 }
 
-void Strings::trim(std::string& s) {
-    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+std::string Strings::trim(const std::string& s) {
+    auto start = std::find_if(s.begin(), s.end(), [](unsigned char ch) {
         return !std::isspace(ch);
-    }));
-    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+    });
+    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
         return !std::isspace(ch);
-    }).base(), s.end());
+    }).base();
+    return (start < end) ? std::string(start, end) : "";
 }
 
 std::vector<std::string> Strings::split(const std::string& s, char delimiter) {
@@ -177,4 +179,18 @@ std::vector<std::string> Strings::split(const std::string& s, char delimiter) {
             tokens.push_back(token);
     }
     return tokens;
+}
+
+std::pair<std::string, std::string> Strings::split_once(const std::string& s, char delimiter) {
+    size_t pos = s.find(delimiter);
+    if (pos == std::string::npos)
+        return {s, ""};
+    return {s.substr(0, pos), s.substr(pos + 1)};
+}
+
+std::pair<std::string, std::string> Strings::split_once_any(const std::string& s, const std::string& delimiters) {
+    size_t pos = s.find_first_of(delimiters);
+    if (pos == std::string::npos)
+        return {s, ""};
+    return {s.substr(0, pos), s.substr(pos + 1)};
 }
