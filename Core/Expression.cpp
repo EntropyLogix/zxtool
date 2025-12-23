@@ -579,10 +579,14 @@ Expression::Value Expression::function_crc(const std::vector<Value>& args) {
 
 Expression::Value Expression::function_len(const std::vector<Value>& args) {
     const auto& v = args[0];
-    if (v.is_string()) return Value((double)v.string().length());
-    if (v.is_bytes()) return Value((double)v.bytes().size());
-    if (v.is_words()) return Value((double)v.words().size());
-    if (v.is_address()) return Value((double)v.address().size());
+    if (v.is_string())
+        return Value((double)v.string().length());
+    if (v.is_bytes())
+        return Value((double)v.bytes().size());
+    if (v.is_words())
+        return Value((double)v.words().size());
+    if (v.is_address())
+        return Value((double)v.address().size());
     return Value(0.0);
 }
 
@@ -702,14 +706,16 @@ Expression::Value Expression::function_pow2(const std::vector<Value>& args) {
 Expression::Value Expression::function_align(const std::vector<Value>& args) {
     int val = (int)args[0].get_scalar(m_core);
     int base = (int)args[1].get_scalar(m_core);
-    if (base == 0) return Value((double)val);
+    if (base == 0)
+        return Value((double)val);
     return Value((double)(((val + base - 1) / base) * base));
 }
 
 Expression::Value Expression::function_wrap(const std::vector<Value>& args) {
     int val = (int)args[0].get_scalar(m_core);
     int limit = (int)args[1].get_scalar(m_core);
-    if (limit == 0) return Value(0.0);
+    if (limit == 0)
+        return Value(0.0);
     return Value((double)(val % limit));
 }
 
@@ -717,14 +723,16 @@ Expression::Value Expression::function_sum(const std::vector<Value>& args) {
     const auto& v = args[0];
     double sum = 0.0;
     if (v.is_bytes()) {
-        for (auto b : v.bytes()) sum += b;
+        for (auto b : v.bytes())
+            sum += b;
     } else if (v.is_words()) {
-        for (auto w : v.words()) sum += w;
+        for (auto w : v.words())
+            sum += w;
     } else if (v.is_address()) {
-        for (auto a : v.address()) sum += a;
-    } else {
+        for (auto a : v.address())
+            sum += a;
+    } else
         sum = v.get_scalar(m_core);
-    }
     return Value(sum);
 }
 
@@ -733,18 +741,21 @@ Expression::Value Expression::function_avg(const std::vector<Value>& args) {
     double sum = 0.0;
     size_t count = 0;
     if (v.is_bytes()) {
-        for (auto b : v.bytes()) sum += b;
+        for (auto b : v.bytes())
+            sum += b;
         count = v.bytes().size();
     } else if (v.is_words()) {
-        for (auto w : v.words()) sum += w;
+        for (auto w : v.words())
+            sum += w;
         count = v.words().size();
     } else if (v.is_address()) {
-        for (auto a : v.address()) sum += a;
+        for (auto a : v.address())
+            sum += a;
         count = v.address().size();
-    } else {
+    } else
         return v;
-    }
-    if (count == 0) return Value(0.0);
+    if (count == 0)
+        return Value(0.0);
     return Value(sum / count);
 }
 
@@ -772,15 +783,17 @@ Expression::Value Expression::function_any(const std::vector<Value>& args) {
     auto process = [&](double val) { if (val == target) result = true; };
 
     const auto& v = args[0];
-    if (v.is_bytes()) {
-        for (auto b : v.bytes()) process((double)b);
-    } else if (v.is_words()) {
-        for (auto w : v.words()) process((double)w);
-    } else if (v.is_address()) {
-        for (auto a : v.address()) process((double)a);
-    } else {
+    if (v.is_bytes())
+        for (auto b : v.bytes())
+            process((double)b);
+    else if (v.is_words()) {
+        for (auto w : v.words())
+            process((double)w);
+    else if (v.is_address())
+        for (auto a : v.address())
+        process((double)a);
+    else
         process(v.get_scalar(m_core));
-    }
     return Value(result ? 1.0 : 0.0);
 }
 
@@ -788,42 +801,38 @@ Expression::Value Expression::function_asm(const std::vector<Value>& args) {
     uint16_t pc = m_core.get_cpu().get_PC();
     std::string code;
 
-    if (args.size() == 1) {
+    if (args.size() == 1)
         code = args[0].string();
-    } else if (args.size() == 2) {
+    else if (args.size() == 2) {
         pc = (uint16_t)args[0].get_scalar(m_core);
         code = args[1].string();
-    } else {
+    } else
         syntax_error(ErrorCode::EVAL_NOT_ENOUGH_ARGUMENTS, "ASM requires 1 or 2 arguments");
-    }
-
     std::replace(code.begin(), code.end(), ';', '\n');
-
     std::map<std::string, uint16_t> symbols;
-    for (const auto& pair : m_core.get_context().getSymbols().by_name()) {
+    for (const auto& pair : m_core.get_context().getSymbols().by_name())
         symbols[pair.first] = pair.second.read();
-    }
-
     for (const auto& pair : m_core.get_context().getVariables().by_name()) {
         const auto& val = pair.second.getValue();
-        if (val.is_scalar()) {
+        if (val.is_scalar())
             symbols["@" + pair.first] = (uint16_t)val.get_scalar(m_core);
-        }
     }
-
     std::vector<uint8_t> bytes;
     LineAssembler assembler;
     assembler.assemble(code, symbols, pc, bytes);
-
     return Value(bytes);
 }
 
 Expression::Value Expression::function_copy(const std::vector<Value>& args) {
     const auto& v = args[0];
-    if (v.is_bytes()) return Value(v.bytes());
-    if (v.is_words()) return Value(v.words(), true);
-    if (v.is_address()) return Value(v.address());
-    if (v.is_string()) return Value(v.string());
+    if (v.is_bytes())
+        return Value(v.bytes());
+    if (v.is_words())
+        return Value(v.words(), true);
+    if (v.is_address())
+        return Value(v.address());
+    if (v.is_string())
+        return Value(v.string());
     return v;
 }
 
