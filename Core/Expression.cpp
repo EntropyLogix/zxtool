@@ -786,7 +786,7 @@ Expression::Value Expression::function_any(const std::vector<Value>& args) {
     if (v.is_bytes())
         for (auto b : v.bytes())
             process((double)b);
-    else if (v.is_words()) {
+    else if (v.is_words())
         for (auto w : v.words())
             process((double)w);
     else if (v.is_address())
