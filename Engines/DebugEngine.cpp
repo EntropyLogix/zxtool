@@ -411,15 +411,7 @@ void Dashboard::perform_evaluate(const std::string& expr, bool detailed) {
     }
 }
 
-void Dashboard::cmd_evaluate(const std::string& args) {
-    perform_evaluate(args, false);
-}
-
-void Dashboard::cmd_quit(const std::string&) {
-    m_running = false;
-}
-
-void Dashboard::cmd_set(const std::string& args_str) {
+void Dashboard::perform_set(const std::string& args_str, bool detailed) {
     std::string args = Strings::trim(args_str);
     if (args.empty()) {
         m_output_buffer << "Error: Missing arguments for set command.\n";
@@ -441,10 +433,36 @@ void Dashboard::cmd_set(const std::string& args_str) {
         Expression eval(m_debugger.get_core());
         Expression::Value val = eval.evaluate(rhs_str);
         eval.assign(lhs_str, val);
-        m_output_buffer << lhs_str << " = " << format(val) << "\n";
+        m_output_buffer << lhs_str << " = " << format(val, detailed) << "\n";
     } catch (const std::exception& e) {
         m_output_buffer << "Error: " << e.what() << "\n";
     }
+}
+
+void Dashboard::cmd_evaluate(const std::string& args) {
+    perform_evaluate(args, false);
+}
+
+void Dashboard::cmd_expression(const std::string& args) {
+    if (is_assignment(args))
+        perform_set(args, false);
+    else
+        perform_evaluate(args, false);
+}
+
+void Dashboard::cmd_expression_detailed(const std::string& args) {
+    if (is_assignment(args))
+        perform_set(args, true);
+    else
+        perform_evaluate(args, true);
+}
+
+void Dashboard::cmd_quit(const std::string&) {
+    m_running = false;
+}
+
+void Dashboard::cmd_set(const std::string& args_str) {
+    perform_set(args_str, false);
 }
 
 void Dashboard::cmd_undef(const std::string& args_str) {
@@ -463,16 +481,29 @@ void Dashboard::handle_command(const std::string& input) {
     std::string clean_input = Strings::trim(input);
     if (clean_input.empty())
         return;
-
-    auto parts = Strings::split_once(clean_input, " \t");
-    std::string cmd = parts.first;
-    std::string args = Strings::trim(parts.second);
-
-    auto it = m_commands.find(cmd);
-    if (it != m_commands.end())
-        (this->*(it->second))(args);
-    else
-        m_output_buffer << "Unknown command: " << cmd << "\n";
+    const CommandEntry* best_entry = nullptr;
+    std::string best_cmd;
+    for (const auto& pair : m_commands) {
+        const std::string& cmd_key = pair.first;
+        const CommandEntry& entry = pair.second;
+        if (clean_input.compare(0, cmd_key.length(), cmd_key) == 0) {
+            if (entry.require_separator) {
+                if (clean_input.length() > cmd_key.length() && !std::isspace(static_cast<unsigned char>(clean_input[cmd_key.length()])))
+                    continue;
+            }
+            if (cmd_key.length() > best_cmd.length()) {
+                best_cmd = cmd_key;
+                best_entry = &entry;
+            }
+        }
+    }
+    if (!best_cmd.empty() && best_entry) {
+        std::string args = Strings::trim(clean_input.substr(best_cmd.length()));
+        (this->*(best_entry->handler))(args);
+    } else {
+        auto parts = Strings::split_once(clean_input, " \t");
+        m_output_buffer << "Unknown command: " << parts.first << "\n";
+    }
 }
 
 void Dashboard::init() {

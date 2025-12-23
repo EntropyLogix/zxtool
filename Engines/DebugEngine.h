@@ -166,12 +166,14 @@ public:
     {
         m_debugger.set_logger([this](const std::string& msg){ log(msg); });
         m_commands = {
-            {"evaluate", &Dashboard::cmd_evaluate},
-            {"eval", &Dashboard::cmd_evaluate},
-            {"quit", &Dashboard::cmd_quit},
-            {"q", &Dashboard::cmd_quit},
-            {"set", &Dashboard::cmd_set},
-            {"undef", &Dashboard::cmd_undef}
+            {"evaluate", {&Dashboard::cmd_evaluate, true}},
+            {"eval", {&Dashboard::cmd_evaluate, true}},
+            {"quit", {&Dashboard::cmd_quit, true}},
+            {"q", {&Dashboard::cmd_quit, true}},
+            {"set", {&Dashboard::cmd_set, true}},
+            {"undef", {&Dashboard::cmd_undef, true}},
+            {"?", {&Dashboard::cmd_expression, false}},
+            {"??", {&Dashboard::cmd_expression_detailed, false}}
         };
     }
     void run();
@@ -196,7 +198,11 @@ private:
     bool m_show_watch = false;
     bool m_show_breakpoints = false;
     bool m_auto_follow = true;
-    std::map<std::string, void (Dashboard::*)(const std::string&)> m_commands;
+    struct CommandEntry {
+        void (Dashboard::*handler)(const std::string&);
+        bool require_separator;
+    };
+    std::map<std::string, CommandEntry> m_commands;
     
     void validate_focus();
     void handle_command(const std::string& input);
@@ -210,11 +216,14 @@ private:
     void update_code_view();
 
     void cmd_evaluate(const std::string& args);
+    void cmd_expression(const std::string& args);
+    void cmd_expression_detailed(const std::string& args);
     void cmd_quit(const std::string& args);
     void cmd_set(const std::string& args);
     void cmd_undef(const std::string& args);
     
     void perform_evaluate(const std::string& expr, bool detailed);
+    void perform_set(const std::string& args, bool detailed);
     std::string format(const Expression::Value& val, bool detailed = false);
     bool is_assignment(const std::string& expr);
 
