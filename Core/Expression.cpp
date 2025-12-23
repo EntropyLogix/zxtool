@@ -139,7 +139,7 @@ Expression::Value Expression::operator_plus(const std::vector<Value>& args) {
         const auto& v1 = args[0].address();
         const auto& v2 = args[1].address();
         size_t len = std::min(v1.size(), v2.size());
-        for(size_t i=0; i<len; ++i)
+        for (size_t i=0; i<len; ++i)
             res.push_back(v1[i] + v2[i]);
         return Value(res);
     }
@@ -156,7 +156,6 @@ Expression::Value Expression::operator_plus(const std::vector<Value>& args) {
         }
         return Value(res);
     }
-
     return Value(args[0].get_scalar(m_core) + args[1].get_scalar(m_core));
 }
 
@@ -166,7 +165,7 @@ Expression::Value Expression::operator_minus(const std::vector<Value>& args) {
         const auto& v1 = args[0].address();
         const auto& v2 = args[1].address();
         size_t len = std::min(v1.size(), v2.size());
-        for(size_t i=0; i<len; ++i)
+        for (size_t i=0; i<len; ++i)
             res.push_back(v1[i] - v2[i]);
         return Value(res);
     }
@@ -192,7 +191,8 @@ Expression::Value Expression::operator_mul(const std::vector<Value>& args) {
         std::string s = args[0].string();
         int count = (int)args[1].get_scalar(m_core);
         std::string res;
-        for(int i=0; i<count; ++i) res += s;
+        for (int i=0; i<count; ++i)
+            res += s;
         return Value(res);
     }
     return Value(args[0].get_scalar(m_core) * args[1].get_scalar(m_core));
@@ -200,13 +200,15 @@ Expression::Value Expression::operator_mul(const std::vector<Value>& args) {
 
 Expression::Value Expression::operator_div(const std::vector<Value>& args) {
     double div = args[1].get_scalar(m_core);
-    if (div == 0.0) syntax_error(ErrorCode::GENERIC, "Division by zero");
+    if (div == 0.0)
+        syntax_error(ErrorCode::GENERIC, "Division by zero");
     return Value(args[0].get_scalar(m_core) / div);
 }
 
 Expression::Value Expression::operator_mod(const std::vector<Value>& args) {
     int div = (int)args[1].get_scalar(m_core);
-    if (div == 0) syntax_error(ErrorCode::GENERIC, "Division by zero");
+    if (div == 0)
+        syntax_error(ErrorCode::GENERIC, "Division by zero");
     return Value((double)((int)args[0].get_scalar(m_core) % div));
 }
 
@@ -279,21 +281,24 @@ Expression::Value Expression::operator_gte(const std::vector<Value>& args) {
 Expression::Value Expression::operator_range(const std::vector<Value>& args) {
     int start = (int)args[0].get_scalar(m_core);
     int end = (int)args[1].get_scalar(m_core);
-
     if (start >= -128 && start <= 255 && end >= -128 && end <= 255) {
         std::vector<uint8_t> vals;
         if (start <= end) {
-            for (int i = start; i <= end; ++i) vals.push_back((uint8_t)i);
+            for (int i = start; i <= end; ++i)
+                vals.push_back((uint8_t)i);
         } else {
-            for (int i = start; i >= end; --i) vals.push_back((uint8_t)i);
+            for (int i = start; i >= end; --i)
+                vals.push_back((uint8_t)i);
         }
         return Value(vals);
     }
     std::vector<uint16_t> vals;
     if (start <= end) {
-        for (int i = start; i <= end; ++i) vals.push_back((uint16_t)i);
+        for (int i = start; i <= end; ++i)
+            vals.push_back((uint16_t)i);
     } else {
-        for (int i = start; i >= end; --i) vals.push_back((uint16_t)i);
+        for (int i = start; i >= end; --i)
+            vals.push_back((uint16_t)i);
     }
     return Value(vals, true);
 }
@@ -316,36 +321,40 @@ Expression::Value Expression::operator_step(const std::vector<Value>& args) {
         }
         return res;
     };
-
     const auto& v = args[0];
-    if (v.is_address()) return Value(process(v.address()));
-    if (v.is_words()) return Value(process(v.words()), true);
-    if (v.is_bytes()) return Value(process(v.bytes()));
-    
+    if (v.is_address())
+        return Value(process(v.address()));
+    if (v.is_words())
+        return Value(process(v.words()), true);
+    if (v.is_bytes())
+        return Value(process(v.bytes()));
     return v;
 }
 
 Expression::Value Expression::operator_repeat(const std::vector<Value>& args) {
     int count = (int)args[1].get_scalar(m_core);
-    if (count < 0) syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Repeat count cannot be negative");
-    
+    if (count < 0)
+        syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Repeat count cannot be negative");
     const auto& v = args[0];
     if (v.is_bytes()) {
         std::vector<uint8_t> res;
         const auto& src = v.bytes();
-        for(int k=0; k<count; ++k) res.insert(res.end(), src.begin(), src.end());
+        for (int k=0; k<count; ++k)
+            res.insert(res.end(), src.begin(), src.end());
         return Value(res);
     }
     if (v.is_words()) {
         std::vector<uint16_t> res;
         const auto& src = v.words();
-        for(int k=0; k<count; ++k) res.insert(res.end(), src.begin(), src.end());
+        for (int k=0; k<count; ++k)
+            res.insert(res.end(), src.begin(), src.end());
         return Value(res, true);
     }
     if (v.is_address()) {
         std::vector<uint16_t> res;
         const auto& src = v.address();
-        for(int k=0; k<count; ++k) res.insert(res.end(), src.begin(), src.end());
+        for (int k=0; k<count; ++k)
+            res.insert(res.end(), src.begin(), src.end());
         return Value(res);
     }
     syntax_error(ErrorCode::EVAL_TYPE_MISMATCH, "Left operand must be a collection");
@@ -357,7 +366,6 @@ Expression::Value Expression::operator_index(const std::vector<Value>& args) {
         if (idx >= size)
             syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "index out of bounds");
     };
-
     const auto& indices = args[1].address();
     if (args[0].is_register() || args[0].is_symbol()) {
         std::vector<uint16_t> res;
@@ -1158,16 +1166,14 @@ bool Expression::parse_punctuation(const std::string& expr, size_t& i, std::vect
 std::string Expression::parse_word(const std::string& expr, size_t& index) {
     std::string word;
     bool starts_digit = false;
-    if (index < expr.length() && std::isdigit(expr[index])) starts_digit = true;
-
+    if (index < expr.length() && std::isdigit(expr[index]))
+        starts_digit = true;
     while (index < expr.length()) {
         char c = expr[index];
-        if (c == '.' && index + 1 < expr.length() && expr[index+1] == '.') {
+        if (c == '.' && index + 1 < expr.length() && expr[index+1] == '.')
             break;
-        }
-        if (starts_digit && c == 'x' && word != "0") {
+        if (starts_digit && c == 'x' && word != "0")
             break;
-        }
         if (std::isalnum(c) || c == '$' || c == '_' || c == '.' || c == '%') {
             word += c;
             index++;
@@ -1322,8 +1328,10 @@ std::vector<Expression::Token> Expression::tokenize(const std::string& expr) {
             continue;
         if (parse_punctuation(expr, i, tokens)) {
             TokenType t = tokens.back().type;
-            if (t == TokenType::LBRACKET || t == TokenType::LBRACE) collection_depth++;
-            else if (t == TokenType::RBRACKET || t == TokenType::RBRACE) collection_depth--;
+            if (t == TokenType::LBRACKET || t == TokenType::LBRACE)
+                collection_depth++;
+            else if (t == TokenType::RBRACKET || t == TokenType::RBRACE)
+                collection_depth--;
             continue;
         }
         size_t j = i;
@@ -1450,14 +1458,13 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 if (operator_stack.empty())
                     syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, ")");
                 operator_stack.pop();
-                
                 int count = 1;
                 if (!arg_counts.empty()) {
                     count = arg_counts.top();
                     arg_counts.pop();
                 }
-                if (last_type == TokenType::LPAREN) count = 0;
-
+                if (last_type == TokenType::LPAREN)
+                    count = 0;
                 if (!operator_stack.empty() && operator_stack.top().type == TokenType::FUNCTION) {
                     Token t = operator_stack.top();
                     t.argc = count;
@@ -1677,9 +1684,12 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
             size_t start = i;
             int depth = 1;
             while (i < lhs.length() && depth > 0) {
-                if (lhs[i] == '[') depth++;
-                if (lhs[i] == ']') depth--;
-                if (depth > 0) i++;
+                if (lhs[i] == '[')
+                    depth++;
+                if (lhs[i] == ']')
+                    depth--;
+                if (depth > 0)
+                    i++;
             }
             if (depth != 0)
                 syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, "]");
