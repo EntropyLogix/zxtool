@@ -632,7 +632,7 @@ void Dashboard::cmd_set(const std::string& args_str) {
                 return;
             }
 
-            std::vector<uint8_t> data = eval.flatten_to_bytes(val);
+            std::vector<uint8_t> data = val.flatten(m_debugger.get_core());
             
             for (size_t i = 0; i < data.size(); ++i) {
                 uint16_t addr;

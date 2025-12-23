@@ -80,6 +80,8 @@ public:
 
         Type type() const { return m_type; }
         double get_scalar(Core& core) const;
+        std::vector<uint8_t> flatten(Core& core) const;
+        std::vector<uint16_t> flatten_words(Core& core) const;
 
         static std::string type_to_string(Type t) {
             switch (t) {
@@ -109,8 +111,6 @@ public:
     ~Expression() = default;
 
     Value evaluate(const std::string& expression);
-    std::vector<uint8_t> flatten_to_bytes(const Value& v);
-    std::vector<uint16_t> flatten_to_words(const Value& v);
     void assign(const std::string& lhs, const Value& rhs);
 
 private:

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <type_traits>
+#include <cstring>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -826,84 +827,93 @@ Expression::Value Expression::function_copy(const std::vector<Value>& args) {
     return v;
 }
 
-std::vector<uint8_t> Expression::flatten_to_bytes(const Value& v) {
+std::vector<uint8_t> Expression::Value::flatten(Core& core) const {
     std::vector<uint8_t> res;
     
-    if (v.is_register()) {
-        uint16_t val = v.reg().read(m_core.get_cpu());
-        if (v.reg().is_16bit()) {
+    if (is_register()) {
+        uint16_t val = reg().read(core.get_cpu());
+        if (reg().is_16bit()) {
             res.push_back(static_cast<uint8_t>(val & 0xFF));
             res.push_back(static_cast<uint8_t>((val >> 8) & 0xFF));
         } else {
             res.push_back(static_cast<uint8_t>(val & 0xFF));
         }
-    } else if (v.is_scalar()) {
-        double d = v.get_scalar(m_core);
+    } else if (is_scalar()) {
+        double d = get_scalar(core);
         int64_t val = static_cast<int64_t>(d);
+        bool is_int = (d == (double)val);
 
-        // Liczby 8-bitowe (signed i unsigned)
-        if (val >= -128 && val <= 255) {
+        if (is_int && val >= -128 && val <= 255) {
             res.push_back(static_cast<uint8_t>(val & 0xFF));
-        } 
-        // Liczby 16-bitowe
-        else if (val >= -32768 && val <= 65535) {
+        } else if (is_int && val >= -32768 && val <= 65535) {
             res.push_back(static_cast<uint8_t>(val & 0xFF));
             res.push_back(static_cast<uint8_t>((val >> 8) & 0xFF));
-        }
-        // Większe liczby (automatyczne rozbijanie do 4 bajtów)
-        else {
+        } else if (is_int && val >= -2147483648LL && val <= 4294967295LL) {
             uint32_t v32 = static_cast<uint32_t>(val);
-            for (int i = 0; i < 4; ++i) {
-                res.push_back(v32 & 0xFF);
-                v32 >>= 8;
-            }
+            for (int i = 0; i < 4; ++i) res.push_back(static_cast<uint8_t>((v32 >> (i * 8)) & 0xFF));
+        } else if (is_int) {
+            uint64_t v64 = static_cast<uint64_t>(val);
+            for (int i = 0; i < 8; ++i) res.push_back(static_cast<uint8_t>((v64 >> (i * 8)) & 0xFF));
+        } else {
+            uint64_t v64;
+            std::memcpy(&v64, &d, sizeof(d));
+            for (int i = 0; i < 8; ++i) res.push_back(static_cast<uint8_t>((v64 >> (i * 8)) & 0xFF));
         }
-    } else if (v.is_string()) {
-        for (char c : v.string()) res.push_back(static_cast<uint8_t>(c));
-    } else if (v.is_bytes()) {
-        return v.bytes();
-    } else if (v.is_words()) {
-        for (uint16_t w : v.words()) {
+    } else if (is_string()) {
+        for (char c : string()) res.push_back(static_cast<uint8_t>(c));
+    } else if (is_bytes()) {
+        return bytes();
+    } else if (is_words()) {
+        for (uint16_t w : words()) {
             res.push_back(w & 0xFF);
             res.push_back(w >> 8);
         }
-    } else if (v.is_address()) {
-        for (uint16_t addr : v.address()) {
-            res.push_back(m_core.get_memory().peek(addr));
+    } else if (is_address()) {
+        for (uint16_t addr : address()) {
+            res.push_back(core.get_memory().peek(addr));
         }
     }
     return res;
 }
 
-std::vector<uint16_t> Expression::flatten_to_words(const Value& v) {
+std::vector<uint16_t> Expression::Value::flatten_words(Core& core) const {
     std::vector<uint16_t> res;
-    if (v.is_scalar()) {
-        uint64_t val = static_cast<uint64_t>(static_cast<int64_t>(v.get_scalar(m_core)));
-        if (val == 0) {
-            res.push_back(0);
+    if (is_scalar()) {
+        double d = get_scalar(core);
+        int64_t val = static_cast<int64_t>(d);
+        bool is_int = (d == (double)val);
+
+        if (is_int && val >= -32768 && val <= 65535) {
+            res.push_back(static_cast<uint16_t>(val & 0xFFFF));
+        } else if (is_int && val >= -2147483648LL && val <= 4294967295LL) {
+            uint32_t v32 = static_cast<uint32_t>(val);
+            res.push_back(static_cast<uint16_t>(v32 & 0xFFFF));
+            res.push_back(static_cast<uint16_t>((v32 >> 16) & 0xFFFF));
+        } else if (is_int) {
+            uint64_t v64 = static_cast<uint64_t>(val);
+            for (int i = 0; i < 4; ++i) res.push_back(static_cast<uint16_t>((v64 >> (i * 16)) & 0xFFFF));
         } else {
-            while (val > 0) {
-                res.push_back(static_cast<uint16_t>(val & 0xFFFF));
-                val >>= 16;
-            }
+            uint64_t v64;
+            std::memcpy(&v64, &d, sizeof(d));
+            for (int i = 0; i < 4; ++i) res.push_back(static_cast<uint16_t>((v64 >> (i * 16)) & 0xFFFF));
         }
-    } else if (v.is_string()) {
-        for (char c : v.string()) res.push_back(static_cast<uint16_t>(static_cast<unsigned char>(c)));
-    } else if (v.is_words()) {
-        return v.words();
-    } else if (v.is_bytes()) {
-        const auto& b = v.bytes();
+    } else if (is_string()) {
+        for (char c : string()) res.push_back(static_cast<uint16_t>(static_cast<unsigned char>(c)));
+    } else if (is_words()) {
+        return words();
+    } else if (is_bytes()) {
+        const auto& b = bytes();
         for (size_t i = 0; i < b.size(); i += 2) {
             uint16_t w = b[i];
             if (i + 1 < b.size()) w |= (static_cast<uint16_t>(b[i + 1]) << 8);
             res.push_back(w);
         }
-    } else if (v.is_address()) {
-        for (uint16_t addr : v.address()) {
+    } else if (is_address()) {
+        for (uint16_t addr : address()) {
             // Z80 DPEEK (Little Endian)
-            uint16_t val = m_core.get_memory().peek(addr);
+            uint16_t val = core.get_memory().peek(addr);
             // Uwaga na przepełnienie adresu przy peek(addr + 1)
-            val |= (static_cast<uint16_t>(m_core.get_memory().peek((addr + 1) & 0xFFFF)) << 8);
+            val |= (static_cast<uint16_t>(core.get_memory().peek((addr + 1) & 0xFFFF)) << 8);
             res.push_back(val);
         }
     }
@@ -913,7 +923,7 @@ std::vector<uint16_t> Expression::flatten_to_words(const Value& v) {
 Expression::Value Expression::function_bytes(const std::vector<Value>& args) {
     std::vector<uint8_t> result;
     for (const auto& arg : args) {
-        auto flattened = flatten_to_bytes(arg);
+        auto flattened = arg.flatten(m_core);
         result.insert(result.end(), flattened.begin(), flattened.end());
     }
     return Value(result);
@@ -922,7 +932,7 @@ Expression::Value Expression::function_bytes(const std::vector<Value>& args) {
 Expression::Value Expression::function_words(const std::vector<Value>& args) {
     std::vector<uint16_t> result;
     for (const auto& arg : args) {
-        auto flattened = flatten_to_words(arg);
+        auto flattened = arg.flatten_words(m_core);
         result.insert(result.end(), flattened.begin(), flattened.end());
     }
     return Value(result, true);
@@ -1615,7 +1625,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 }
                 std::reverse(args.begin(), args.end());
                 for (const auto& v : args) {
-                    auto flattened = flatten_to_bytes(v);
+                    auto flattened = v.flatten(m_core);
                     bytes.insert(bytes.end(), flattened.begin(), flattened.end());
                 }
                 stack.push_back(Value(bytes));
@@ -1634,7 +1644,7 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 }
                 std::reverse(args.begin(), args.end());
                 for (const auto& v : args) {
-                    auto flattened = flatten_to_words(v);
+                    auto flattened = v.flatten_words(m_core);
                     words.insert(words.end(), flattened.begin(), flattened.end());
                 }
                 stack.push_back(Value(words, true));
@@ -1675,14 +1685,14 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
             Value current = var->getValue();
             if (current.is_bytes()) {
                 auto data = current.bytes();
-                auto patch = flatten_to_bytes(rhs);
+                auto patch = rhs.flatten(m_core);
                 for (size_t k = 0; k < patch.size(); ++k) {
                     if (idx + k < data.size()) data[idx + k] = patch[k];
                 }
                 var->setValue(Value(data));
             } else if (current.is_words()) {
                 auto data = current.words();
-                auto patch = flatten_to_words(rhs);
+                auto patch = rhs.flatten_words(m_core);
                 for (size_t k = 0; k < patch.size(); ++k) {
                     if (idx + k < data.size()) data[idx + k] = patch[k];
                 }
