@@ -41,6 +41,7 @@ add_executable(zxtool
                 Files/SymbolFile.cpp
                 Files/ControlFile.cpp
                 Files/FileManager.cpp
+                Utils/Checksum.cpp
                 Utils/Strings.cpp
                 Utils/Terminal.cpp
   )
