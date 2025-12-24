@@ -226,6 +226,16 @@ private:
     void perform_set(const std::string& args, bool detailed);
     std::string format(const Expression::Value& val, bool detailed = false);
     bool is_assignment(const std::string& expr);
+    
+    // Format helpers
+    void format_detailed_number(std::stringstream& ss, const Expression::Value& val);
+    void format_detailed_address(std::stringstream& ss, const Expression::Value& val);
+    void format_detailed_collection(std::stringstream& ss, const Expression::Value& val);
+    void print_asm_info(std::stringstream& ss, uint16_t addr);
+    std::string format_hex_fixed(uint64_t v, int width);
+    std::string format_bin_fixed(uint64_t v, int width);
+    std::string format_disasm(uint16_t addr, const Z80Analyzer<Memory>::CodeLine& line);
+    void update_crc32(uint32_t& crc, uint8_t b);
 
     template <typename T> std::string format_sequence(const std::vector<T>& data, const std::string& prefix, const std::string& suffix, const std::string& separator, bool use_hex_prefix, bool allow_step_gt_1);
 };

@@ -811,442 +811,452 @@ std::string Dashboard::format_sequence(const std::vector<T>& data,
     return ss.str();
 }
 
-std::string Dashboard::format(const Expression::Value& val, bool detailed) {
-    std::stringstream ss;
+void Dashboard::print_asm_info(std::stringstream& ss, uint16_t addr) {
     auto& core = m_debugger.get_core();
-    
-    auto print_asm = [&](uint16_t addr) {
-        uint8_t byte_val = core.get_memory().peek(addr);
-        ss << "  Content: Byte($" << Strings::hex(byte_val) << ")";
-        auto line = core.get_analyzer().parse_instruction(addr);
-        if (!line.mnemonic.empty()) {
-            ss << " / Asm: " << line.mnemonic;
-            if (!line.operands.empty()) {
-                ss << " ";
-                using Operand = Z80Analyzer<Memory>::CodeLine::Operand;
-                for (size_t i = 0; i < line.operands.size(); ++i) {
-                    if (i > 0) ss << ", ";
-                    const auto& op = line.operands[i];
-                    switch (op.type) {
-                        case Operand::REG8: case Operand::REG16: case Operand::CONDITION: ss << op.s_val; break;
-                        case Operand::IMM8: ss << "$" << Strings::hex((uint8_t)op.num_val); break;
-                        case Operand::IMM16: ss << "$" << Strings::hex((uint16_t)op.num_val); break;
-                        case Operand::MEM_IMM16: ss << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
-                        case Operand::PORT_IMM8: ss << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
-                        case Operand::MEM_REG16: ss << "(" << op.s_val << ")"; break;
-                        case Operand::MEM_INDEXED: ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
-                        case Operand::STRING: ss << "\"" << op.s_val << "\""; break;
-                        case Operand::CHAR_LITERAL: ss << "'" << (char)op.num_val << "'"; break;
-                        default: break;
-                    }
+    uint8_t byte_val = core.get_memory().peek(addr);
+    ss << "  Content: Byte($" << Strings::hex(byte_val) << ")";
+    auto line = core.get_analyzer().parse_instruction(addr);
+    if (!line.mnemonic.empty()) {
+        ss << " / Asm: " << line.mnemonic;
+        if (!line.operands.empty()) {
+            ss << " ";
+            using Operand = Z80Analyzer<Memory>::CodeLine::Operand;
+            for (size_t i = 0; i < line.operands.size(); ++i) {
+                if (i > 0) ss << ", ";
+                const auto& op = line.operands[i];
+                switch (op.type) {
+                    case Operand::REG8: case Operand::REG16: case Operand::CONDITION: ss << op.s_val; break;
+                    case Operand::IMM8: ss << "$" << Strings::hex((uint8_t)op.num_val); break;
+                    case Operand::IMM16: ss << "$" << Strings::hex((uint16_t)op.num_val); break;
+                    case Operand::MEM_IMM16: ss << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
+                    case Operand::PORT_IMM8: ss << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
+                    case Operand::MEM_REG16: ss << "(" << op.s_val << ")"; break;
+                    case Operand::MEM_INDEXED: ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
+                    case Operand::STRING: ss << "\"" << op.s_val << "\""; break;
+                    case Operand::CHAR_LITERAL: ss << "'" << (char)op.num_val << "'"; break;
+                    default: break;
                 }
             }
         }
-    };
+    }
+}
+
+std::string Dashboard::format_hex_fixed(uint64_t v, int w) {
+    std::stringstream hss;
+    hss << std::hex << std::uppercase << std::setfill('0');
+    if (w == 8) hss << std::setw(2) << (v & 0xFF);
+    else if (w == 16) hss << std::setw(4) << (v & 0xFFFF);
+    else if (w == 32) {
+        hss << std::setw(8) << (v & 0xFFFFFFFF);
+    } else {
+        hss << std::setw(16) << v;
+    }
+    return hss.str();
+}
+
+std::string Dashboard::format_bin_fixed(uint64_t v, int bits) {
+    std::string b;
+    for (int i = bits - 1; i >= 0; --i) {
+        b += ((v >> i) & 1) ? '1' : '0';
+        if (i > 0 && i % 8 == 0) b += " ";
+    }
+    return b;
+}
+
+std::string Dashboard::format_disasm(uint16_t addr, const Z80Analyzer<Memory>::CodeLine& line) {
+    std::stringstream lss;
+    lss << "$" << Strings::hex(addr) << ": ";
+    std::stringstream bytes_ss;
+    for (size_t i = 0; i < line.bytes.size() && i < 4; ++i) {
+        bytes_ss << Strings::hex(line.bytes[i]) << " ";
+    }
+    lss << std::left << std::setw(12) << bytes_ss.str(); 
+
+    if (line.mnemonic.empty()) {
+            lss << ".db $" << Strings::hex(m_debugger.get_core().get_memory().peek(addr));
+    } else {
+        lss << line.mnemonic;
+        if (!line.operands.empty()) {
+            lss << " ";
+            using Operand = Z80Analyzer<Memory>::CodeLine::Operand;
+            for (size_t i = 0; i < line.operands.size(); ++i) {
+                if (i > 0) lss << ", ";
+                const auto& op = line.operands[i];
+                switch (op.type) {
+                    case Operand::REG8: case Operand::REG16: case Operand::CONDITION: lss << op.s_val; break;
+                    case Operand::IMM8: lss << "$" << Strings::hex((uint8_t)op.num_val); break;
+                    case Operand::IMM16: lss << "$" << Strings::hex((uint16_t)op.num_val); break;
+                    case Operand::MEM_IMM16: lss << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
+                    case Operand::PORT_IMM8: lss << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
+                    case Operand::MEM_REG16: lss << "(" << op.s_val << ")"; break;
+                    case Operand::MEM_INDEXED: lss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
+                    case Operand::STRING: lss << "\"" << op.s_val << "\""; break;
+                    case Operand::CHAR_LITERAL: lss << "'" << (char)op.num_val << "'"; break;
+                    default: break;
+                }
+            }
+        }
+    }
+    return lss.str();
+}
+
+void Dashboard::update_crc32(uint32_t& crc, uint8_t b) {
+    crc ^= b;
+    for (int k = 0; k < 8; k++)
+        crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320 : (crc >> 1);
+}
+
+void Dashboard::format_detailed_number(std::stringstream& ss, const Expression::Value& val) {
+    auto& core = m_debugger.get_core();
+    double d = (val.type() == Expression::Value::Type::Number) ? val.number() : (double)val.reg().read(core.get_cpu());
+    int64_t i_val = (int64_t)d;
+    
+    int width = 64;
+
+    if (val.type() == Expression::Value::Type::Register) {
+        width = val.reg().is_16bit() ? 16 : 8;
+    } else {
+        if (i_val >= -128 && i_val <= 255) width = 8;
+        else if (i_val >= -32768 && i_val <= 65535) width = 16;
+        else if (i_val >= std::numeric_limits<int32_t>::min() && i_val <= std::numeric_limits<uint32_t>::max()) width = 32;
+    }
+    
+    ss << "VALUE: $" << format_hex_fixed((uint64_t)i_val, width) << " (" << std::dec << i_val << ") | Number (" << width << "-bit)\n";
+    ss << "------------------------------------------------------------\n";
+    ss << "Signed:  " << (i_val >= 0 ? "+" : "") << i_val << "\n";
+
+    if (width == 64) {
+        ss << "Binary:  Hi: %" << format_bin_fixed((uint64_t)i_val >> 32, 32) << "\n";
+        ss << "         Lo: %" << format_bin_fixed((uint64_t)i_val & 0xFFFFFFFF, 32);
+    } else {
+        ss << "Binary:  %" << format_bin_fixed((uint64_t)i_val, width);
+        if (width == 8) ss << " (bits 7..0)";
+        else if (width == 16) ss << " (bits 15..0)";
+        
+        if (width == 8) {
+            int ones = 0;
+            for(int k=0; k<8; ++k) if((i_val >> k) & 1) ones++;
+            ss << " | Parity: " << ((ones % 2 == 0) ? "Even" : "Odd");
+        }
+    }
+    ss << "\n";
+    
+    if (width == 8) {
+        char c = (i_val >= 32 && i_val <= 126) ? (char)i_val : '.';
+        ss << "ASCII:   '" << c << "'\n";
+        
+        const char* mask = "SZYHXPNC";
+        ss << "Flags:   ";
+        for (int i = 7; i >= 0; --i) {
+            bool set = (i_val >> i) & 1;
+            if (set) ss << mask[7-i] << " ";
+            else ss << ". ";
+        }
+        ss << " [SZYHXPNC]\n";
+        
+        ss << "         (Active: ";
+        std::vector<std::string> active_flags;
+        const char* full_names[] = {"Sign", "Zero", "Y", "Half-Carry", "X", "Parity/Overflow", "Subtract", "Carry"};
+        for (int i = 7; i >= 0; --i) {
+            if ((i_val >> i) & 1) active_flags.push_back(full_names[7-i]);
+        }
+        
+        if (active_flags.empty()) ss << "No flags set";
+        else if (active_flags.size() == 8) ss << "All flags set";
+        else {
+            for(size_t k=0; k<active_flags.size(); ++k) {
+                if (k > 0) ss << ", ";
+                ss << active_flags[k];
+            }
+        }
+        ss << ")";
+    } else if (width == 16) {
+        char h = (i_val >> 8) & 0xFF;
+        char l = i_val & 0xFF;
+        if (h < 32 || h > 126) h = '.';
+        if (l < 32 || l > 126) l = '.';
+        ss << "ASCII:   '" << h << l << "'";
+    } else if (width == 32) {
+        ss << "ASCII:   '";
+        for (int i = 3; i >= 0; --i) {
+            char c = (i_val >> (i * 8)) & 0xFF;
+            if (c < 32 || c > 126) c = '.';
+            ss << c;
+        }
+        ss << "'";
+    } else if (width == 64) {
+        ss << "ASCII:   '";
+        for (int i = 7; i >= 0; --i) {
+            char c = (i_val >> (i * 8)) & 0xFF;
+            if (c < 32 || c > 126) c = '.';
+            ss << c;
+        }
+        ss << "'";
+    }
+}
+
+void Dashboard::format_detailed_address(std::stringstream& ss, const Expression::Value& val) {
+    auto& core = m_debugger.get_core();
+    auto& analyzer = core.get_analyzer();
+    auto& symbols = core.get_context().getSymbols();
+    const auto& addrs = val.address();
+    
+    if (addrs.empty()) {
+        ss << "Address: [ Empty ]";
+        return;
+    }
+    
+    bool is_contiguous = true;
+    if (addrs.size() > 1) {
+        for(size_t i=0; i<addrs.size()-1; ++i) {
+            if (addrs[i+1] != addrs[i] + 1) {
+                is_contiguous = false;
+                break;
+            }
+        }
+    }
+
+    std::string sep = "------------------------------------------------------------\n";
+
+    if (addrs.size() == 1 || is_contiguous) {
+        uint16_t start_addr = addrs[0];
+        uint16_t end_addr = addrs.back();
+        size_t size = addrs.size();
+        bool is_rom = (start_addr < 0x4000);
+        
+        // Header
+        if (size == 1) {
+            ss << "ADDRESS: $" << Strings::hex(start_addr);
+        } else {
+            ss << "RANGE: $" << Strings::hex(start_addr) << "..$" << Strings::hex(end_addr) 
+               << " (" << size << " bytes)";
+        }
+        ss << " | " << (is_rom ? "ROM (Read-Only)" : "RAM (Writable)") << "\n";
+        ss << sep;
+
+        // Symbols
+        auto sym = symbols.find_nearest(start_addr);
+        if (!sym.first.empty()) {
+            ss << "Symbols:  " << sym.first;
+            if (sym.second == start_addr) ss << " (exact)";
+            else ss << " (+$" << Strings::hex((uint16_t)(start_addr - sym.second)) << ")";
+            ss << "\n";
+        }
+        
+        // Stats & Checks
+        uint32_t sum = 0;
+        uint8_t min_v = 0xFF;
+        uint8_t max_v = 0x00;
+        uint32_t crc = 0xFFFFFFFF;
+        
+        for (size_t i = 0; i < size; ++i) {
+            uint16_t addr = start_addr + i;
+            uint8_t b = core.get_memory().peek(addr);
+            sum += b;
+            if (b < min_v) min_v = b;
+            if (b > max_v) max_v = b;
+            
+            update_crc32(crc, b);
+        }
+        crc = ~crc;
+        
+        ss << "Stats:   Min: $" << Strings::hex(min_v) << ", Max: $" << Strings::hex(max_v) << ", Sum: $" << std::hex << std::uppercase << sum << std::dec << "\n";
+        ss << "Checks:  Checksum: $" << Strings::hex((uint8_t)(sum & 0xFF)) << ", CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec << "\n";
+        ss << sep;
+        
+        // ASM
+        ss << "ASM:\n";
+        uint16_t pc = start_addr;
+        int max_lines = (size == 1) ? 5 : 16;
+        int lines_printed = 0;
+        uint16_t limit_addr = (size == 1) ? 0xFFFF : end_addr;
+
+        while (lines_printed < max_lines) {
+            if (size > 1 && pc > limit_addr) break;
+            
+            auto line = analyzer.parse_instruction(pc);
+            ss << format_disasm(line.address, line) << "\n";
+            lines_printed++;
+            
+            if (line.bytes.empty()) pc++; else pc += line.bytes.size();
+        }
+        if (size > 1 && pc <= limit_addr) {
+             ss << "... and " << (limit_addr - pc + 1) << " more bytes\n";
+        }
+        ss << sep;
+
+        // DUMP
+        ss << "DUMP:\n";
+        size_t dump_bytes = (size == 1) ? 8 : std::min(size, (size_t)32);
+        
+        for (size_t i = 0; i < dump_bytes; i += 8) {
+            uint16_t row_addr = start_addr + i;
+            ss << "$" << Strings::hex(row_addr) << ": ";
+            std::string ascii_part;
+            for (size_t j = 0; j < 8; ++j) {
+                bool in_range = (size == 1) || (i + j < size);
+                if (in_range) {
+                    uint8_t b = core.get_memory().peek(row_addr + j);
+                    ss << Strings::hex(b) << " ";
+                    ascii_part += (b >= 32 && b <= 126) ? (char)b : '.';
+                } else {
+                    ss << "   ";
+                }
+            }
+            ss << " >" << ascii_part << "<\n";
+        }
+        if (size > dump_bytes) {
+            ss << "... (" << (size - dump_bytes) << " more bytes)\n";
+        }
+
+    } else {
+        ss << "SPARSE ADDRESS LIST: " << addrs.size() << " items\n";
+        ss << sep;
+        int max_items = 20;
+        for (size_t i = 0; i < addrs.size() && i < (size_t)max_items; ++i) {
+            uint16_t addr = addrs[i];
+            auto line = analyzer.parse_instruction(addr);
+            std::string disasm = format_disasm(line.address, line);
+            ss << std::left << std::setw(40) << disasm;
+            
+            auto sym = symbols.find_nearest(line.address);
+            if (!sym.first.empty() && sym.second == line.address) {
+                ss << " (" << sym.first << ")";
+            } else if (line.address == core.get_cpu().get_PC()) {
+                ss << " (Current PC)";
+            }
+            ss << "\n";
+        }
+        if (addrs.size() > (size_t)max_items) {
+            ss << "... and " << (addrs.size() - max_items) << " more items\n";
+        }
+    }
+}
+
+void Dashboard::format_detailed_collection(std::stringstream& ss, const Expression::Value& val) {
+    bool is_bytes = (val.type() == Expression::Value::Type::Bytes);
+    size_t count = is_bytes ? val.bytes().size() : val.words().size();
+    std::string sep = "------------------------------------------------------------\n";
+    
+    if (is_bytes) {
+        ss << "COLLECTION: Bytes (" << count << " items)\n";
+        ss << sep;
+        
+        const auto& vec = val.bytes();
+        ss << "Range:   " << format_sequence(vec, "{ ", " }", ", ", true, true) << "\n";
+        
+        if (count > 0) {
+            uint64_t sum = 0;
+            uint8_t min_v = 0xFF;
+            uint8_t max_v = 0x00;
+            uint32_t crc = 0xFFFFFFFF;
+            uint8_t checksum = 0;
+
+            for (auto b : vec) {
+                sum += b;
+                if (b < min_v) min_v = b;
+                if (b > max_v) max_v = b;
+                checksum += b;
+                
+                update_crc32(crc, b);
+            }
+            crc = ~crc;
+
+            ss << "Stats:   Min: $" << Strings::hex(min_v) << ", Max: $" << Strings::hex(max_v) 
+               << ", Sum: $" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << sum << std::dec << " (" << sum << ")\n";
+            
+            ss << "Checks:  Checksum: $" << Strings::hex(checksum) << ", CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec << "\n";
+            
+            ss << "ASCII:   '";
+            for(size_t i=0; i<std::min(count, (size_t)64); ++i) {
+                char c = (vec[i] >= 32 && vec[i] <= 126) ? (char)vec[i] : '.';
+                ss << c;
+            }
+            if (count > 64) ss << "...";
+            ss << "'\n";
+        }
+
+    } else {
+        // Words
+        size_t bytes_count = count * 2;
+        ss << "COLLECTION: Words (" << count << " items / " << bytes_count << " bytes)\n";
+        ss << sep;
+        
+        const auto& vec = val.words();
+        ss << "Elements: " << format_sequence(vec, "{ ", " }", ", ", true, true) << "\n";
+        
+        ss << "Memory:   ";
+        size_t limit = std::min(count, (size_t)16);
+        for (size_t i = 0; i < limit; ++i) {
+            uint16_t w = vec[i];
+            ss << Strings::hex((uint8_t)(w & 0xFF)) << " " << Strings::hex((uint8_t)(w >> 8)) << " ";
+        }
+        if (count > limit) ss << "... ";
+        ss << "(Little Endian)\n";
+
+        if (count > 0) {
+            uint64_t sum = 0;
+            uint16_t min_v = 0xFFFF;
+            uint16_t max_v = 0x0000;
+            uint32_t crc = 0xFFFFFFFF;
+            std::string ascii_str;
+
+            for (auto w : vec) {
+                sum += w;
+                if (w < min_v) min_v = w;
+                if (w > max_v) max_v = w;
+                
+                uint8_t lb = w & 0xFF;
+                uint8_t hb = w >> 8;
+                
+                update_crc32(crc, lb);
+                update_crc32(crc, hb);
+
+                if (ascii_str.length() < 64) {
+                    ascii_str += (lb >= 32 && lb <= 126) ? (char)lb : '.';
+                    if (ascii_str.length() < 64)
+                        ascii_str += (hb >= 32 && hb <= 126) ? (char)hb : '.';
+                }
+            }
+            crc = ~crc;
+
+            ss << "Stats:    Min: $" << Strings::hex(min_v) << ", Max: $" << Strings::hex(max_v) 
+               << ", Sum: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << sum << std::dec << "\n";
+            
+            ss << "Checks:   CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec << "\n";
+            
+            ss << "ASCII:    '" << ascii_str;
+            if (count * 2 > 64)
+                ss << "...";
+            ss << "'\n";
+        }
+    }
+}
+
+std::string Dashboard::format(const Expression::Value& val, bool detailed) {
+    std::stringstream ss;
+    
     if (detailed) {
         // --- DETAILED VIEW (??) ---
         switch (val.type()) {
             case Expression::Value::Type::Number:
-            case Expression::Value::Type::Register: {
-                double d = (val.type() == Expression::Value::Type::Number) ? val.number() : (double)val.reg().read(core.get_cpu());
-                int64_t i_val = (int64_t)d;
-                
-                int width = 64;
-
-                if (val.type() == Expression::Value::Type::Register) {
-                    width = val.reg().is_16bit() ? 16 : 8;
-                } else {
-                    if (i_val >= -128 && i_val <= 255) width = 8;
-                    else if (i_val >= -32768 && i_val <= 65535) width = 16;
-                    else if (i_val >= std::numeric_limits<int32_t>::min() && i_val <= std::numeric_limits<uint32_t>::max()) width = 32;
-                }
-                
-                auto fmt_hex = [&](uint64_t v, int w) {
-                    std::stringstream hss;
-                    hss << std::hex << std::uppercase << std::setfill('0');
-                    if (w == 8) hss << std::setw(2) << (v & 0xFF);
-                    else if (w == 16) hss << std::setw(4) << (v & 0xFFFF);
-                    else if (w == 32) {
-                        hss << std::setw(8) << (v & 0xFFFFFFFF);
-                    } else {
-                        hss << std::setw(16) << v;
-                    }
-                    return hss.str();
-                };
-
-                auto fmt_bin = [&](uint64_t v, int bits) {
-                    std::string b;
-                    for (int i = bits - 1; i >= 0; --i) {
-                        b += ((v >> i) & 1) ? '1' : '0';
-                        if (i > 0 && i % 8 == 0) b += " ";
-                    }
-                    return b;
-                };
-
-                ss << "VALUE: $" << fmt_hex((uint64_t)i_val, width) << " (" << std::dec << i_val << ") | Number (" << width << "-bit)\n";
-                ss << "------------------------------------------------------------\n";
-                ss << "Signed:  " << (i_val >= 0 ? "+" : "") << i_val << "\n";
-
-                if (width == 64) {
-                    ss << "Binary:  Hi: %" << fmt_bin((uint64_t)i_val >> 32, 32) << "\n";
-                    ss << "         Lo: %" << fmt_bin((uint64_t)i_val & 0xFFFFFFFF, 32);
-                } else {
-                    ss << "Binary:  %" << fmt_bin((uint64_t)i_val, width);
-                    if (width == 8) ss << " (bits 7..0)";
-                    else if (width == 16) ss << " (bits 15..0)";
-                    
-                    if (width == 8) {
-                        int ones = 0;
-                        for(int k=0; k<8; ++k) if((i_val >> k) & 1) ones++;
-                        ss << " | Parity: " << ((ones % 2 == 0) ? "Even" : "Odd");
-                    }
-                }
-                ss << "\n";
-                
-                if (width == 8) {
-                    char c = (i_val >= 32 && i_val <= 126) ? (char)i_val : '.';
-                    ss << "ASCII:   '" << c << "'\n";
-                    
-                    const char* mask = "SZYHXPNC";
-                    ss << "Flags:   ";
-                    for (int i = 7; i >= 0; --i) {
-                        bool set = (i_val >> i) & 1;
-                        if (set) ss << mask[7-i] << " ";
-                        else ss << ". ";
-                    }
-                    ss << " [SZYHXPNC]\n";
-                    
-                    ss << "         (Active: ";
-                    std::vector<std::string> active_flags;
-                    const char* full_names[] = {"Sign", "Zero", "Y", "Half-Carry", "X", "Parity/Overflow", "Subtract", "Carry"};
-                    for (int i = 7; i >= 0; --i) {
-                        if ((i_val >> i) & 1) active_flags.push_back(full_names[7-i]);
-                    }
-                    
-                    if (active_flags.empty()) ss << "No flags set";
-                    else if (active_flags.size() == 8) ss << "All flags set";
-                    else {
-                        for(size_t k=0; k<active_flags.size(); ++k) {
-                            if (k > 0) ss << ", ";
-                            ss << active_flags[k];
-                        }
-                    }
-                    ss << ")";
-                } else if (width == 16) {
-                    char h = (i_val >> 8) & 0xFF;
-                    char l = i_val & 0xFF;
-                    if (h < 32 || h > 126) h = '.';
-                    if (l < 32 || l > 126) l = '.';
-                    ss << "ASCII:   '" << h << l << "'";
-                } else if (width == 32) {
-                    ss << "ASCII:   '";
-                    for (int i = 3; i >= 0; --i) {
-                        char c = (i_val >> (i * 8)) & 0xFF;
-                        if (c < 32 || c > 126) c = '.';
-                        ss << c;
-                    }
-                    ss << "'";
-                } else if (width == 64) {
-                    ss << "ASCII:   '";
-                    for (int i = 7; i >= 0; --i) {
-                        char c = (i_val >> (i * 8)) & 0xFF;
-                        if (c < 32 || c > 126) c = '.';
-                        ss << c;
-                    }
-                    ss << "'";
-                }
+            case Expression::Value::Type::Register:
+                format_detailed_number(ss, val);
                 break;
-            }
-            case Expression::Value::Type::Address: {
-                const auto& addrs = val.address();
-                if (addrs.empty()) {
-                    ss << "Address: [ Empty ]";
-                    break;
-                }
-                
-                bool is_contiguous = true;
-                if (addrs.size() > 1) {
-                    for(size_t i=0; i<addrs.size()-1; ++i) {
-                        if (addrs[i+1] != addrs[i] + 1) {
-                            is_contiguous = false;
-                            break;
-                        }
-                    }
-                }
-
-                std::string sep = "------------------------------------------------------------\n";
-                auto& analyzer = core.get_analyzer();
-                auto& symbols = core.get_context().getSymbols();
-
-                auto format_disasm_line = [&](uint16_t addr, const Z80Analyzer<Memory>::CodeLine& line) {
-                    std::stringstream lss;
-                    lss << "$" << Strings::hex(addr) << ": ";
-                    std::stringstream bytes_ss;
-                    for (size_t i = 0; i < line.bytes.size() && i < 4; ++i) {
-                        bytes_ss << Strings::hex(line.bytes[i]) << " ";
-                    }
-                    lss << std::left << std::setw(12) << bytes_ss.str(); 
-
-                    if (line.mnemonic.empty()) {
-                         lss << ".db $" << Strings::hex(core.get_memory().peek(addr));
-                    } else {
-                        lss << line.mnemonic;
-                        if (!line.operands.empty()) {
-                            lss << " ";
-                            using Operand = Z80Analyzer<Memory>::CodeLine::Operand;
-                            for (size_t i = 0; i < line.operands.size(); ++i) {
-                                if (i > 0) lss << ", ";
-                                const auto& op = line.operands[i];
-                                switch (op.type) {
-                                    case Operand::REG8: case Operand::REG16: case Operand::CONDITION: lss << op.s_val; break;
-                                    case Operand::IMM8: lss << "$" << Strings::hex((uint8_t)op.num_val); break;
-                                    case Operand::IMM16: lss << "$" << Strings::hex((uint16_t)op.num_val); break;
-                                    case Operand::MEM_IMM16: lss << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
-                                    case Operand::PORT_IMM8: lss << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
-                                    case Operand::MEM_REG16: lss << "(" << op.s_val << ")"; break;
-                                    case Operand::MEM_INDEXED: lss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
-                                    case Operand::STRING: lss << "\"" << op.s_val << "\""; break;
-                                    case Operand::CHAR_LITERAL: lss << "'" << (char)op.num_val << "'"; break;
-                                    default: break;
-                                }
-                            }
-                        }
-                    }
-                    return lss.str();
-                };
-
-                if (addrs.size() == 1 || is_contiguous) {
-                    uint16_t start_addr = addrs[0];
-                    uint16_t end_addr = addrs.back();
-                    size_t size = addrs.size();
-                    bool is_rom = (start_addr < 0x4000);
-                    
-                    // Header
-                    if (size == 1) {
-                        ss << "ADDRESS: $" << Strings::hex(start_addr);
-                    } else {
-                        ss << "RANGE: $" << Strings::hex(start_addr) << "..$" << Strings::hex(end_addr) 
-                           << " (" << size << " bytes)";
-                    }
-                    ss << " | " << (is_rom ? "ROM (Read-Only)" : "RAM (Writable)") << "\n";
-                    ss << sep;
-
-                    // Symbols
-                    auto sym = symbols.find_nearest(start_addr);
-                    if (!sym.first.empty()) {
-                        ss << "Symbols:  " << sym.first;
-                        if (sym.second == start_addr) ss << " (exact)";
-                        else ss << " (+$" << Strings::hex((uint16_t)(start_addr - sym.second)) << ")";
-                        ss << "\n";
-                    }
-                    
-                    // Stats & Checks
-                    uint32_t sum = 0;
-                    uint8_t min_v = 0xFF;
-                    uint8_t max_v = 0x00;
-                    uint32_t crc = 0xFFFFFFFF;
-                    
-                    for (size_t i = 0; i < size; ++i) {
-                        uint16_t addr = start_addr + i;
-                        uint8_t b = core.get_memory().peek(addr);
-                        sum += b;
-                        if (b < min_v) min_v = b;
-                        if (b > max_v) max_v = b;
-                        
-                        crc ^= b;
-                        for (int k = 0; k < 8; k++)
-                            crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320 : (crc >> 1);
-                    }
-                    crc = ~crc;
-                    
-                    ss << "Stats:   Min: $" << Strings::hex(min_v) << ", Max: $" << Strings::hex(max_v) << ", Sum: $" << std::hex << std::uppercase << sum << std::dec << "\n";
-                    ss << "Checks:  Checksum: $" << Strings::hex((uint8_t)(sum & 0xFF)) << ", CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec << "\n";
-                    ss << sep;
-                    
-                    // ASM
-                    ss << "ASM:\n";
-                    uint16_t pc = start_addr;
-                    int max_lines = (size == 1) ? 5 : 16;
-                    int lines_printed = 0;
-                    uint16_t limit_addr = (size == 1) ? 0xFFFF : end_addr;
-
-                    while (lines_printed < max_lines) {
-                        if (size > 1 && pc > limit_addr) break;
-                        
-                        auto line = analyzer.parse_instruction(pc);
-                        ss << format_disasm_line(line.address, line) << "\n";
-                        lines_printed++;
-                        
-                        if (line.bytes.empty()) pc++; else pc += line.bytes.size();
-                    }
-                    if (size > 1 && pc <= limit_addr) {
-                         ss << "... and " << (limit_addr - pc + 1) << " more bytes\n";
-                    }
-                    ss << sep;
-
-                    // DUMP
-                    ss << "DUMP:\n";
-                    size_t dump_bytes = (size == 1) ? 8 : std::min(size, (size_t)32);
-                    
-                    for (size_t i = 0; i < dump_bytes; i += 8) {
-                        uint16_t row_addr = start_addr + i;
-                        ss << "$" << Strings::hex(row_addr) << ": ";
-                        std::string ascii_part;
-                        for (size_t j = 0; j < 8; ++j) {
-                            bool in_range = (size == 1) || (i + j < size);
-                            if (in_range) {
-                                uint8_t b = core.get_memory().peek(row_addr + j);
-                                ss << Strings::hex(b) << " ";
-                                ascii_part += (b >= 32 && b <= 126) ? (char)b : '.';
-                            } else {
-                                ss << "   ";
-                            }
-                        }
-                        ss << " >" << ascii_part << "<\n";
-                    }
-                    if (size > dump_bytes) {
-                        ss << "... (" << (size - dump_bytes) << " more bytes)\n";
-                    }
-
-                } else {
-                    ss << "SPARSE ADDRESS LIST: " << addrs.size() << " items\n";
-                    ss << sep;
-                    int max_items = 20;
-                    for (size_t i = 0; i < addrs.size() && i < (size_t)max_items; ++i) {
-                        uint16_t addr = addrs[i];
-                        auto line = analyzer.parse_instruction(addr);
-                        std::string disasm = format_disasm_line(line.address, line);
-                        ss << std::left << std::setw(40) << disasm;
-                        
-                        auto sym = symbols.find_nearest(line.address);
-                        if (!sym.first.empty() && sym.second == line.address) {
-                            ss << " (" << sym.first << ")";
-                        } else if (line.address == core.get_cpu().get_PC()) {
-                            ss << " (Current PC)";
-                        }
-                        ss << "\n";
-                    }
-                    if (addrs.size() > (size_t)max_items) {
-                        ss << "... and " << (addrs.size() - max_items) << " more items\n";
-                    }
-                }
+            case Expression::Value::Type::Address:
+                format_detailed_address(ss, val);
                 break;
-            }
             case Expression::Value::Type::Bytes:
-            case Expression::Value::Type::Words: {
-                bool is_bytes = (val.type() == Expression::Value::Type::Bytes);
-                size_t count = is_bytes ? val.bytes().size() : val.words().size();
-                std::string sep = "------------------------------------------------------------\n";
-                
-                if (is_bytes) {
-                    ss << "COLLECTION: Bytes (" << count << " items)\n";
-                    ss << sep;
-                    
-                    const auto& vec = val.bytes();
-                    ss << "Range:   " << format_sequence(vec, "{ ", " }", ", ", true, true) << "\n";
-                    
-                    if (count > 0) {
-                        uint64_t sum = 0;
-                        uint8_t min_v = 0xFF;
-                        uint8_t max_v = 0x00;
-                        uint32_t crc = 0xFFFFFFFF;
-                        uint8_t checksum = 0;
-
-                        for (auto b : vec) {
-                            sum += b;
-                            if (b < min_v) min_v = b;
-                            if (b > max_v) max_v = b;
-                            checksum += b;
-                            
-                            crc ^= b;
-                            for (int k = 0; k < 8; k++)
-                                crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320 : (crc >> 1);
-                        }
-                        crc = ~crc;
-
-                        ss << "Stats:   Min: $" << Strings::hex(min_v) << ", Max: $" << Strings::hex(max_v) 
-                           << ", Sum: $" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << sum << std::dec << " (" << sum << ")\n";
-                        
-                        ss << "Checks:  Checksum: $" << Strings::hex(checksum) << ", CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec << "\n";
-                        
-                        ss << "ASCII:   '";
-                        for(size_t i=0; i<std::min(count, (size_t)64); ++i) {
-                            char c = (vec[i] >= 32 && vec[i] <= 126) ? (char)vec[i] : '.';
-                            ss << c;
-                        }
-                        if (count > 64) ss << "...";
-                        ss << "'\n";
-                    }
-
-                } else {
-                    // Words
-                    size_t bytes_count = count * 2;
-                    ss << "COLLECTION: Words (" << count << " items / " << bytes_count << " bytes)\n";
-                    ss << sep;
-                    
-                    const auto& vec = val.words();
-                    ss << "Elements: " << format_sequence(vec, "{ ", " }", ", ", true, true) << "\n";
-                    
-                    ss << "Memory:   ";
-                    size_t limit = std::min(count, (size_t)16);
-                    for (size_t i = 0; i < limit; ++i) {
-                        uint16_t w = vec[i];
-                        ss << Strings::hex((uint8_t)(w & 0xFF)) << " " << Strings::hex((uint8_t)(w >> 8)) << " ";
-                    }
-                    if (count > limit) ss << "... ";
-                    ss << "(Little Endian)\n";
-
-                    if (count > 0) {
-                        uint64_t sum = 0;
-                        uint16_t min_v = 0xFFFF;
-                        uint16_t max_v = 0x0000;
-                        uint32_t crc = 0xFFFFFFFF;
-                        std::string ascii_str;
-
-                        for (auto w : vec) {
-                            sum += w;
-                            if (w < min_v) min_v = w;
-                            if (w > max_v) max_v = w;
-                            
-                            uint8_t lb = w & 0xFF;
-                            uint8_t hb = w >> 8;
-                            
-                            auto update_crc = [&](uint8_t b) {
-                                crc ^= b;
-                                for (int k = 0; k < 8; k++)
-                                    crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320 : (crc >> 1);
-                            };
-                            update_crc(lb);
-                            update_crc(hb);
-
-                            if (ascii_str.length() < 64) {
-                                ascii_str += (lb >= 32 && lb <= 126) ? (char)lb : '.';
-                                if (ascii_str.length() < 64)
-                                    ascii_str += (hb >= 32 && hb <= 126) ? (char)hb : '.';
-                            }
-                        }
-                        crc = ~crc;
-
-                        ss << "Stats:    Min: $" << Strings::hex(min_v) << ", Max: $" << Strings::hex(max_v) 
-                           << ", Sum: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << sum << std::dec << "\n";
-                        
-                        ss << "Checks:   CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec << "\n";
-                        
-                        ss << "ASCII:    '" << ascii_str;
-                        if (count * 2 > 64)
-                            ss << "...";
-                        ss << "'\n";
-                    }
-                }
+            case Expression::Value::Type::Words:
+                format_detailed_collection(ss, val);
                 break;
-            }
             case Expression::Value::Type::Symbol: {
                 ss << "Symbol\n";
                 ss << "  Name:    " << val.symbol().getName() << "\n";
                 uint16_t addr = val.symbol().read();
                 ss << "  Value:   $" << Strings::hex(addr) << "\n";
                 ss << "  Type:    " << "Label/Address\n";
-                print_asm(addr);
+                print_asm_info(ss, addr);
                 break;
             }
             case Expression::Value::Type::String: {
