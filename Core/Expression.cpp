@@ -72,6 +72,14 @@ void Expression::syntax_error(ErrorCode code, const std::string& detail) {
     throw Error(code, detail);
 }
 
+void Expression::validate_address(double val) {
+    if (val < 0 || val > 65535) {
+        std::stringstream ss;
+        ss << "Address out of range: " << (long long)val;
+        syntax_error(ErrorCode::EVAL_INVALID_INDEXING, ss.str());
+    }
+}
+
 double Expression::Value::get_scalar(Core& core) const {
     if (is_register())
         return reg().read(core.get_cpu());
@@ -289,6 +297,9 @@ Expression::Value Expression::operator_range(const std::vector<Value>& args) {
 
     if (std::abs((int64_t)end - (int64_t)start) > 0x10000)
         syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Range too large (max 65536)");
+
+    if (start < -32768 || start > 65535 || end < -32768 || end > 65535)
+        syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Range values out of 16-bit bounds");
 
     if (start >= -128 && start <= 255 && end >= -128 && end <= 255) {
         std::vector<uint8_t> vals;
@@ -1705,7 +1716,9 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 for (const auto& v : args) {
                     if (v.is_scalar()) {
                         address_mode = true;
-                        addrs.push_back((uint16_t)v.get_scalar(m_core));
+                        double val = v.get_scalar(m_core);
+                        validate_address(val);
+                        addrs.push_back((uint16_t)val);
                     } else if (v.is_address()) {
                         dereference_mode = true;
                         for (auto addr : v.address())

@@ -220,6 +220,7 @@ private:
     }
 
     static void syntax_error(ErrorCode code, const std::string& detail = "");
+    static void validate_address(double val);
 
     Value operator_unary_minus(const std::vector<Value>& args);
     Value operator_unary_plus(const std::vector<Value>& args);
