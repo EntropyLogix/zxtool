@@ -2,6 +2,7 @@
 #include "Core.h"
 #include "Variables.h"
 #include "../Utils/Strings.h"
+#include "../Utils/Checksum.h"
 #include "Assembler.h"
 #include <cctype>
 #include <algorithm>
@@ -579,16 +580,13 @@ Expression::Value Expression::function_checksum(const std::vector<Value>& args) 
 }
 
 Expression::Value Expression::function_crc(const std::vector<Value>& args) {
-    uint32_t crc = 0xFFFFFFFF;
+    uint32_t crc = Checksum::CRC32_START;
     for (const auto& arg : args) {
         auto bytes = arg.to_bytes(m_core);
-        for (uint8_t b : bytes) {
-            crc ^= b;
-            for (int k = 0; k < 8; k++)
-                crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320 : (crc >> 1);
-        }
+        for (uint8_t b : bytes)
+            crc = Checksum::crc32_update(crc, b);
     }
-    return Value((double)(~crc));
+    return Value((double)Checksum::crc32_finalize(crc));
 }
 
 Expression::Value Expression::function_len(const std::vector<Value>& args) {

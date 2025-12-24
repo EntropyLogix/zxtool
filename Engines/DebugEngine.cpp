@@ -11,6 +11,7 @@
 
 #include "../Utils/Strings.h"
 #include "../Utils/Terminal.h"
+#include "../Utils/Checksum.h"
 #include "../Core/Expression.h"
 #include <numeric>
 #include <limits>
@@ -900,12 +901,6 @@ std::string Dashboard::format_disasm(uint16_t addr, const Z80Analyzer<Memory>::C
     return lss.str();
 }
 
-void Dashboard::update_crc32(uint32_t& crc, uint8_t b) {
-    crc ^= b;
-    for (int k = 0; k < 8; k++)
-        crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320 : (crc >> 1);
-}
-
 void Dashboard::format_detailed_number(std::stringstream& ss, const Expression::Value& val) {
     auto& core = m_debugger.get_core();
     double d = (val.type() == Expression::Value::Type::Number) ? val.number() : (double)val.reg().read(core.get_cpu());
@@ -1047,7 +1042,7 @@ void Dashboard::format_detailed_address(std::stringstream& ss, const Expression:
         uint32_t sum = 0;
         uint8_t min_v = 0xFF;
         uint8_t max_v = 0x00;
-        uint32_t crc = 0xFFFFFFFF;
+        uint32_t crc = Checksum::CRC32_START;
         
         for (size_t i = 0; i < size; ++i) {
             uint16_t addr = start_addr + i;
@@ -1055,10 +1050,9 @@ void Dashboard::format_detailed_address(std::stringstream& ss, const Expression:
             sum += b;
             if (b < min_v) min_v = b;
             if (b > max_v) max_v = b;
-            
-            update_crc32(crc, b);
+            crc = Checksum::crc32_update(crc, b);
         }
-        crc = ~crc;
+        crc = Checksum::crc32_finalize(crc);
         
         ss << "Stats:   Min: $" << Strings::hex(min_v) << ", Max: $" << Strings::hex(max_v) << ", Sum: $" << std::hex << std::uppercase << sum << std::dec << "\n";
         ss << "Checks:  Checksum: $" << Strings::hex((uint8_t)(sum & 0xFF)) << ", CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec << "\n";
@@ -1149,7 +1143,6 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
             uint64_t sum = 0;
             uint8_t min_v = 0xFF;
             uint8_t max_v = 0x00;
-            uint32_t crc = 0xFFFFFFFF;
             uint8_t checksum = 0;
 
             for (auto b : vec) {
@@ -1157,10 +1150,8 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
                 if (b < min_v) min_v = b;
                 if (b > max_v) max_v = b;
                 checksum += b;
-                
-                update_crc32(crc, b);
             }
-            crc = ~crc;
+            uint32_t crc = Checksum::crc32(vec);
 
             ss << "Stats:   Min: $" << Strings::hex(min_v) << ", Max: $" << Strings::hex(max_v) 
                << ", Sum: $" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << sum << std::dec << " (" << sum << ")\n";
@@ -1198,8 +1189,8 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
             uint64_t sum = 0;
             uint16_t min_v = 0xFFFF;
             uint16_t max_v = 0x0000;
-            uint32_t crc = 0xFFFFFFFF;
             std::string ascii_str;
+            uint32_t crc = Checksum::CRC32_START;
 
             for (auto w : vec) {
                 sum += w;
@@ -1208,9 +1199,8 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
                 
                 uint8_t lb = w & 0xFF;
                 uint8_t hb = w >> 8;
-                
-                update_crc32(crc, lb);
-                update_crc32(crc, hb);
+                crc = Checksum::crc32_update(crc, lb);
+                crc = Checksum::crc32_update(crc, hb);
 
                 if (ascii_str.length() < 64) {
                     ascii_str += (lb >= 32 && lb <= 126) ? (char)lb : '.';
@@ -1218,7 +1208,7 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
                         ascii_str += (hb >= 32 && hb <= 126) ? (char)hb : '.';
                 }
             }
-            crc = ~crc;
+            crc = Checksum::crc32_finalize(crc);
 
             ss << "Stats:    Min: $" << Strings::hex(min_v) << ", Max: $" << Strings::hex(max_v) 
                << ", Sum: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << sum << std::dec << "\n";
@@ -1260,9 +1250,37 @@ std::string Dashboard::format(const Expression::Value& val, bool detailed) {
                 break;
             }
             case Expression::Value::Type::String: {
-                ss << "String\n";
-                ss << "  Length:  " << val.string().length() << "\n";
-                ss << "  Value:   \"" << val.string() << "\"";
+                std::string s = val.string();
+                size_t len = s.length();
+                std::string display_s = s;
+                if (len > 30) {
+                    display_s = s.substr(0, 27) + "...";
+                }
+                
+                ss << "STRING:   \"" << display_s << "\" (" << len << " chars)\n";
+                ss << "------------------------------------------------------------\n";
+                
+                ss << "Bytes:    ";
+                size_t limit = std::min(len, (size_t)16);
+                for (size_t i = 0; i < limit; ++i) {
+                    if (i > 0) ss << ", ";
+                    ss << "$" << Strings::hex((uint8_t)s[i]);
+                }
+                if (len > limit) {
+                    ss << "... (+" << (len - limit) << " more)";
+                }
+                ss << "\n";
+                
+                uint32_t crc = Checksum::CRC32_START;
+                uint8_t checksum = 0;
+                for (char c : s) {
+                    uint8_t b = (uint8_t)c;
+                    checksum += b;
+                    crc = Checksum::crc32_update(crc, b);
+                }
+                crc = Checksum::crc32_finalize(crc);
+                
+                ss << "Checks:   Checksum: $" << Strings::hex(checksum) << ", CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec;
                 break;
             }
         }
