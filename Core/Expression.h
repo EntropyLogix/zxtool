@@ -113,6 +113,9 @@ public:
     Value evaluate(const std::string& expression);
     void assign(const std::string& lhs, const Value& rhs);
 
+    Value function_checksum(const std::vector<Value>& args);
+    Value function_crc(const std::vector<Value>& args);
+
 private:
     enum class TokenType {
         UNKNOWN,
@@ -247,8 +250,6 @@ private:
 
     Value function_low(const std::vector<Value>& args);
     Value function_high(const std::vector<Value>& args);
-    Value function_checksum(const std::vector<Value>& args);
-    Value function_crc(const std::vector<Value>& args);
     Value function_len(const std::vector<Value>& args);
     Value function_upper(const std::vector<Value>& args);
     Value function_lower(const std::vector<Value>& args);
