@@ -13,6 +13,7 @@
 #include "../Utils/Terminal.h"
 #include "../Utils/Checksum.h"
 #include "../Core/Expression.h"
+#include "../Core/Variables.h"
 #include <numeric>
 #include <limits>
 #include <bitset>
@@ -533,6 +534,130 @@ void Dashboard::handle_command(const std::string& input) {
 }
 
 void Dashboard::init() {
+    static const std::vector<std::string> commands = {
+        "help", "quit", "exit", "map", "stack", "memory", "reg", "rm", 
+        "asm", "disasm", "dump", "load", "save", "break", "watch", 
+        "step", "run", "toggle", "sym", "find", "fill", "data", "code",
+        "set", "eval", "bit", "res", "lines", "undef", "?", "??"
+    };
+
+    static const std::vector<std::string> eval_keywords = {
+        "af", "bc", "de", "hl", "ix", "iy", "sp", "pc",
+        "a", "f", "b", "c", "d", "e", "h", "l", "i", "r",
+        "af'", "bc'", "de'", "hl'",
+        "low", "high", "len", "abs", "sign", "sqrt", "min", "max", "clamp",
+        "sin", "cos", "deg", "rad", "int", "floor", "round", "ceil", "pow2",
+        "align", "wrap", "sum", "avg", "all", "any", "asm", "copy", "bytes",
+        "words", "str", "val", "hex", "bin", "bcd", "dec", "checksum", "crc"
+    };
+
+    m_repl.set_completion_callback([this](std::string const& input, int& contextLen) {
+        std::vector<replxx::Replxx::Completion> completions;
+        std::string prefix;
+        
+        size_t first_space = input.find_first_of(" \t");
+        if (first_space == std::string::npos) {
+            prefix = input;
+            contextLen = prefix.length();
+            for (const auto& cmd : commands) {
+                if (cmd.find(prefix) == 0) {
+                    completions.emplace_back(cmd.c_str());
+                }
+            }
+        } else {
+            std::string cmd = input.substr(0, first_space);
+            bool is_eval = (cmd == "eval" || cmd == "evaluate" || cmd == "?" || cmd == "??" || cmd == "set");
+            
+            if (is_eval) {
+                size_t lastSep = input.find_last_of(" \t,()[]{}+-*/");
+                if (lastSep == std::string::npos) prefix = input;
+                else prefix = input.substr(lastSep + 1);
+                
+                contextLen = prefix.length();
+                if (prefix.empty()) return completions;
+
+                if (prefix[0] == '@') {
+                    std::string var_prefix = prefix.substr(1);
+                    const auto& vars = m_debugger.get_core().get_context().getVariables().by_name();
+                    for (const auto& pair : vars) {
+                        if (pair.first.find(var_prefix) == 0) {
+                            std::string comp = "@" + pair.first;
+                            completions.emplace_back(comp.c_str());
+                        }
+                    }
+                } else {
+                    for (const auto& kw : eval_keywords) {
+                        if (kw.find(prefix) == 0) {
+                            completions.emplace_back(kw.c_str());
+                        }
+                    }
+                    
+                    const auto& symbols = m_debugger.get_core().get_context().getSymbols().by_name();
+                    for (const auto& pair : symbols) {
+                        if (pair.first.find(prefix) == 0) {
+                            completions.emplace_back(pair.first.c_str());
+                        }
+                    }
+                }
+            }
+        }
+        return completions;
+    });
+
+    m_repl.set_hint_callback([this](std::string const& input, int& contextLen, replxx::Replxx::Color& color) {
+        std::vector<std::string> hints;
+        std::string prefix;
+        
+        size_t first_space = input.find_first_of(" \t");
+        if (first_space == std::string::npos) {
+            prefix = input;
+            contextLen = prefix.length();
+            for (const auto& cmd : commands) {
+                if (cmd.find(prefix) == 0 && cmd.length() > prefix.length()) {
+                    hints.push_back(cmd);
+                }
+            }
+        } else {
+            std::string cmd = input.substr(0, first_space);
+            bool is_eval = (cmd == "eval" || cmd == "evaluate" || cmd == "?" || cmd == "??" || cmd == "set");
+            
+            if (is_eval) {
+                size_t lastSep = input.find_last_of(" \t,()[]{}+-*/");
+                if (lastSep == std::string::npos) prefix = input;
+                else prefix = input.substr(lastSep + 1);
+                
+                contextLen = prefix.length();
+                if (prefix.empty()) return hints;
+
+                if (prefix[0] == '@') {
+                    std::string var_prefix = prefix.substr(1);
+                    const auto& vars = m_debugger.get_core().get_context().getVariables().by_name();
+                    for (const auto& pair : vars) {
+                        if (pair.first.find(var_prefix) == 0 && pair.first.length() > var_prefix.length()) {
+                            hints.push_back("@" + pair.first);
+                        }
+                    }
+                } else {
+                    for (const auto& kw : eval_keywords) {
+                        if (kw.find(prefix) == 0 && kw.length() > prefix.length()) {
+                            hints.push_back(kw);
+                        }
+                    }
+                    
+                    const auto& symbols = m_debugger.get_core().get_context().getSymbols().by_name();
+                    for (const auto& pair : symbols) {
+                        if (pair.first.find(prefix) == 0 && pair.first.length() > prefix.length()) {
+                            hints.push_back(pair.first);
+                        }
+                    }
+                }
+            }
+        }
+        
+        color = replxx::Replxx::Color::GRAY;
+        return hints;
+    });
+
     m_repl.install_window_change_handler();    
     auto bind_scroll = [&](char32_t key, int mem_delta, int code_delta, int stack_delta) {
         m_repl.bind_key(key, [this, mem_delta, code_delta, stack_delta](char32_t code) {
@@ -559,12 +684,28 @@ void Dashboard::init() {
     bind_scroll(replxx::Replxx::KEY::DOWN, 16, 1, 2);
 
     auto tab_handler = [this](char32_t code) {
+        if (m_focus == FOCUS_CMD) {
+            std::string val(m_repl.get_state().text());
+            if (!val.empty()) {
+                return m_repl.invoke(replxx::Replxx::ACTION::COMPLETE_NEXT, code);
+            }
+        }
         m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT);
         validate_focus();
         print_dashboard();
         return replxx::Replxx::ACTION_RESULT::RETURN;
     };
     m_repl.bind_key(replxx::Replxx::KEY::TAB, tab_handler);
+
+    auto esc_handler = [this](char32_t code) {
+        if (m_focus == FOCUS_CMD) {
+            m_repl.set_state(replxx::Replxx::State(""));
+            print_dashboard();
+            return replxx::Replxx::ACTION_RESULT::RETURN;
+        }
+        return replxx::Replxx::ACTION_RESULT::CONTINUE;
+    };
+    m_repl.bind_key(replxx::Replxx::KEY::ESCAPE, esc_handler);
 }
 
 void Dashboard::print_dashboard() {
