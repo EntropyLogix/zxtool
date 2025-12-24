@@ -41,7 +41,7 @@ Expression::Error::Error(ErrorCode code, const std::string& detail) : m_code(cod
             m_message = "Not enough operands";
             break;
         case ErrorCode::EVAL_NOT_ENOUGH_ARGUMENTS:
-            m_message = "Not enough arguments";
+            m_message = "Incorrect number of arguments";
             break;
         case ErrorCode::EVAL_TYPE_MISMATCH:
             m_message = "Type mismatch";
@@ -1585,6 +1585,8 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 }
                 if (last_type == TokenType::LBRACKET)
                     count = 0;
+                else if (last_type == TokenType::COMMA)
+                    count--;
                 output_queue.push_back({TokenType::ADDRESS, Value(count)});
                 break;
             }
@@ -1606,6 +1608,8 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 }
                 if (last_type == openType)
                     count = 0;
+                else if (last_type == TokenType::COMMA)
+                    count--;
                 if (openType == TokenType::LBRACE)
                     output_queue.push_back({TokenType::BYTES, Value(count)});
                 else if (openType == TokenType::LBRACE_W)
@@ -1724,6 +1728,8 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 stack.push_back(token.value);
             } else {
                 int count = (int)token.value.number();
+                if (stack.size() < (size_t)count)
+                    syntax_error(ErrorCode::EVAL_NOT_ENOUGH_OPERANDS);
                 std::vector<uint8_t> bytes;
                 std::vector<Value> args;
                 for(int k = 0; k < count; ++k) {
@@ -1743,6 +1749,8 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
                 stack.push_back(token.value);
             else {
                 int count = (int)token.value.number();
+                if (stack.size() < (size_t)count)
+                    syntax_error(ErrorCode::EVAL_NOT_ENOUGH_OPERANDS);
                 std::vector<uint16_t> words;
                 std::vector<Value> args;
                 for (int k = 0; k < count; ++k) {

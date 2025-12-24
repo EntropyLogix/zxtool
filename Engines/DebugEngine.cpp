@@ -839,7 +839,7 @@ std::string Dashboard::format_sequence(const std::vector<T>& data,
         if (rep_total_len > arith_len) {
             std::vector<T> pattern;
             for(size_t k=0; k<rep_pat_len; ++k) pattern.push_back(data[i+k]);
-            ss << format_sequence(pattern, "{", "}", ", ", use_hex_prefix, false) << " x " << std::dec << rep_count;
+            ss << format_sequence(pattern, "{", "}", separator, use_hex_prefix, false) << " x " << std::dec << rep_count;
             i += rep_total_len;
         } else if (arith_len > 1) {
             fmt_item(data[i]);
@@ -1183,7 +1183,7 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
         ss << sep;
         
         const auto& vec = val.bytes();
-        ss << "Range:   " << format_sequence(vec, "{ ", " }", ", ", true, true) << "\n";
+        ss << "Range:   " << format_sequence(vec, "{", "}", ",", true, true) << "\n";
         
         if (count > 0) {
             uint64_t sum = 0;
@@ -1220,7 +1220,7 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
         ss << sep;
         
         const auto& vec = val.words();
-        ss << "Elements: " << format_sequence(vec, "{ ", " }", ", ", true, true) << "\n";
+        ss << "Elements: " << format_sequence(vec, "{", "}", ",", true, true) << "\n";
         
         ss << "Memory:   ";
         size_t limit = std::min(count, (size_t)16);
@@ -1229,7 +1229,7 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
             ss << Strings::hex((uint8_t)(w & 0xFF)) << " " << Strings::hex((uint8_t)(w >> 8)) << " ";
         }
         if (count > limit) ss << "... ";
-        ss << "(Little Endian)\n";
+        ss << "\n";
 
         if (count > 0) {
             uint64_t sum = 0;
@@ -1237,6 +1237,7 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
             uint16_t max_v = 0x0000;
             std::string ascii_str;
             uint32_t crc = Checksum::CRC32_START;
+            uint8_t checksum = 0;
 
             for (auto w : vec) {
                 sum += w;
@@ -1245,6 +1246,8 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
                 
                 uint8_t lb = w & 0xFF;
                 uint8_t hb = w >> 8;
+                checksum += lb;
+                checksum += hb;
                 crc = Checksum::crc32_update(crc, lb);
                 crc = Checksum::crc32_update(crc, hb);
 
@@ -1259,7 +1262,7 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
             ss << "Stats:    Min: $" << Strings::hex(min_v) << ", Max: $" << Strings::hex(max_v) 
                << ", Sum: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << sum << std::dec << "\n";
             
-            ss << "Checks:   CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec << "\n";
+            ss << "Checks:   Checksum: $" << Strings::hex(checksum) << ", CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec << "\n";
             
             ss << "ASCII:    '" << ascii_str;
             if (count * 2 > 64)
@@ -1309,7 +1312,7 @@ std::string Dashboard::format(const Expression::Value& val, bool detailed) {
                 ss << "Bytes:    ";
                 size_t limit = std::min(len, (size_t)16);
                 for (size_t i = 0; i < limit; ++i) {
-                    if (i > 0) ss << ", ";
+                    if (i > 0) ss << ",";
                     ss << "$" << Strings::hex((uint8_t)s[i]);
                 }
                 if (len > limit) {
