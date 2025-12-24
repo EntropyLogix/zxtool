@@ -843,7 +843,6 @@ std::string Dashboard::format(const Expression::Value& val, bool detailed) {
             }
         }
     };
-
     if (detailed) {
         // --- DETAILED VIEW (??) ---
         switch (val.type()) {
@@ -1137,47 +1136,108 @@ std::string Dashboard::format(const Expression::Value& val, bool detailed) {
             case Expression::Value::Type::Words: {
                 bool is_bytes = (val.type() == Expression::Value::Type::Bytes);
                 size_t count = is_bytes ? val.bytes().size() : val.words().size();
-                ss << "Collection\n";
-                ss << "  Size:    " << count << " elements ($" << std::hex << count << std::dec << ")\n";
+                std::string sep = "------------------------------------------------------------\n";
                 
-                // Statistics
-                if (count > 0) {
-                    Expression eval(core);
-                    std::vector<Expression::Value> args = { val };
-                    double sum = eval.function_checksum(args).number();
-                    double crc_val = eval.function_crc(args).number();
+                if (is_bytes) {
+                    ss << "COLLECTION: Bytes (" << count << " items)\n";
+                    ss << sep;
                     
-                    uint32_t min_v = 0;
-                    uint32_t max_v = 0;
+                    const auto& vec = val.bytes();
+                    ss << "Range:   " << format_sequence(vec, "{ ", " }", ", ", true, true) << "\n";
                     
-                    if (is_bytes) {
-                        const auto& vec = val.bytes();
-                        auto mm = std::minmax_element(vec.begin(), vec.end());
-                        min_v = *mm.first;
-                        max_v = *mm.second;
+                    if (count > 0) {
+                        uint64_t sum = 0;
+                        uint8_t min_v = 0xFF;
+                        uint8_t max_v = 0x00;
+                        uint32_t crc = 0xFFFFFFFF;
+                        uint8_t checksum = 0;
+
+                        for (auto b : vec) {
+                            sum += b;
+                            if (b < min_v) min_v = b;
+                            if (b > max_v) max_v = b;
+                            checksum += b;
+                            
+                            crc ^= b;
+                            for (int k = 0; k < 8; k++)
+                                crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320 : (crc >> 1);
+                        }
+                        crc = ~crc;
+
+                        ss << "Stats:   Min: $" << Strings::hex(min_v) << ", Max: $" << Strings::hex(max_v) 
+                           << ", Sum: $" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << sum << std::dec << " (" << sum << ")\n";
                         
-                        ss << "  ASCII:   \"";
+                        ss << "Checks:  Checksum: $" << Strings::hex(checksum) << ", CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec << "\n";
+                        
+                        ss << "ASCII:   '";
                         for(size_t i=0; i<std::min(count, (size_t)64); ++i) {
                             char c = (vec[i] >= 32 && vec[i] <= 126) ? (char)vec[i] : '.';
                             ss << c;
                         }
                         if (count > 64) ss << "...";
-                        ss << "\"\n";
-                    } else {
-                        const auto& vec = val.words();
-                        auto mm = std::minmax_element(vec.begin(), vec.end());
-                        min_v = *mm.first;
-                        max_v = *mm.second;
+                        ss << "'\n";
                     }
-                    ss << "  Stats:    Checksum=" << (uint32_t)sum 
-                       << " Min=$" << (is_bytes ? Strings::hex((uint8_t)min_v) : Strings::hex((uint16_t)min_v)) 
-                       << " Max=$" << (is_bytes ? Strings::hex((uint8_t)max_v) : Strings::hex((uint16_t)max_v)) 
-                       << " CRC=$" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << (uint32_t)crc_val << std::dec << "\n";
+
+                } else {
+                    // Words
+                    size_t bytes_count = count * 2;
+                    ss << "COLLECTION: Words (" << count << " items / " << bytes_count << " bytes)\n";
+                    ss << sep;
+                    
+                    const auto& vec = val.words();
+                    ss << "Elements: " << format_sequence(vec, "{ ", " }", ", ", true, true) << "\n";
+                    
+                    ss << "Memory:   ";
+                    size_t limit = std::min(count, (size_t)16);
+                    for (size_t i = 0; i < limit; ++i) {
+                        uint16_t w = vec[i];
+                        ss << Strings::hex((uint8_t)(w & 0xFF)) << " " << Strings::hex((uint8_t)(w >> 8)) << " ";
+                    }
+                    if (count > limit) ss << "... ";
+                    ss << "(Little Endian)\n";
+
+                    if (count > 0) {
+                        uint64_t sum = 0;
+                        uint16_t min_v = 0xFFFF;
+                        uint16_t max_v = 0x0000;
+                        uint32_t crc = 0xFFFFFFFF;
+                        std::string ascii_str;
+
+                        for (auto w : vec) {
+                            sum += w;
+                            if (w < min_v) min_v = w;
+                            if (w > max_v) max_v = w;
+                            
+                            uint8_t lb = w & 0xFF;
+                            uint8_t hb = w >> 8;
+                            
+                            auto update_crc = [&](uint8_t b) {
+                                crc ^= b;
+                                for (int k = 0; k < 8; k++)
+                                    crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320 : (crc >> 1);
+                            };
+                            update_crc(lb);
+                            update_crc(hb);
+
+                            if (ascii_str.length() < 64) {
+                                ascii_str += (lb >= 32 && lb <= 126) ? (char)lb : '.';
+                                if (ascii_str.length() < 64)
+                                    ascii_str += (hb >= 32 && hb <= 126) ? (char)hb : '.';
+                            }
+                        }
+                        crc = ~crc;
+
+                        ss << "Stats:    Min: $" << Strings::hex(min_v) << ", Max: $" << Strings::hex(max_v) 
+                           << ", Sum: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << sum << std::dec << "\n";
+                        
+                        ss << "Checks:   CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec << "\n";
+                        
+                        ss << "ASCII:    '" << ascii_str;
+                        if (count * 2 > 64)
+                            ss << "...";
+                        ss << "'\n";
+                    }
                 }
-                
-                ss << "  Dump:    ";
-                if (is_bytes) ss << format_sequence(val.bytes(), "{", "}", " ", true, true);
-                else ss << format_sequence(val.words(), "W{", "}", " ", true, true);
                 break;
             }
             case Expression::Value::Type::Symbol: {
