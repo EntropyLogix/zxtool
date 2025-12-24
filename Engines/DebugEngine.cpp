@@ -770,8 +770,9 @@ std::string Dashboard::format_sequence(const std::vector<T>& data,
     for (size_t i = 0; i < data.size(); ) {
         if (i > 0) ss << separator;
         
-        size_t best_len = 1;
-        int64_t best_step = 0;
+        // 1. Arithmetic Progression Detection
+        size_t arith_len = 1;
+        int64_t arith_step = 0;
 
         if (i + 1 < data.size()) {
             int64_t diff = (int64_t)data[i+1] - (int64_t)data[i];
@@ -784,25 +785,70 @@ std::string Dashboard::format_sequence(const std::vector<T>& data,
                     j++;
                 }
                 size_t len = j - i + 1;
-                // Collapse rule: Only collapse if sequence length > 5
-                if (len > 5) { best_len = len; best_step = diff; }
+                if (len > 5) { arith_len = len; arith_step = diff; }
             }
         }
 
-        auto fmt_item = [&](T v) {
-            if (use_hex_prefix) ss << "$";
-            ss << Strings::hex(v);
-        };
+        // 2. Repetition Detection
+        size_t rep_pat_len = 0;
+        size_t rep_count = 0;
+        size_t rep_total_len = 0;
 
-        if (best_len > 1) {
+        // 2a. RLE (L=1)
+        {
+            size_t j = i + 1;
+            while (j < data.size() && data[j] == data[i]) j++;
+            size_t count = j - i;
+            if (count >= 4) {
+                rep_pat_len = 1;
+                rep_count = count;
+                rep_total_len = count;
+            }
+        }
+
+        // 2b. Pattern (L>1)
+        size_t remaining = data.size() - i;
+        size_t max_pat_len = std::min(remaining / 2, (size_t)16);
+
+        for (size_t len = 2; len <= max_pat_len; ++len) {
+            size_t count = 1;
+            size_t pos = i + len;
+            while (pos + len <= data.size()) {
+                bool match = true;
+                for (size_t k = 0; k < len; ++k) {
+                    if (data[i + k] != data[pos + k]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) { count++; pos += len; } else break;
+            }
+            if (count >= 3) {
+                size_t total = count * len;
+                if (total > rep_total_len) {
+                    rep_total_len = total;
+                    rep_pat_len = len;
+                    rep_count = count;
+                }
+            }
+        }
+
+        // 3. Decision & Formatting
+        auto fmt_item = [&](T v) { if (use_hex_prefix) ss << "$"; ss << Strings::hex(v); };
+
+        if (rep_total_len > arith_len) {
+            std::vector<T> pattern;
+            for(size_t k=0; k<rep_pat_len; ++k) pattern.push_back(data[i+k]);
+            ss << format_sequence(pattern, "{", "}", ", ", use_hex_prefix, false) << " x " << std::dec << rep_count;
+            i += rep_total_len;
+        } else if (arith_len > 1) {
             fmt_item(data[i]);
             ss << "..";
-            fmt_item(data[i + best_len - 1]);
-            if (std::abs(best_step) != 1) {
-                ss << ":";
-                ss << std::dec << std::abs(best_step);
+            fmt_item(data[i + arith_len - 1]);
+            if (std::abs(arith_step) != 1) {
+                ss << ":" << std::dec << std::abs(arith_step);
             }
-            i += best_len;
+            i += arith_len;
         } else {
             fmt_item(data[i]);
             i++;
