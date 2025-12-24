@@ -9,6 +9,7 @@
 #include <cmath>
 #include <type_traits>
 #include <cstring>
+#include <limits>
 
 static constexpr double PI = 3.14159265358979323846;
 
@@ -276,8 +277,19 @@ Expression::Value Expression::operator_gte(const std::vector<Value>& args) {
 }
 
 Expression::Value Expression::operator_range(const std::vector<Value>& args) {
-    int start = (int)args[0].get_scalar(m_core);
-    int end = (int)args[1].get_scalar(m_core);
+    double d_start = args[0].get_scalar(m_core);
+    double d_end = args[1].get_scalar(m_core);
+
+    if (d_start < std::numeric_limits<int>::min() || d_start > std::numeric_limits<int>::max() ||
+        d_end < std::numeric_limits<int>::min() || d_end > std::numeric_limits<int>::max())
+        syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Range limits out of bounds");
+
+    int start = (int)d_start;
+    int end = (int)d_end;
+
+    if (std::abs((int64_t)end - (int64_t)start) > 0x10000)
+        syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Range too large (max 65536)");
+
     if (start >= -128 && start <= 255 && end >= -128 && end <= 255) {
         std::vector<uint8_t> vals;
         if (start <= end) {
@@ -1472,6 +1484,9 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
     TokenType last_type = TokenType::OPERATOR;
     std::stack<int> arg_counts;
     for (const auto& token : tokens) {
+        if (last_type == TokenType::FUNCTION && token.type != TokenType::LPAREN) {
+            syntax_error(ErrorCode::SYNTAX_UNEXPECTED_CHARACTER, "Expected '(' after function name");
+        }
         switch (token.type) {
             case TokenType::NUMBER:
             case TokenType::REGISTER:

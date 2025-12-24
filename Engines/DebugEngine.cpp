@@ -1063,7 +1063,12 @@ void Dashboard::format_detailed_address(std::stringstream& ss, const Expression:
         uint16_t start_addr = addrs[0];
         uint16_t end_addr = addrs.back();
         size_t size = addrs.size();
-        bool is_rom = (start_addr < 0x4000);
+        
+        std::string mem_type = "Mixed (ROM/RAM)";
+        if (start_addr <= end_addr) {
+            if (end_addr < 0x4000) mem_type = "ROM (Read-Only)";
+            else if (start_addr >= 0x4000) mem_type = "RAM (Writable)";
+        }
         
         // Header
         if (size == 1) {
@@ -1072,7 +1077,7 @@ void Dashboard::format_detailed_address(std::stringstream& ss, const Expression:
             ss << "RANGE: $" << Strings::hex(start_addr) << "..$" << Strings::hex(end_addr) 
                << " (" << size << " bytes)";
         }
-        ss << " | " << (is_rom ? "ROM (Read-Only)" : "RAM (Writable)") << "\n";
+        ss << " | " << mem_type << "\n";
         ss << sep;
 
         // Symbols
