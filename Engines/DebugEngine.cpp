@@ -362,21 +362,32 @@ void Dashboard::draw_prompt() {
     m_editor.draw(prompt);
 }
 
+bool Dashboard::scroll_up() {
+    if (m_focus == FOCUS_MEMORY) { m_memory_view.scroll(-16); return true; }
+    else if (m_focus == FOCUS_CODE) { m_auto_follow = false; m_code_view.scroll(-1); return true; }
+    else if (m_focus == FOCUS_STACK) { m_stack_view.scroll(-2); return true; }
+    return false;
+}
+
+bool Dashboard::scroll_down() {
+    if (m_focus == FOCUS_MEMORY) { m_memory_view.scroll(16); return true; }
+    else if (m_focus == FOCUS_CODE) { m_auto_follow = false; m_code_view.scroll(1); return true; }
+    else if (m_focus == FOCUS_STACK) { m_stack_view.scroll(2); return true; }
+    return false;
+}
+
 void Dashboard::run() {
     m_editor.history_load(HISTORY_FILE);
     m_editor.set_completion_callback([this](const std::string& input) { return get_completions(input); });
     m_editor.set_hint_callback([this](const std::string& input, std::string& color, int& error_pos) { return calculate_hint(input, color, error_pos); });
-
+    
     update_code_view();
     m_memory_view.set_address(m_debugger.get_core().get_cpu().get_PC());
     m_stack_view.set_address(m_debugger.get_core().get_cpu().get_SP());
     validate_focus();
-
     Terminal::enable_raw_mode();
-
     std::string last_command;
     bool needs_repaint = true;
-    
     while (m_running) {
         if (needs_repaint) {
             Terminal::disable_raw_mode();
@@ -385,24 +396,21 @@ void Dashboard::run() {
             draw_prompt();
             needs_repaint = false;
         }
-
         Terminal::Input in = Terminal::read_key();
-        if (in.key == Terminal::Key::NONE) {
+        if (in.key == Terminal::Key::NONE)
             continue;
-        }
-
         if (in.key == Terminal::Key::SHIFT_TAB) {
             m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT); 
-            validate_focus(); 
+            validate_focus();
             needs_repaint = true;
             continue;
         }
-
         if (m_focus == FOCUS_CMD) {
             auto res = m_editor.on_key(in);
             if (res == Terminal::LineEditor::Result::SUBMIT) {
                 std::string cmd = m_editor.get_line();
-                if (cmd.empty() && !last_command.empty()) cmd = last_command;
+                if (cmd.empty() && !last_command.empty())
+                    cmd = last_command;
                 if (!cmd.empty()) {
                     m_editor.history_add(cmd);
                     last_command = cmd;
@@ -413,28 +421,17 @@ void Dashboard::run() {
                 handle_command(cmd);
                 Terminal::enable_raw_mode();
                 needs_repaint = true;
-            } else if (res == Terminal::LineEditor::Result::IGNORED) {
-                if (in.key == Terminal::Key::ESC) {
-                    m_focus = FOCUS_CODE; 
-                    validate_focus(); 
-                    needs_repaint = true;
-                }
-            } else {
+            } else
                 draw_prompt();
-            }
         } else {
-            // Navigation mode
-            if (in.key == Terminal::Key::ESC) {
-                m_focus = FOCUS_CMD;
-                needs_repaint = true;
-            } else if (in.key == Terminal::Key::UP) {
-                if (m_focus == FOCUS_MEMORY) { m_memory_view.scroll(-16); needs_repaint = true; }
-                else if (m_focus == FOCUS_CODE) { m_auto_follow = false; m_code_view.scroll(-1); needs_repaint = true; }
-                else if (m_focus == FOCUS_STACK) { m_stack_view.scroll(-2); needs_repaint = true; }
-            } else if (in.key == Terminal::Key::DOWN) {
-                if (m_focus == FOCUS_MEMORY) { m_memory_view.scroll(16); needs_repaint = true; }
-                else if (m_focus == FOCUS_CODE) { m_auto_follow = false; m_code_view.scroll(1); needs_repaint = true; }
-                else if (m_focus == FOCUS_STACK) { m_stack_view.scroll(2); needs_repaint = true; }
+            switch (in.key) {
+                case Terminal::Key::UP:
+                case Terminal::Key::DOWN:
+                    if ((in.key == Terminal::Key::UP && scroll_up()) || (in.key == Terminal::Key::DOWN && scroll_down()))
+                        needs_repaint = true;
+                    break;
+                default:
+                    break;
             }
         }
     }
