@@ -165,14 +165,14 @@ public:
     {
         m_debugger.set_logger([this](const std::string& msg){ log(msg); });
         m_commands = {
-            {"evaluate", {&Dashboard::cmd_evaluate, true}},
-            {"eval", {&Dashboard::cmd_evaluate, true}},
-            {"quit", {&Dashboard::cmd_quit, true}},
-            {"q", {&Dashboard::cmd_quit, true}},
-            {"set", {&Dashboard::cmd_set, true}},
-            {"undef", {&Dashboard::cmd_undef, true}},
-            {"?", {&Dashboard::cmd_expression, false}},
-            {"??", {&Dashboard::cmd_expression_detailed, false}}
+            {"evaluate", {&Dashboard::cmd_evaluate, true, "expression"}},
+            {"eval", {&Dashboard::cmd_evaluate, true, "expression"}},
+            {"quit", {&Dashboard::cmd_quit, true, ""}},
+            {"q", {&Dashboard::cmd_quit, true, ""}},
+            {"set", {&Dashboard::cmd_set, true, "target = value"}},
+            {"undef", {&Dashboard::cmd_undef, true, "symbol"}},
+            {"?", {&Dashboard::cmd_expression, false, "expression"}},
+            {"??", {&Dashboard::cmd_expression_detailed, false, "expression"}}
         };
     }
     void run();
@@ -199,6 +199,7 @@ private:
     struct CommandEntry {
         void (Dashboard::*handler)(const std::string&);
         bool require_separator;
+        std::string syntax;
     };
     std::map<std::string, CommandEntry> m_commands;
     Terminal::LineEditor m_editor;
