@@ -208,6 +208,7 @@ private:
     void init();
     void print_separator() { std::cout << m_theme.separator << std::string(80, '-') << Terminal::RESET << "\n"; }
     void print_dashboard();
+    void draw_prompt();
     void print_footer();
     void print_columns(const std::vector<std::string>& left, const std::vector<std::string>& right, size_t left_width);
     void print_output_buffer();

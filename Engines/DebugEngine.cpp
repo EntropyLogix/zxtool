@@ -357,6 +357,11 @@ void Debugger::next() {
         m_pc_moved = (pc_before != pc_after);
 }
 
+void Dashboard::draw_prompt() {
+    std::string prompt = (m_focus == FOCUS_CMD) ? (m_theme.header_focus + "[COMMAND] " + Terminal::RESET) : (Terminal::RESET + m_theme.header_blur + "[COMMAND] " + Terminal::RESET);
+    m_editor.draw(prompt);
+}
+
 void Dashboard::run() {
     m_editor.history_load(HISTORY_FILE);
     m_editor.set_completion_callback([this](const std::string& input) { return get_completions(input); });
@@ -377,10 +382,7 @@ void Dashboard::run() {
             Terminal::disable_raw_mode();
             print_dashboard();
             Terminal::enable_raw_mode();
-            std::string prompt = (m_focus == FOCUS_CMD) ? 
-                (m_theme.header_focus + "[COMMAND] " + Terminal::RESET) : 
-                (Terminal::RESET + m_theme.header_blur + "[COMMAND] " + Terminal::RESET);
-            m_editor.draw(prompt);
+            draw_prompt();
             needs_repaint = false;
         }
 
@@ -418,12 +420,7 @@ void Dashboard::run() {
                     needs_repaint = true;
                 }
             } else {
-                // CONTINUE - redraw prompt if needed, but LineEditor handles internal redraw?
-                // Actually LineEditor::on_key updates internal state. We need to redraw the prompt line.
-                std::string prompt = (m_focus == FOCUS_CMD) ? 
-                    (m_theme.header_focus + "[COMMAND] " + Terminal::RESET) : 
-                    (Terminal::RESET + m_theme.header_blur + "[COMMAND] " + Terminal::RESET);
-                m_editor.draw(prompt);
+                draw_prompt();
             }
         } else {
             // Navigation mode
