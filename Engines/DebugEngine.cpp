@@ -6,7 +6,6 @@
 #include <vector>
 #include <cctype>
 #include <algorithm>
-#include <replxx.hxx>
 #include <utility>
 
 #include "../Utils/Strings.h"
@@ -359,42 +358,530 @@ void Debugger::next() {
 }
 
 void Dashboard::run() {
-    init();
-    m_repl.history_load(HISTORY_FILE);
+    std::vector<std::string> history;
+    if (FILE* f = fopen(HISTORY_FILE, "r")) {
+        char buf[1024];
+        while (fgets(buf, sizeof(buf), f)) {
+            std::string s(buf);
+            while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+            if (!s.empty()) history.push_back(s);
+        }
+        fclose(f);
+    }
+
     update_code_view();
     m_memory_view.set_address(m_debugger.get_core().get_cpu().get_PC());
     m_stack_view.set_address(m_debugger.get_core().get_cpu().get_SP());
     validate_focus();
-    const std::string prompt_str = "[COMMAND] ";
+
+    Terminal::enable_raw_mode();
+
+    std::string input_buffer;
     std::string last_command;
-    while (m_running) {
-        print_dashboard();
-        std::string prompt = (m_focus == FOCUS_CMD) ? (m_theme.header_focus + prompt_str + Terminal::RESET) : (Terminal::RESET + m_theme.header_blur + prompt_str + Terminal::RESET);
-        Focus start_focus = m_focus;
-        const char* input_cstr = m_repl.input(prompt.c_str());
-        if (input_cstr == nullptr)
-            break;
-        if (m_focus != start_focus) {
-            std::string buf = input_cstr;
-            if (!buf.empty()) {
-                m_repl.history_add(buf);
-                m_repl.invoke(replxx::Replxx::ACTION::HISTORY_LAST, 0);
+    int history_pos = -1;
+    int cursor_pos = 0;
+    bool needs_repaint = true;
+    
+    static const std::vector<std::string> commands = {
+        "help", "quit", "exit", "map", "stack", "memory", "reg", "rm", 
+        "asm", "disasm", "dump", "load", "save", "break", "watch", 
+        "step", "run", "toggle", "sym", "find", "fill", "data", "code",
+        "set", "eval", "bit", "res", "lines", "undef", "?", "??"
+    };
+
+    // Completion state
+    struct CompletionResult {
+        std::vector<std::string> candidates;
+        int replace_pos = -1;
+        std::string prefix;
+        bool is_expr_cmd = false;
+    };
+    CompletionResult completion_result;
+    int completion_index = -1;
+    std::string completion_original_input;
+
+    static constexpr const char* SEPARATORS = " \t,()[]{}+-*/%^&|~<>!=:";
+
+    auto get_completions = [&](const std::string& input) -> CompletionResult {
+        CompletionResult result;
+        std::string trimmed_input = Strings::trim(input);
+        if (trimmed_input.empty()) return result;
+
+        std::string best_cmd;
+        bool command_found = false;
+
+        for (const auto& cmd : commands) {
+            bool is_alnum = true;
+            for (char c : cmd) {
+                if (!isalnum(static_cast<unsigned char>(c)) && c != '_') {
+                    is_alnum = false;
+                    break;
+                }
             }
+            bool req_sep = is_alnum;
+
+            if (input.length() >= cmd.length()) {
+                if (input.compare(0, cmd.length(), cmd) == 0) {
+                    bool is_match = false;
+                    if (req_sep) {
+                        if (input.length() > cmd.length() && std::isspace(static_cast<unsigned char>(input[cmd.length()]))) {
+                            is_match = true;
+                        }
+                    } else {
+                        is_match = true;
+                    }
+                    if (is_match && cmd.length() > best_cmd.length()) {
+                        best_cmd = cmd;
+                        command_found = true;
+                    }
+                }
+            }
+        }
+
+        if (command_found) {
+            std::string arg_full = input.substr(best_cmd.length());
+            
+            if (best_cmd == "eval" || best_cmd == "?" || best_cmd == "??" || 
+                best_cmd == "set" || best_cmd == "watch" || best_cmd == "break") {
+                
+                result.is_expr_cmd = true;
+                
+                size_t last_sep = arg_full.find_last_of(SEPARATORS);
+                size_t start_idx = (last_sep == std::string::npos) ? 0 : last_sep + 1;
+                std::string raw_prefix = arg_full.substr(start_idx);
+                
+                size_t first_non_space = raw_prefix.find_first_not_of(" \t");
+                if (first_non_space == std::string::npos) {
+                    result.prefix = "";
+                    result.replace_pos = (int)(best_cmd.length() + start_idx + raw_prefix.length());
+                } else {
+                    result.prefix = Strings::trim(raw_prefix);
+                    result.replace_pos = (int)(best_cmd.length() + start_idx + first_non_space);
+                }
+
+                if (result.prefix.empty()) return result;
+
+                std::string prefix_upper = Strings::upper(result.prefix);
+                
+                // Functions
+                for (const auto& pair : Expression::get_functions()) {
+                    if (pair.first.find(prefix_upper) == 0) result.candidates.push_back(pair.first);
+                }
+                
+                // Registers
+                static const std::vector<std::string> regs = {
+                    "AF", "BC", "DE", "HL", "IX", "IY", "SP", "PC", 
+                    "AF'", "BC'", "DE'", "HL'",
+                    "A", "F", "B", "C", "D", "E", "H", "L", "I", "R"
+                };
+                for (const auto& r : regs) {
+                    if (Strings::upper(r).find(prefix_upper) == 0) result.candidates.push_back(r);
+                }
+
+                // Variables
+                if (!result.prefix.empty() && result.prefix[0] == '@') {
+                    auto& vars = m_debugger.get_core().get_context().getVariables();
+                    for (const auto& pair : vars.by_name()) {
+                        std::string var_name = "@" + pair.first;
+                        if (Strings::upper(var_name).find(prefix_upper) == 0) result.candidates.push_back(var_name);
+                    }
+                }
+
+                // Symbols
+                auto& symbols = m_debugger.get_core().get_context().getSymbols();
+                for (const auto& pair : symbols.by_name()) {
+                    if (Strings::upper(pair.first).find(prefix_upper) == 0) result.candidates.push_back(pair.first);
+                }
+            }
+        } else {
+            size_t first_non_space = input.find_first_not_of(" \t");
+            if (first_non_space == std::string::npos) first_non_space = 0;
+            result.replace_pos = (int)first_non_space;
+            result.prefix = trimmed_input;
+
+            for (const auto& c : commands) {
+                if (c.find(trimmed_input) == 0) result.candidates.push_back(c);
+            }
+        }
+
+        // Sort and unique
+        std::sort(result.candidates.begin(), result.candidates.end());
+        result.candidates.erase(std::unique(result.candidates.begin(), result.candidates.end()), result.candidates.end());
+        return result;
+    };
+
+    std::string current_hint;
+    std::string hint_color;
+    int input_error_pos = -1;
+
+    auto calculate_hint = [&](const std::string& input) -> std::string {
+        hint_color = m_theme.value_dim;
+        input_error_pos = -1;
+        if (input.empty()) return "";
+        if (m_focus != FOCUS_CMD) return "";
+        
+        CompletionResult res = get_completions(input);
+        if (!res.candidates.empty() && !res.prefix.empty()) {
+            const std::string& best = res.candidates[0];
+            std::string best_lower = Strings::lower(best);
+            std::string prefix_lower = Strings::lower(res.prefix);
+            
+            if (best_lower.find(prefix_lower) == 0) {
+                 if (best.length() > res.prefix.length()) {
+                     return best.substr(res.prefix.length());
+                 }
+            }
+        }
+
+        if (!res.is_expr_cmd) return "";
+
+        int depth_paren = 0;
+        int depth_bracket = 0;
+        int depth_brace = 0;
+        char opener = 0;
+        size_t opener_pos = std::string::npos;
+        
+        for (size_t i = input.length(); i > 0; --i) {
+            char c = input[i-1];
+            if (c == ')') depth_paren++;
+            else if (c == ']') depth_bracket++;
+            else if (c == '}') depth_brace++;
+            else if (c == '(') {
+                if (depth_paren > 0) depth_paren--;
+                else { opener = '('; opener_pos = i-1; break; }
+            }
+            else if (c == '[') {
+                if (depth_bracket > 0) depth_bracket--;
+                else { opener = '['; opener_pos = i-1; break; }
+            }
+            else if (c == '{') {
+                if (depth_brace > 0) depth_brace--;
+                else { opener = '{'; opener_pos = i-1; break; }
+            }
+        }
+
+        if (opener_pos != std::string::npos) {
+            if (opener == '(') {
+                size_t end_func = input.find_last_not_of(" \t", opener_pos - 1);
+                if (end_func != std::string::npos) {
+                    size_t start_func = end_func;
+                    while (start_func > 0) {
+                        char c = input[start_func - 1];
+                        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') break;
+                        start_func--;
+                    }
+                    std::string func_name = input.substr(start_func, end_func - start_func + 1);
+                    std::string func_upper = Strings::upper(func_name);
+                    const auto& funcs = Expression::get_functions();
+                    auto it = funcs.find(func_upper);
+                    if (it != funcs.end()) {
+                        int param_count = 0;
+                        int d = 0;
+                        size_t last_comma_pos = opener_pos;
+                        size_t error_comma_pos = std::string::npos;
+                        for (size_t i = opener_pos + 1; i < input.length(); ++i) {
+                            char c = input[i];
+                            if (c == '(' || c == '[' || c == '{') d++;
+                            else if (c == ')' || c == ']' || c == '}') d--;
+                            else if (c == ',' && d == 0) {
+                                param_count++;
+                                if (it->second.num_args != -1 && param_count == it->second.num_args && error_comma_pos == std::string::npos) {
+                                    error_comma_pos = i;
+                                }
+                                last_comma_pos = i;
+                            }
+                        }
+                        if (it->second.num_args != -1 && param_count >= it->second.num_args) {
+                             hint_color = Terminal::rgb_fg(255, 100, 100);
+                             input_error_pos = (error_comma_pos != std::string::npos) ? (int)error_comma_pos : (int)opener_pos;
+                             return ")";
+                        }
+                        
+                        bool current_arg_has_text = false;
+                        for (size_t i = last_comma_pos + 1; i < input.length(); ++i) {
+                            if (!std::isspace(static_cast<unsigned char>(input[i]))) {
+                                current_arg_has_text = true;
+                                break;
+                            }
+                        }
+
+                        std::vector<std::string> param_list = Strings::split(it->second.params, ',');
+                        for(auto& p : param_list) p = Strings::trim(p);
+                        
+                        bool is_variadic = false;
+                        if (!param_list.empty() && param_list.back() == "...") {
+                            is_variadic = true;
+                            param_list.pop_back();
+                        }
+
+                        std::string hint;
+                        if (param_count < (int)param_list.size()) {
+                            if (!current_arg_has_text) hint += param_list[param_count];
+                            for (size_t k = param_count + 1; k < param_list.size(); ++k) hint += ", " + param_list[k];
+                            if (is_variadic) hint += ", ...";
+                        } else {
+                            if (is_variadic && !current_arg_has_text) hint += "...";
+                        }
+                        return hint + ")";
+                    }
+                }
+            } else if (opener == '[') {
+                int param_count = 0;
+                int d = 0;
+                size_t last_comma_pos = opener_pos;
+                for (size_t i = opener_pos + 1; i < input.length(); ++i) {
+                    char c = input[i];
+                    if (c == '(' || c == '[' || c == '{') d++;
+                    else if (c == ')' || c == ']' || c == '}') d--;
+                    else if (c == ',' && d == 0) {
+                        param_count++;
+                        last_comma_pos = i;
+                    }
+                }
+                bool current_arg_has_text = false;
+                for (size_t i = last_comma_pos + 1; i < input.length(); ++i) {
+                    if (!std::isspace(static_cast<unsigned char>(input[i]))) {
+                        current_arg_has_text = true;
+                        break;
+                    }
+                }
+                if (param_count == 0) {
+                    if (!current_arg_has_text) return "addr | start..end]";
+                    size_t range_op = input.find("..", last_comma_pos + 1);
+                    if (range_op != std::string::npos) {
+                        bool has_end_val = false;
+                        for (size_t k = range_op + 2; k < input.length(); ++k) {
+                             if (!std::isspace(static_cast<unsigned char>(input[k]))) {
+                                 has_end_val = true;
+                                 break;
+                             }
+                        }
+                        return has_end_val ? "]" : "end]";
+                    }
+                }
+                std::string hint;
+                int max_named = 2;
+                if (param_count < max_named) {
+                    if (!current_arg_has_text) hint += "addr" + std::to_string(param_count + 1);
+                    for (int k = param_count + 1; k < max_named; ++k) hint += ", addr" + std::to_string(k + 1);
+                    hint += ", ...]";
+                } else {
+                    if (!current_arg_has_text) hint += "...]";
+                    else hint += "]";
+                }
+                return hint;
+            } else if (opener == '{') {
+                bool is_word = (opener_pos > 0 && input[opener_pos-1] == 'W');
+                std::string type = is_word ? "word" : "byte";
+                int param_count = 0;
+                int d = 0;
+                size_t last_comma_pos = opener_pos;
+                for (size_t i = opener_pos + 1; i < input.length(); ++i) {
+                    char c = input[i];
+                    if (c == '(' || c == '[' || c == '{') d++;
+                    else if (c == ')' || c == ']' || c == '}') d--;
+                    else if (c == ',' && d == 0) {
+                        param_count++;
+                        last_comma_pos = i;
+                    }
+                }
+                bool current_arg_has_text = false;
+                for (size_t i = last_comma_pos + 1; i < input.length(); ++i) {
+                    if (!std::isspace(static_cast<unsigned char>(input[i]))) {
+                        current_arg_has_text = true;
+                        break;
+                    }
+                }
+                if (param_count == 0) {
+                    if (!current_arg_has_text) return type + " | start..end}";
+                    size_t range_op = input.find("..", last_comma_pos + 1);
+                    if (range_op != std::string::npos) {
+                        bool has_end_val = false;
+                        for (size_t k = range_op + 2; k < input.length(); ++k) {
+                             if (!std::isspace(static_cast<unsigned char>(input[k]))) {
+                                 has_end_val = true;
+                                 break;
+                             }
+                        }
+                        return has_end_val ? "}" : "end}";
+                    }
+                }
+                std::string hint;
+                int max_named = 2;
+                if (param_count < max_named) {
+                    if (!current_arg_has_text) hint += type + std::to_string(param_count + 1);
+                    for (int k = param_count + 1; k < max_named; ++k) hint += ", " + type + std::to_string(k + 1);
+                    hint += ", ...}";
+                } else {
+                    if (!current_arg_has_text) hint += "...}";
+                    else hint += "}";
+                }
+                return hint;
+            }
+        } else {
+            size_t last_char_pos = input.find_last_not_of(" \t");
+            if (last_char_pos != std::string::npos) {
+                char last_char = input[last_char_pos];
+                if (last_char == ']' || last_char == '}') {
+                    return " x count";
+                }
+                if (last_char == 'x') {
+                    size_t prev_pos = input.find_last_not_of(" \t", last_char_pos - 1);
+                    if (prev_pos != std::string::npos) {
+                        char prev_char = input[prev_pos];
+                        if (prev_char == ']' || prev_char == '}') {
+                            return " count";
+                        }
+                    }
+                }
+            }
+        }
+        return "";
+    };
+
+    auto redraw_prompt = [&](const std::string& buf, int cpos) {
+        std::string prompt = (m_focus == FOCUS_CMD) ? 
+            (m_theme.header_focus + "[COMMAND] " + Terminal::RESET) : 
+            (Terminal::RESET + m_theme.header_blur + "[COMMAND] " + Terminal::RESET);
+        std::cout << "\r\x1b[K" << prompt;
+        if (input_error_pos != -1 && input_error_pos < (int)buf.length()) {
+            std::cout << buf.substr(0, input_error_pos);
+            std::cout << Terminal::rgb_fg(255, 100, 100) << buf.substr(input_error_pos) << Terminal::RESET;
+        } else {
+            std::cout << buf;
+        }
+        if (!current_hint.empty() && cpos == (int)buf.length()) {
+            std::cout << hint_color << current_hint << Terminal::RESET;
+            std::cout << "\x1b[" << current_hint.length() << "D";
+        } else if (cpos < (int)buf.length()) {
+            std::cout << "\x1b[" << (buf.length() - cpos) << "D";
+        }
+        std::cout << std::flush;
+    };
+
+    while (m_running) {
+        if (needs_repaint) {
+            Terminal::disable_raw_mode();
+            print_dashboard();
+            Terminal::enable_raw_mode();
+            redraw_prompt(input_buffer, cursor_pos);
+            needs_repaint = false;
+        }
+
+        Terminal::Input in = Terminal::read_key();
+        if (in.key == Terminal::Key::NONE) {
+#ifdef _WIN32
+            Sleep(10);
+#endif
             continue;
         }
-        std::string input(input_cstr);
-        if (input.empty()) {
-            if (last_command.empty())
-                continue;
-            input = last_command;
-        } else {
-            last_command = input;
-            m_repl.history_add(input);
+
+        if (in.key != Terminal::Key::TAB) {
+            completion_result.candidates.clear();
+            completion_index = -1;
         }
-        m_output_buffer << input << "\n";
-        handle_command(input);
+
+        if (in.key == Terminal::Key::ESC) {
+            if (!input_buffer.empty()) {
+                input_buffer.clear(); cursor_pos = 0; current_hint.clear(); redraw_prompt(input_buffer, cursor_pos);
+            } else {
+                if (m_focus == FOCUS_CMD) { m_focus = FOCUS_CODE; validate_focus(); }
+                else m_focus = FOCUS_CMD;
+                needs_repaint = true;
+            }
+        } else if (in.key == Terminal::Key::UP) {
+            if (m_focus == FOCUS_CMD && !history.empty()) {
+                if (history_pos == -1) history_pos = (int)history.size() - 1;
+                else if (history_pos > 0) history_pos--;
+                input_buffer = history[history_pos]; cursor_pos = input_buffer.length(); 
+                current_hint.clear();
+                redraw_prompt(input_buffer, cursor_pos);
+            } else if (m_focus == FOCUS_MEMORY) { m_memory_view.scroll(-16); needs_repaint = true; }
+            else if (m_focus == FOCUS_CODE) { m_auto_follow = false; m_code_view.scroll(-1); needs_repaint = true; }
+            else if (m_focus == FOCUS_STACK) { m_stack_view.scroll(-2); needs_repaint = true; }
+        } else if (in.key == Terminal::Key::DOWN) {
+            if (m_focus == FOCUS_CMD) {
+                if (history_pos != -1) {
+                    if (history_pos < (int)history.size() - 1) { history_pos++; input_buffer = history[history_pos]; }
+                    else { history_pos = -1; input_buffer.clear(); }
+                    cursor_pos = input_buffer.length(); 
+                    current_hint.clear();
+                    redraw_prompt(input_buffer, cursor_pos);
+                }
+            } else if (m_focus == FOCUS_MEMORY) { m_memory_view.scroll(16); needs_repaint = true; }
+            else if (m_focus == FOCUS_CODE) { m_auto_follow = false; m_code_view.scroll(1); needs_repaint = true; }
+            else if (m_focus == FOCUS_STACK) { m_stack_view.scroll(2); needs_repaint = true; }
+        } else if (in.key == Terminal::Key::RIGHT) {
+            if (cursor_pos < (int)input_buffer.length()) { 
+                cursor_pos++; std::cout << "\x1b[C" << std::flush; 
+            } else if (!current_hint.empty()) {
+                input_buffer += current_hint;
+                cursor_pos += current_hint.length();
+                current_hint.clear();
+                redraw_prompt(input_buffer, cursor_pos);
+            }
+        } else if (in.key == Terminal::Key::LEFT) {
+            if (cursor_pos > 0) { cursor_pos--; std::cout << "\x1b[D" << std::flush; }
+        } else if (in.key == Terminal::Key::TAB) {
+            if (m_focus == FOCUS_CMD && !input_buffer.empty()) {
+                if (completion_result.candidates.empty()) {
+                    completion_original_input = input_buffer;
+                    completion_result = get_completions(input_buffer);
+                    completion_index = -1;
+                }
+                
+                if (!completion_result.candidates.empty()) {
+                    completion_index = (completion_index + 1) % completion_result.candidates.size();
+                    std::string match = completion_result.candidates[completion_index];
+                    
+                    // Replace the word being completed using calculated position
+                    if (completion_result.replace_pos >= 0 && completion_result.replace_pos <= (int)completion_original_input.length()) {
+                        input_buffer = completion_original_input.substr(0, completion_result.replace_pos) + match;
+                    }
+
+                    cursor_pos = input_buffer.length();
+                    current_hint = calculate_hint(input_buffer);
+                    redraw_prompt(input_buffer, cursor_pos);
+                } else if (!current_hint.empty() && (current_hint == ")" || current_hint == "]" || current_hint == "}")) {
+                    input_buffer += current_hint;
+                    cursor_pos += current_hint.length();
+                    current_hint.clear();
+                    redraw_prompt(input_buffer, cursor_pos);
+                }
+            } else {
+                m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT); validate_focus(); needs_repaint = true;
+            }
+        } else if (in.key == Terminal::Key::BACKSPACE) {
+            if (cursor_pos > 0) { 
+                input_buffer.erase(cursor_pos - 1, 1); cursor_pos--; 
+                current_hint = calculate_hint(input_buffer);
+                redraw_prompt(input_buffer, cursor_pos); 
+            }
+        } else if (in.key == Terminal::Key::ENTER) {
+            std::cout << "\r\n";
+            std::string cmd = input_buffer;
+            if (cmd.empty() && !last_command.empty()) cmd = last_command;
+            if (!cmd.empty()) {
+                if (history.empty() || history.back() != cmd) history.push_back(cmd);
+                last_command = cmd; history_pos = -1;
+            }
+            input_buffer.clear(); cursor_pos = 0; current_hint.clear();
+            Terminal::disable_raw_mode();
+            m_output_buffer << cmd << "\n";
+            handle_command(cmd);
+            Terminal::enable_raw_mode();
+            needs_repaint = true;
+        } else if (in.key == Terminal::Key::CHAR) {
+            input_buffer.insert(cursor_pos, 1, in.c); cursor_pos++;
+            current_hint = calculate_hint(input_buffer);
+            redraw_prompt(input_buffer, cursor_pos);
+        }
     }
-    m_repl.history_save(HISTORY_FILE);
+    Terminal::disable_raw_mode();
+    if (FILE* f = fopen(HISTORY_FILE, "w")) {
+        for(const auto& h : history) fprintf(f, "%s\n", h.c_str());
+        fclose(f);
+    }
 }
 
 void Dashboard::validate_focus() {
@@ -535,240 +1022,7 @@ void Dashboard::handle_command(const std::string& input) {
 }
 
 void Dashboard::init() {
-    static const std::vector<std::string> commands = {
-        "help", "quit", "exit", "map", "stack", "memory", "reg", "rm", 
-        "asm", "disasm", "dump", "load", "save", "break", "watch", 
-        "step", "run", "toggle", "sym", "find", "fill", "data", "code",
-        "set", "eval", "bit", "res", "lines", "undef", "?", "??"
-    };
-
-    m_repl.set_completion_callback([this](std::string const& input, int& contextLen) {
-        std::vector<replxx::Replxx::Completion> completions;
-        std::string prefix;
-        
-        size_t first_space = input.find_first_of(" \t");
-        if (first_space == std::string::npos) {
-            prefix = input;
-            contextLen = prefix.length();
-            for (const auto& cmd : commands) {
-                if (cmd.find(prefix) == 0) {
-                    completions.emplace_back(cmd.c_str());
-                }
-            }
-        } else {
-            std::string cmd = input.substr(0, first_space);
-            bool is_eval = (cmd == "eval" || cmd == "evaluate" || cmd == "?" || cmd == "??" || cmd == "set");
-            
-            if (is_eval) {
-                size_t lastSep = input.find_last_of(" \t,()[]{}+-*/");
-                if (lastSep == std::string::npos) prefix = input;
-                else prefix = input.substr(lastSep + 1);
-                
-                contextLen = prefix.length();
-                if (prefix.empty()) return completions;
-
-                if (prefix[0] == '@') {
-                    std::string var_prefix = prefix.substr(1);
-                    const auto& vars = m_debugger.get_core().get_context().getVariables().by_name();
-                    for (const auto& pair : vars) {
-                        if (pair.first.find(var_prefix) == 0) {
-                            std::string comp = "@" + pair.first;
-                            completions.emplace_back(comp.c_str());
-                        }
-                    }
-                } else {
-                    // Functions
-                    for (const auto& pair : Expression::get_functions()) {
-                        if (pair.first.find(Strings::upper(prefix)) == 0) {
-                            completions.emplace_back(pair.first.c_str());
-                        }
-                    }
-                    // Registers (Common ones)
-                    static const std::vector<std::string> regs = {"AF", "BC", "DE", "HL", "IX", "IY", "SP", "PC", "A", "F", "B", "C", "D", "E", "H", "L", "I", "R", "AF'", "BC'", "DE'", "HL'"};
-                    for (const auto& r : regs) {
-                        if (r.find(Strings::upper(prefix)) == 0)
-                            completions.emplace_back(r.c_str());
-                    }
-                    
-                    const auto& symbols = m_debugger.get_core().get_context().getSymbols().by_name();
-                    for (const auto& pair : symbols) {
-                        if (pair.first.find(prefix) == 0) {
-                            completions.emplace_back(pair.first.c_str());
-                        }
-                    }
-                }
-            }
-        }
-        return completions;
-    });
-
-    m_repl.set_hint_callback([this](std::string const& input, int& contextLen, replxx::Replxx::Color& color) {
-        std::vector<std::string> hints;
-        std::string prefix;
-        color = replxx::Replxx::Color::GRAY;
-        
-        size_t first_space = input.find_first_of(" \t");
-        if (first_space == std::string::npos) {
-            prefix = input;
-            contextLen = prefix.length();
-            for (const auto& cmd : commands) {
-                if (cmd.find(prefix) == 0 && cmd.length() > prefix.length()) {
-                    hints.push_back(cmd);
-                }
-            }
-        } else {
-            std::string cmd = input.substr(0, first_space);
-            bool is_eval = (cmd == "eval" || cmd == "evaluate" || cmd == "?" || cmd == "??" || cmd == "set");
-            
-            if (is_eval) {
-                size_t lastSep = input.find_last_of(" \t,()[]{}+-*/");
-                
-                // Check if we are inside a function call for hints
-                size_t openParen = input.find_last_of('(');
-                size_t closeParen = input.find_last_of(')');
-                if (openParen != std::string::npos && (closeParen == std::string::npos || closeParen < openParen)) {
-                    size_t funcEnd = openParen;
-                    while (funcEnd > 0 && std::isspace(input[funcEnd-1])) funcEnd--;
-                    size_t funcStart = funcEnd;
-                    while (funcStart > 0 && (std::isalnum(input[funcStart-1]) || input[funcStart-1] == '_')) funcStart--;
-                    
-                    if (funcStart < funcEnd) {
-                        std::string funcName = Strings::upper(input.substr(funcStart, funcEnd - funcStart));
-                        const auto& funcs = Expression::get_functions();
-                        auto it = funcs.find(funcName);
-                        if (it != funcs.end()) {
-                            // Calculate current argument index
-                            int arg_idx = 0;
-                            bool in_str = false;
-                            int depth = 0;
-                            for (size_t i = openParen + 1; i < input.length(); ++i) {
-                                char c = input[i];
-                                if (in_str) {
-                                    if (c == '"') in_str = false;
-                                } else {
-                                    if (c == '"') in_str = true;
-                                    else if (c == '(' || c == '[' || c == '{') depth++;
-                                    else if (c == ')' || c == ']' || c == '}') depth--;
-                                    else if (c == ',' && depth == 0) arg_idx++;
-                                }
-                            }
-
-                            std::string params = it->second.params;
-                            std::vector<std::string> param_list;
-                            size_t start = 0;
-                            int p_depth = 0;
-                            int ellipsis_idx = -1;
-                            for (size_t i = 0; i < params.length(); ++i) {
-                                if (params[i] == '[') p_depth++;
-                                else if (params[i] == ']') p_depth--;
-                                else if (params[i] == ',' && p_depth == 0) {
-                                    std::string p = Strings::trim(params.substr(start, i - start));
-                                    if (p == "...") ellipsis_idx = (int)param_list.size();
-                                    param_list.push_back(p);
-                                    start = i + 1;
-                                }
-                            }
-                            std::string last_p = Strings::trim(params.substr(start));
-                            if (last_p == "...") ellipsis_idx = (int)param_list.size();
-                            param_list.push_back(last_p);
-
-                            int start_idx = arg_idx;
-                            if (ellipsis_idx != -1 && arg_idx >= ellipsis_idx) start_idx = ellipsis_idx;
-                            else if (arg_idx >= (int)param_list.size()) return hints;
-
-                            std::string hint_str;
-                            for (size_t i = start_idx; i < param_list.size(); ++i) {
-                                if (i > (size_t)start_idx) hint_str += ", ";
-                                hint_str += param_list[i];
-                            }
-                            hints.push_back(hint_str + ")");
-                            return hints;
-                        }
-                    }
-                }
-
-                if (lastSep == std::string::npos) prefix = input;
-                else prefix = input.substr(lastSep + 1);
-                
-                contextLen = prefix.length();
-                if (prefix.empty()) return hints;
-
-                if (prefix[0] == '@') {
-                    std::string var_prefix = prefix.substr(1);
-                    const auto& vars = m_debugger.get_core().get_context().getVariables().by_name();
-                    for (const auto& pair : vars) {
-                        if (pair.first.find(var_prefix) == 0 && pair.first.length() > var_prefix.length()) {
-                            hints.push_back("@" + pair.first);
-                        }
-                    }
-                } else {
-                    for (const auto& pair : Expression::get_functions()) {
-                        if (pair.first.find(Strings::upper(prefix)) == 0 && pair.first.length() > prefix.length()) {
-                            hints.push_back(pair.first);
-                        }
-                    }
-                    
-                    const auto& symbols = m_debugger.get_core().get_context().getSymbols().by_name();
-                    for (const auto& pair : symbols) {
-                        if (pair.first.find(prefix) == 0 && pair.first.length() > prefix.length()) {
-                            hints.push_back(pair.first);
-                        }
-                    }
-                }
-            }
-        }
-        
-        return hints;
-    });
-
-    m_repl.install_window_change_handler();    
-    auto bind_scroll = [&](char32_t key, int mem_delta, int code_delta, int stack_delta) {
-        m_repl.bind_key(key, [this, mem_delta, code_delta, stack_delta](char32_t code) {
-        if (m_focus == FOCUS_CMD) {
-            if (code == replxx::Replxx::KEY::UP)
-                return m_repl.invoke(replxx::Replxx::ACTION::HISTORY_PREVIOUS, code);
-            if (code == replxx::Replxx::KEY::DOWN)
-                return m_repl.invoke(replxx::Replxx::ACTION::HISTORY_NEXT, code);
-            return replxx::Replxx::ACTION_RESULT::CONTINUE;
-        }
-        if (m_focus == FOCUS_MEMORY)
-            m_memory_view.scroll(mem_delta);
-        else if (m_focus == FOCUS_CODE) {
-            m_auto_follow = false;
-            m_code_view.scroll(code_delta);
-        }
-        else if (m_focus == FOCUS_STACK) m_stack_view.scroll(stack_delta);
-            print_dashboard();
-            m_repl.invoke(replxx::Replxx::ACTION::REPAINT, code);
-            return replxx::Replxx::ACTION_RESULT::CONTINUE;
-        });
-    };
-    bind_scroll(replxx::Replxx::KEY::UP, -16, -1, -2);
-    bind_scroll(replxx::Replxx::KEY::DOWN, 16, 1, 2);
-
-    auto tab_handler = [this](char32_t code) {
-        if (m_focus == FOCUS_CMD) {
-            std::string val(m_repl.get_state().text());
-            if (!val.empty()) {
-                return m_repl.invoke(replxx::Replxx::ACTION::COMPLETE_NEXT, code);
-            }
-        }
-        m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT);
-        validate_focus();
-        print_dashboard();
-        return replxx::Replxx::ACTION_RESULT::RETURN;
-    };
-    m_repl.bind_key(replxx::Replxx::KEY::TAB, tab_handler);
-
-    auto esc_handler = [this](char32_t code) {
-        if (m_focus == FOCUS_CMD) {
-            m_repl.set_state(replxx::Replxx::State(""));
-            m_repl.invoke(replxx::Replxx::ACTION::REPAINT, code);
-            return replxx::Replxx::ACTION_RESULT::CONTINUE;
-        }
-        return replxx::Replxx::ACTION_RESULT::CONTINUE;
-    };
-    m_repl.bind_key(replxx::Replxx::KEY::ESCAPE, esc_handler);
+    // replxx init removed
 }
 
 void Dashboard::print_dashboard() {
@@ -956,7 +1210,7 @@ int DebugEngine::run() {
         }
     }
     Debugger debugger(m_core);
-    Dashboard dashboard(debugger, m_repl);
+    Dashboard dashboard(debugger);
     dashboard.run();
     return 0;
 }

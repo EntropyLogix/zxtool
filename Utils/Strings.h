@@ -17,6 +17,7 @@ public:
     static std::string padding(const std::string& s, size_t width, char fill = ' ');
     static std::string truncate(const std::string& s, size_t width);
     static std::string upper(const std::string& s);
+    static std::string lower(const std::string& s);
 
     static bool parse_integer(const std::string& s, int32_t& out_value);
     static bool parse_double(const std::string& s, double& out_value);

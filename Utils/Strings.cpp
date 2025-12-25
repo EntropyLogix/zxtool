@@ -160,6 +160,13 @@ std::string Strings::upper(const std::string& s) {
     return result;
 }
 
+std::string Strings::lower(const std::string& s) {
+    std::string result = s;
+    std::transform(result.begin(), result.end(), result.begin(), 
+                   [](unsigned char c){ return std::tolower(c); });
+    return result;
+}
+
 std::string Strings::trim(const std::string& s) {
     auto start = std::find_if(s.begin(), s.end(), [](unsigned char ch) {
         return !std::isspace(ch);

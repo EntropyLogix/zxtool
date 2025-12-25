@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <iostream>
 #include <map>
-#include <replxx.hxx>
 
 #include "../Core/Core.h"
 #include "../Core/CodeMap.h"
@@ -157,8 +156,8 @@ private:
 
 class Dashboard {
 public:
-    Dashboard(Debugger& debugger, replxx::Replxx& repl) 
-        : m_debugger(debugger), m_repl(repl)
+    Dashboard(Debugger& debugger) 
+        : m_debugger(debugger)
         , m_memory_view(debugger.get_core(), 4, m_theme)
         , m_register_view(debugger.get_core(), m_theme)
         , m_stack_view(debugger.get_core(), 4, m_theme)
@@ -183,7 +182,6 @@ private:
     Focus m_focus = FOCUS_CMD;
 
     Debugger& m_debugger;
-    replxx::Replxx& m_repl;
     Theme m_theme;
     bool m_running = true;
     std::stringstream m_output_buffer;
@@ -250,7 +248,6 @@ public:
 private:
     Core& m_core;
     const Options& m_options;
-    replxx::Replxx m_repl;
 };
 
 #endif // __DEBUGENGINE_H__
