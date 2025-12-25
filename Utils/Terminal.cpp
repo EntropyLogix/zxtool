@@ -1,5 +1,6 @@
 #include "Terminal.h"
 #include <iostream>
+#include <algorithm>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -88,6 +89,8 @@ Terminal::Input Terminal::read_key() {
                 input.c = (char)c;
             }
         }
+    } else {
+        Sleep(10);
     }
 #else
     char c;
@@ -133,4 +136,166 @@ Terminal::Input Terminal::read_key() {
     }
 #endif
     return input;
+}
+
+Terminal::LineEditor::LineEditor() {
+    m_hint_color = Terminal::DIM;
+}
+
+void Terminal::LineEditor::history_load(const std::string& filename) {
+    if (FILE* f = fopen(filename.c_str(), "r")) {
+        char buf[1024];
+        while (fgets(buf, sizeof(buf), f)) {
+            std::string s(buf);
+            while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+            if (!s.empty()) m_history.push_back(s);
+        }
+        fclose(f);
+    }
+}
+
+void Terminal::LineEditor::history_save(const std::string& filename) {
+    if (FILE* f = fopen(filename.c_str(), "w")) {
+        for(const auto& h : m_history) fprintf(f, "%s\n", h.c_str());
+        fclose(f);
+    }
+}
+
+void Terminal::LineEditor::history_add(const std::string& line) {
+    if (!line.empty()) {
+        if (m_history.empty() || m_history.back() != line) {
+            m_history.push_back(line);
+        }
+    }
+    m_history_pos = -1;
+}
+
+void Terminal::LineEditor::set_completion_callback(CompletionCallback cb) {
+    m_completion_cb = cb;
+}
+
+void Terminal::LineEditor::set_hint_callback(HintCallback cb) {
+    m_hint_cb = cb;
+}
+
+void Terminal::LineEditor::update_hint() {
+    if (m_hint_cb) {
+        m_current_hint = m_hint_cb(m_buffer, m_hint_color, m_error_pos);
+    } else {
+        m_current_hint.clear();
+    }
+}
+
+void Terminal::LineEditor::clear() {
+    m_buffer.clear();
+    m_cursor_pos = 0;
+    m_current_hint.clear();
+    m_error_pos = -1;
+    m_last_completion.candidates.clear();
+    m_completion_index = -1;
+}
+
+Terminal::LineEditor::Result Terminal::LineEditor::on_key(const Input& in) {
+    if (in.key != Key::TAB) {
+        m_last_completion.candidates.clear();
+        m_completion_index = -1;
+    }
+
+    if (in.key == Key::ESC) {
+        if (!m_buffer.empty()) {
+            clear();
+            return Result::CONTINUE;
+        }
+        return Result::IGNORED;
+    } else if (in.key == Key::UP) {
+        if (!m_history.empty()) {
+            if (m_history_pos == -1) m_history_pos = (int)m_history.size() - 1;
+            else if (m_history_pos > 0) m_history_pos--;
+            m_buffer = m_history[m_history_pos];
+            m_cursor_pos = m_buffer.length();
+            update_hint();
+        }
+        return Result::CONTINUE;
+    } else if (in.key == Key::DOWN) {
+        if (m_history_pos != -1) {
+            if (m_history_pos < (int)m_history.size() - 1) {
+                m_history_pos++;
+                m_buffer = m_history[m_history_pos];
+            } else {
+                m_history_pos = -1;
+                m_buffer.clear();
+            }
+            m_cursor_pos = m_buffer.length();
+            update_hint();
+        }
+        return Result::CONTINUE;
+    } else if (in.key == Key::RIGHT) {
+        if (m_cursor_pos < (int)m_buffer.length()) {
+            m_cursor_pos++;
+        } else if (!m_current_hint.empty()) {
+            m_buffer += m_current_hint;
+            m_cursor_pos += m_current_hint.length();
+            update_hint();
+        }
+        return Result::CONTINUE;
+    } else if (in.key == Key::LEFT) {
+        if (m_cursor_pos > 0) m_cursor_pos--;
+        return Result::CONTINUE;
+    } else if (in.key == Key::TAB) {
+        if (m_buffer.empty()) return Result::IGNORED;
+        
+        if (m_last_completion.candidates.empty() && m_completion_cb) {
+            m_completion_original = m_buffer;
+            m_last_completion = m_completion_cb(m_buffer);
+            m_completion_index = -1;
+        }
+        
+        if (!m_last_completion.candidates.empty()) {
+            m_completion_index = (m_completion_index + 1) % m_last_completion.candidates.size();
+            std::string match = m_last_completion.candidates[m_completion_index];
+            if (m_last_completion.replace_pos >= 0 && m_last_completion.replace_pos <= (int)m_completion_original.length()) {
+                m_buffer = m_completion_original.substr(0, m_last_completion.replace_pos) + match;
+            }
+            m_cursor_pos = m_buffer.length();
+            update_hint();
+        } else if (!m_current_hint.empty() && (m_current_hint == ")" || m_current_hint == "]" || m_current_hint == "}")) {
+            m_buffer += m_current_hint;
+            m_cursor_pos += m_current_hint.length();
+            update_hint();
+        }
+        return Result::CONTINUE;
+    } else if (in.key == Key::BACKSPACE) {
+        if (m_cursor_pos > 0) {
+            m_buffer.erase(m_cursor_pos - 1, 1);
+            m_cursor_pos--;
+            update_hint();
+        }
+        return Result::CONTINUE;
+    } else if (in.key == Key::ENTER) {
+        std::cout << "\r\n";
+        return Result::SUBMIT;
+    } else if (in.key == Key::CHAR) {
+        m_buffer.insert(m_cursor_pos, 1, in.c);
+        m_cursor_pos++;
+        update_hint();
+        return Result::CONTINUE;
+    }
+    return Result::CONTINUE;
+}
+
+void Terminal::LineEditor::draw(const std::string& prompt) {
+    std::cout << "\r\x1b[K" << prompt;
+    if (m_error_pos != -1 && m_error_pos < (int)m_buffer.length()) {
+        std::cout << m_buffer.substr(0, m_error_pos);
+        std::cout << Terminal::rgb_fg(255, 100, 100) << m_buffer.substr(m_error_pos) << Terminal::RESET;
+    } else {
+        std::cout << m_buffer;
+    }
+    if (!m_current_hint.empty() && m_cursor_pos == (int)m_buffer.length()) {
+        std::cout << m_hint_color << m_current_hint << Terminal::RESET;
+        std::cout << "\x1b[" << m_current_hint.length() << "D";
+    } else if (m_cursor_pos < (int)m_buffer.length()) {
+        std::cout << "\x1b[" << (m_buffer.length() - m_cursor_pos) << "D";
+    }
+    std::cout << std::flush;
 }
