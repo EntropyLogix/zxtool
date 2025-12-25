@@ -459,6 +459,7 @@ void Dashboard::perform_set(const std::string& args_str, bool detailed) {
     try {
         Expression eval(m_debugger.get_core());
         Expression::Value val = eval.evaluate(rhs_str);
+
         eval.assign(lhs_str, val);
         m_output_buffer << lhs_str << " = " << format(val, detailed) << "\n";
     } catch (const std::exception& e) {
@@ -700,8 +701,8 @@ void Dashboard::init() {
     auto esc_handler = [this](char32_t code) {
         if (m_focus == FOCUS_CMD) {
             m_repl.set_state(replxx::Replxx::State(""));
-            print_dashboard();
-            return replxx::Replxx::ACTION_RESULT::RETURN;
+            m_repl.invoke(replxx::Replxx::ACTION::REPAINT, code);
+            return replxx::Replxx::ACTION_RESULT::CONTINUE;
         }
         return replxx::Replxx::ACTION_RESULT::CONTINUE;
     };
@@ -1550,18 +1551,22 @@ std::string Dashboard::format(const Expression::Value& val, bool detailed) {
 bool Dashboard::is_assignment(const std::string& expr) {
     int depth = 0;
     bool in_string = false;
-    char quote_char = 0;
 
     for (size_t i = 0; i < expr.length(); ++i) {
         char c = expr[i];
         if (in_string) {
-            if (c == quote_char)
+            if (c == '"')
                 in_string = false;
             continue;
         }
-        if (c == '"' || c == '\'') {
+        if (c == '"') {
             in_string = true;
-            quote_char = c;
+            continue;
+        }
+        if (c == '\'') {
+            if (i + 2 < expr.length() && expr[i+2] == '\'') {
+                i += 2;
+            }
             continue;
         }
         if (c == '(' || c == '[' || c == '{') {

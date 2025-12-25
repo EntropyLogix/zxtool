@@ -1295,6 +1295,9 @@ std::string Expression::parse_word(const std::string& expr, size_t& index) {
         if (std::isalnum(c) || c == '$' || c == '_' || c == '.' || c == '%') {
             word += c;
             index++;
+        } else if (c == '\'' && !word.empty()) {
+            word += c;
+            index++;
         } else
             break;
     }
@@ -1373,7 +1376,7 @@ bool Expression::parse_variable(const std::string& expr, size_t& index, std::vec
 
 bool Expression::parse_string(const std::string& expr, size_t& index, std::vector<Token>& tokens) {
     char quote = expr[index];
-    if (quote == '"' || quote == '\'') {
+    if (quote == '"') {
         size_t j = index + 1;
         std::string s;
         while (j < expr.length()) {
@@ -1386,6 +1389,13 @@ bool Expression::parse_string(const std::string& expr, size_t& index, std::vecto
             j++;
         }
         syntax_error(ErrorCode::SYNTAX_UNTERMINATED_STRING);
+    } else if (quote == '\'') {
+        if (index + 2 < expr.length() && expr[index+2] == '\'') {
+            char c = expr[index+1];
+            tokens.push_back({TokenType::NUMBER, Value((double)(unsigned char)c)});
+            index += 3;
+            return true;
+        }
     }
     return false;
 }
