@@ -656,10 +656,13 @@ Expression::Value Expression::function_min(const std::vector<Value>& args) {
     double min_v = 0.0;
     bool first = true;
     auto process = [&](double val) {
-        if (first) { min_v = val; first = false; }
-        else if (val < min_v) min_v = val;
+        if (first) {
+            min_v = val;
+            first = false;
+        }
+        else if (val < min_v)
+            min_v = val;
     };
-
     for (const auto& v : args) {
         if (v.is_bytes()) {
             for (auto b : v.bytes()) process((double)b);

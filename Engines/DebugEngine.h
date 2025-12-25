@@ -115,11 +115,12 @@ public:
         bool enabled;
     };
 
-    Debugger(Core& core) : m_core(core) { m_prev_state = m_core.get_cpu().save_state(); }
+    Debugger(Core& core, const Options& options) : m_core(core), m_options(options) { m_prev_state = m_core.get_cpu().save_state(); }
     ~Debugger() = default;
 
     void set_logger(Logger logger) { m_logger = logger; }
     Core& get_core() { return m_core; }
+    const Options& get_options() const { return m_options; }
     const std::vector<Breakpoint>& get_breakpoints() const { return m_breakpoints; }
     const std::vector<uint16_t>& get_watches() const { return m_watches; }
     uint16_t get_last_pc() const { return m_last_pc; }
@@ -143,6 +144,7 @@ public:
 
 private:
     Core& m_core;
+    const Options& m_options;
     Logger m_logger;
     std::vector<Breakpoint> m_breakpoints;
     std::vector<uint16_t> m_watches;
@@ -172,7 +174,8 @@ public:
             {"set", {&Dashboard::cmd_set, true, "target = value"}},
             {"undef", {&Dashboard::cmd_undef, true, "symbol"}},
             {"?", {&Dashboard::cmd_expression, false, "expression"}},
-            {"??", {&Dashboard::cmd_expression_detailed, false, "expression"}}
+            {"??", {&Dashboard::cmd_expression_detailed, false, "expression"}},
+            {"options", {&Dashboard::cmd_options, false, "[subcommand]"}}
         };
     }
     void run();
@@ -224,6 +227,7 @@ private:
     void cmd_quit(const std::string& args);
     void cmd_set(const std::string& args);
     void cmd_undef(const std::string& args);
+    void cmd_options(const std::string& args);
     
     void perform_evaluate(const std::string& expr, bool detailed);
     void perform_set(const std::string& args, bool detailed);

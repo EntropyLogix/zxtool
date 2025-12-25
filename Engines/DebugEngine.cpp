@@ -173,7 +173,6 @@ void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::o
 std::vector<std::string> CodeView::render() {
     std::vector<std::string> lines_out;
     lines_out.push_back(format_header("CODE"));
-
     if (m_has_history && m_start_addr == m_pc && (m_last_pc != m_pc || !m_pc_moved)) {
         uint16_t hist_addr = m_last_pc;
         uint16_t temp_hist = hist_addr;
@@ -284,11 +283,12 @@ std::vector<std::string> CodeView::render() {
                 lines_out.push_back(s);
                 lines_count++;
             }
-        } else
+        } else {
             if (lines_count < m_rows) {
                 lines_out.push_back(ss.str());
                 lines_count++;
             }
+        }
         first_line = false;
     }
     return lines_out;
@@ -326,16 +326,16 @@ void Debugger::step(int n) {
 }
 
 void Debugger::next() {
-        m_prev_state = m_core.get_cpu().save_state();
-        uint16_t pc_before = m_core.get_cpu().get_PC();
+    m_prev_state = m_core.get_cpu().save_state();
+    uint16_t pc_before = m_core.get_cpu().get_PC();
         
-        uint16_t temp_pc = pc_before;
-        auto line = m_core.get_analyzer().parse_instruction(temp_pc);
+    uint16_t temp_pc = pc_before;
+    auto line = m_core.get_analyzer().parse_instruction(temp_pc);
         
-        if (line.mnemonic.empty()) { 
-            m_core.get_cpu().step(); 
-        }
-        else {
+    if (line.mnemonic.empty()) { 
+        m_core.get_cpu().step(); 
+    }
+    else {
         using Type = Z80Analyzer<Memory>::CodeLine::Type;
         bool is_call = line.has_flag(Type::CALL);
         bool is_block = line.has_flag(Type::BLOCK);
@@ -344,17 +344,17 @@ void Debugger::next() {
             uint16_t next_pc = temp_pc;
             log("Stepping over... (Target: " + Strings::hex(next_pc) + ")");
             while (m_core.get_cpu().get_PC() != next_pc) {
-                if (check_breakpoints(m_core.get_cpu().get_PC())) break;
+                if (check_breakpoints(m_core.get_cpu().get_PC()))
+                    break;
                 m_core.get_cpu().step();
             }
-        } else {
+        } else
             m_core.get_cpu().step();
-        }
-        }
-        uint16_t pc_after = m_core.get_cpu().get_PC();
-        m_last_pc = pc_before;
-        m_has_history = true;
-        m_pc_moved = (pc_before != pc_after);
+    }
+    uint16_t pc_after = m_core.get_cpu().get_PC();
+    m_last_pc = pc_before;
+    m_has_history = true;
+    m_pc_moved = (pc_before != pc_after);
 }
 
 void Dashboard::draw_prompt() {
@@ -370,9 +370,19 @@ bool Dashboard::scroll_up() {
 }
 
 bool Dashboard::scroll_down() {
-    if (m_focus == FOCUS_MEMORY) { m_memory_view.scroll(16); return true; }
-    else if (m_focus == FOCUS_CODE) { m_auto_follow = false; m_code_view.scroll(1); return true; }
-    else if (m_focus == FOCUS_STACK) { m_stack_view.scroll(2); return true; }
+    if (m_focus == FOCUS_MEMORY) {
+        m_memory_view.scroll(16);
+        return true;
+    }
+    else if (m_focus == FOCUS_CODE) {
+        m_auto_follow = false;
+        m_code_view.scroll(1);
+        return true;
+    }
+    else if (m_focus == FOCUS_STACK) {
+        m_stack_view.scroll(2);
+        return true;
+    }
     return false;
 }
 
@@ -380,7 +390,6 @@ void Dashboard::run() {
     m_editor.history_load(HISTORY_FILE);
     m_editor.set_completion_callback([this](const std::string& input) { return get_completions(input); });
     m_editor.set_hint_callback([this](const std::string& input, std::string& color, int& error_pos) { return calculate_hint(input, color, error_pos); });
-    
     update_code_view();
     m_memory_view.set_address(m_debugger.get_core().get_cpu().get_PC());
     m_stack_view.set_address(m_debugger.get_core().get_cpu().get_SP());
@@ -523,14 +532,16 @@ Terminal::Completion Dashboard::get_completions(const std::string& input) {
                     auto& vars = m_debugger.get_core().get_context().getVariables();
                     for (const auto& pair : vars.by_name()) {
                         std::string var_name = "@" + pair.first;
-                        if (Strings::upper(var_name).find(prefix_upper) == 0) result.candidates.push_back(var_name);
+                        std::string var_upper = Strings::upper(var_name);
+                        if (var_upper.find(prefix_upper) == 0) result.candidates.push_back(var_name);
                     }
                 }
 
                 // Symbols
                 auto& symbols = m_debugger.get_core().get_context().getSymbols();
                 for (const auto& pair : symbols.by_name()) {
-                    if (Strings::upper(pair.first).find(prefix_upper) == 0) result.candidates.push_back(pair.first);
+                    std::string sym_upper = Strings::upper(pair.first);
+                    if (sym_upper.find(prefix_upper) == 0) result.candidates.push_back(pair.first);
                 }
             }
         } else {
@@ -546,7 +557,12 @@ Terminal::Completion Dashboard::get_completions(const std::string& input) {
         }
 
         // Sort and unique
-        std::sort(result.candidates.begin(), result.candidates.end());
+        std::sort(result.candidates.begin(), result.candidates.end(), [](const std::string& a, const std::string& b) {
+            std::string ua = Strings::upper(a);
+            std::string ub = Strings::upper(b);
+            if (ua != ub) return ua < ub;
+            return a < b;
+        });
         result.candidates.erase(std::unique(result.candidates.begin(), result.candidates.end()), result.candidates.end());
         return result;
 }
@@ -874,6 +890,28 @@ void Dashboard::cmd_undef(const std::string& args_str) {
         m_output_buffer << "Error: Symbol '" << name << "' not found.\n";
 }
 
+void Dashboard::cmd_options(const std::string& args) {
+    std::string trimmed_args = Strings::trim(args);
+    if (trimmed_args.empty()) {
+        const auto& opts = m_debugger.get_options();
+        m_output_buffer << "OPTIONS:\n";
+        m_output_buffer << "------------------------------------------------------------\n";
+        m_output_buffer << "Input Files:     ";
+        for (size_t i = 0; i < opts.inputFiles.size(); ++i) {
+            if (i > 0) m_output_buffer << ", ";
+            m_output_buffer << opts.inputFiles[i];
+        }
+        m_output_buffer << "\n";
+        m_output_buffer << "Output File:     " << (opts.outputFile.empty() ? "(none)" : opts.outputFile) << "\n";
+        m_output_buffer << "Entry Point:     " << (opts.entryPointStr.empty() ? "(default)" : opts.entryPointStr) << "\n";
+        m_output_buffer << "Run Steps:       " << opts.runSteps << "\n";
+        m_output_buffer << "Run Ticks:       " << opts.runTicks << "\n";
+        m_output_buffer << "Timeout:         " << opts.timeout << "s\n";
+    } else {
+        m_output_buffer << "No configurable options available.\n";
+    }
+}
+
 void Dashboard::handle_command(const std::string& input) {
     std::string clean_input = Strings::trim(input);
     if (clean_input.empty())
@@ -1091,7 +1129,7 @@ int DebugEngine::run() {
             std::cerr << "Error parsing entry point: " << e.what() << "\n";
         }
     }
-    Debugger debugger(m_core);
+    Debugger debugger(m_core, m_options);
     Dashboard dashboard(debugger);
     dashboard.run();
     return 0;
