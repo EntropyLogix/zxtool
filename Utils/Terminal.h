@@ -23,6 +23,7 @@ public:
         HOME, END,
         BACKSPACE, DEL,
         TAB,
+        SHIFT_TAB,
         ENTER,
         ESC
     };

@@ -7,17 +7,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(FetchContent)
 
 FetchContent_Declare(
-  replxx
-  GIT_REPOSITORY https://github.com/AmokHuginnsson/replxx.git
-  GIT_TAG        release-0.0.4 
-)
-FetchContent_Declare(
   Z80
   GIT_REPOSITORY https://github.com/EntropyLogix/Z80.git
   GIT_TAG        main
 )
 
-FetchContent_MakeAvailable(replxx)
 FetchContent_MakeAvailable(Z80)
 
 add_executable(zxtool 
@@ -47,8 +41,5 @@ add_executable(zxtool
   )
 
   target_include_directories(zxtool PRIVATE 
-    ${replxx_SOURCE_DIR}/include
     ${z80_SOURCE_DIR}
   )
-
-  target_link_libraries(zxtool PRIVATE replxx)

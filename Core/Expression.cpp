@@ -1089,9 +1089,9 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
             {T::Number}, {T::Register}, {T::Symbol}
         }, "value"}},
         {"CHECKSUM", {-1, &Expression::function_checksum, {
-        }, "v1, v2, ..."}},
+        }, "..."}},
         {"CRC", {-1, &Expression::function_crc, {
-        }, "v1, v2, ..."}},
+        }, "..."}},
         {"LEN", {-1, &Expression::function_len, {
         }, "collection"}},
         {"UPPER", {1, &Expression::function_upper, {
@@ -1110,9 +1110,9 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
             {T::Number}, {T::Register}, {T::Symbol}
         }, "value"}},
         {"MIN", {-1, &Expression::function_min, {
-        }, "v1, v2, ..."}},
+        }, "..."}},
         {"MAX", {-1, &Expression::function_max, {
-        }, "v1, v2, ..."}},
+        }, "..."}},
         {"CLAMP", {3, &Expression::function_clamp, {
             {T::Number, T::Number, T::Number},
             {T::Bytes, T::Number, T::Number},
@@ -1153,9 +1153,9 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
             {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
         }, "val, limit"}},
         {"SUM", {-1, &Expression::function_sum, {
-        }, "v1, v2, ..."}},
+        }, "..."}},
         {"AVG", {-1, &Expression::function_avg, {
-        }, "v1, v2, ..."}},
+        }, "..."}},
         {"ALL", {-1, &Expression::function_all, {
         }, "v1, v2, ..., target"}},
         {"ANY", {-1, &Expression::function_any, {
@@ -1169,9 +1169,9 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
             {T::String}, {T::Bytes}, {T::Words}, {T::Address}
         }, "collection"}},
         {"BYTES", {-1, &Expression::function_bytes, {
-        }, "v1, v2, ..."}},
+        }, "..."}},
         {"WORDS", {-1, &Expression::function_words, {
-        }, "v1, v2, ..."}}
+        }, "..."}}
         ,{"STR", {1, &Expression::function_str, {
             {T::Number}, {T::Register}, {T::Symbol}, {T::String}
         }, "value"}},

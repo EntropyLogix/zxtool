@@ -389,6 +389,13 @@ void Dashboard::run() {
             continue;
         }
 
+        if (in.key == Terminal::Key::SHIFT_TAB) {
+            m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT); 
+            validate_focus(); 
+            needs_repaint = true;
+            continue;
+        }
+
         if (m_focus == FOCUS_CMD) {
             auto res = m_editor.on_key(in);
             if (res == Terminal::LineEditor::Result::SUBMIT) {
@@ -405,11 +412,7 @@ void Dashboard::run() {
                 Terminal::enable_raw_mode();
                 needs_repaint = true;
             } else if (res == Terminal::LineEditor::Result::IGNORED) {
-                if (in.key == Terminal::Key::TAB) {
-                    m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT); 
-                    validate_focus(); 
-                    needs_repaint = true;
-                } else if (in.key == Terminal::Key::ESC) {
+                if (in.key == Terminal::Key::ESC) {
                     m_focus = FOCUS_CODE; 
                     validate_focus(); 
                     needs_repaint = true;
@@ -426,10 +429,6 @@ void Dashboard::run() {
             // Navigation mode
             if (in.key == Terminal::Key::ESC) {
                 m_focus = FOCUS_CMD;
-                needs_repaint = true;
-            } else if (in.key == Terminal::Key::TAB) {
-                m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT); 
-                validate_focus(); 
                 needs_repaint = true;
             } else if (in.key == Terminal::Key::UP) {
                 if (m_focus == FOCUS_MEMORY) { m_memory_view.scroll(-16); needs_repaint = true; }
@@ -637,16 +636,8 @@ std::string Dashboard::get_collection_hint(const std::string& input, const Param
     }
     
     std::string hint;
-    int max_named = 2;
-    if (info.count < max_named) {
-        std::string arg_name = (opener == '[') ? "addr" : type_prefix;
-        if (!info.current_has_text) hint += arg_name + std::to_string(info.count + 1);
-        for (int k = info.count + 1; k < max_named; ++k) hint += ", " + arg_name + std::to_string(k + 1);
-        hint += ", ..." + std::string(1, closer);
-    } else {
-        if (!info.current_has_text) hint += "..." + std::string(1, closer);
-        else hint += closer;
-    }
+    if (!info.current_has_text) hint += "..." + std::string(1, closer);
+    else hint += closer;
     return hint;
 }
 
@@ -731,7 +722,7 @@ std::string Dashboard::calculate_hint(const std::string& input, std::string& hin
             size_t last_char_pos = input.find_last_not_of(" \t");
             if (last_char_pos != std::string::npos) {
                 char last_char = input[last_char_pos];
-                if (last_char == ']' || last_char == '}') {
+                if (last_char == ']') {
                     return " x count";
                 }
                 if (last_char == 'x') {

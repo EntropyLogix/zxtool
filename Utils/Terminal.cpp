@@ -81,7 +81,10 @@ Terminal::Input Terminal::read_key() {
             }
         } else {
             if (c == 8) input.key = Key::BACKSPACE;
-            else if (c == 9) input.key = Key::TAB;
+            else if (c == 9) {
+                if (GetKeyState(VK_SHIFT) & 0x8000) input.key = Key::SHIFT_TAB;
+                else input.key = Key::TAB;
+            }
             else if (c == 13) input.key = Key::ENTER;
             else if (c == 27) input.key = Key::ESC;
             else {
@@ -116,6 +119,7 @@ Terminal::Input Terminal::read_key() {
                     case '3': 
                         if (read(STDIN_FILENO, &c, 1) == 1 && c == '~') input.key = Key::DEL; 
                         break;
+                    case 'Z': input.key = Key::SHIFT_TAB; break;
                 }
             } else if (seq[0] == 'O') {
                 switch (seq[1]) {
