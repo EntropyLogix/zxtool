@@ -450,11 +450,11 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
         {"_",   {100, false, true,  &Expression::operator_unary_minus, {
             {T::Number}, {T::Register}, {T::Symbol},
             {T::Address}, {T::Words}, {T::Bytes}
-        }, "Negation"}},
+        }}},
         {"#",   {100, false, true,  &Expression::operator_unary_plus, {
             {T::Number}, {T::Register}, {T::Symbol},
             {T::Address}, {T::Words}, {T::Bytes}
-        }, "Unary Plus"}},
+        }}},
         {"+",   {80, true,  false, &Expression::operator_plus, {
             // Scalar + Scalar
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
@@ -470,7 +470,7 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
             {T::Address, T::Number}, {T::Address, T::Register}, {T::Address, T::Symbol},
             // Scalar + Address
             {T::Number, T::Address}, {T::Register, T::Address}, {T::Symbol, T::Address}
-        }, "Addition / Concatenation"}},
+        }}},
         {"-",   {80, true,  false, &Expression::operator_minus, {
             // Scalar - Scalar
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
@@ -482,96 +482,96 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
             {T::Address, T::Number}, {T::Address, T::Register}, {T::Address, T::Symbol},
             // Scalar - Address
             {T::Number, T::Address}, {T::Register, T::Address}, {T::Symbol, T::Address}
-        }, "Subtraction"}},
+        }}},
         {"*",   {90, true, false, &Expression::operator_mul, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
             {T::String, T::Number}
-        }, "Multiplication / Repeat String"}},
+        }}},
         {"/",   {90, true, false, &Expression::operator_div, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Division"}},
+        }}},
         {"%",   {90, true, false, &Expression::operator_mod, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Modulo"}},
+        }}},
         {"<<",  {70, true, false, &Expression::operator_shl, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Shift Left"}},
+        }}},
         {">>",  {70, true, false, &Expression::operator_shr, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Shift Right"}},
+        }}},
         {"==",  {66, true, false, &Expression::operator_eq, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
             {T::String, T::String}
-        }, "Equal"}},
+        }}},
         {"!=",  {66, true, false, &Expression::operator_neq, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
             {T::String, T::String}
-        }, "Not Equal"}},
+        }}},
         {"<",   {68, true, false, &Expression::operator_lt, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Less Than"}},
+        }}},
         {">",   {68, true, false, &Expression::operator_gt, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Greater Than"}},
+        }}},
         {"<=",  {68, true, false, &Expression::operator_lte, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Less or Equal"}},
+        }}},
         {">=",  {68, true, false, &Expression::operator_gte, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Greater or Equal"}},
+        }}},
         {"&",   {60, true, false, &Expression::operator_and, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Bitwise AND"}},
+        }}},
         {"^",   {50, true, false, &Expression::operator_xor, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Bitwise XOR"}},
+        }}},
         {"|",   {40, true, false, &Expression::operator_or, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Bitwise OR"}},
+        }}},
         {"~",   {100, false, true, &Expression::operator_not, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }, "Bitwise NOT"}},
+        }}},
         {"&&",  {30, true, false, &Expression::operator_logical_and, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Logical AND"}},
+        }}},
         {"||",  {20, true, false, &Expression::operator_logical_or, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }, "Logical OR"}},
+        }}},
         {"!",   {100, false, true, &Expression::operator_logical_not, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }, "Logical NOT"}},
+        }}},
         {"x",   {15, true, false, &Expression::operator_repeat, {
             {T::Bytes, T::Number}, {T::Words, T::Number}, {T::Address, T::Number},
             {T::Bytes, T::Register}, {T::Words, T::Register}, {T::Address, T::Register},
@@ -579,7 +579,7 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
             {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number},
             {T::Number, T::Register}, {T::Register, T::Register}, {T::Symbol, T::Register},
             {T::Number, T::Symbol}, {T::Register, T::Symbol}, {T::Symbol, T::Symbol}
-        }, "Repeat Collection"}},
+        }}},
     };
     return ops;
 }

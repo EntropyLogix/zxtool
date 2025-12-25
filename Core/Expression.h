@@ -122,7 +122,6 @@ public:
         bool is_unary;
         Value (Expression::*apply)(const std::vector<Value>&);
         std::vector<std::vector<Value::Type>> signatures;
-        std::string description;
         void check(const std::string& name, const std::vector<Value>& args) const {
             check_types(name, args, signatures);
         }
