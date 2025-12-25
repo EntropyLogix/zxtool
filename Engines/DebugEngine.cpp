@@ -542,16 +542,6 @@ void Dashboard::init() {
         "set", "eval", "bit", "res", "lines", "undef", "?", "??"
     };
 
-    static const std::vector<std::string> eval_keywords = {
-        "af", "bc", "de", "hl", "ix", "iy", "sp", "pc",
-        "a", "f", "b", "c", "d", "e", "h", "l", "i", "r",
-        "af'", "bc'", "de'", "hl'",
-        "low", "high", "len", "abs", "sign", "sqrt", "min", "max", "clamp",
-        "sin", "cos", "deg", "rad", "int", "floor", "round", "ceil", "pow2",
-        "align", "wrap", "sum", "avg", "all", "any", "asm", "copy", "bytes",
-        "words", "str", "val", "hex", "bin", "bcd", "dec", "checksum", "crc"
-    };
-
     m_repl.set_completion_callback([this](std::string const& input, int& contextLen) {
         std::vector<replxx::Replxx::Completion> completions;
         std::string prefix;
@@ -587,10 +577,17 @@ void Dashboard::init() {
                         }
                     }
                 } else {
-                    for (const auto& kw : eval_keywords) {
-                        if (kw.find(prefix) == 0) {
-                            completions.emplace_back(kw.c_str());
+                    // Functions
+                    for (const auto& pair : Expression::get_functions()) {
+                        if (pair.first.find(Strings::upper(prefix)) == 0) {
+                            completions.emplace_back(pair.first.c_str());
                         }
+                    }
+                    // Registers (Common ones)
+                    static const std::vector<std::string> regs = {"AF", "BC", "DE", "HL", "IX", "IY", "SP", "PC", "A", "F", "B", "C", "D", "E", "H", "L", "I", "R", "AF'", "BC'", "DE'", "HL'"};
+                    for (const auto& r : regs) {
+                        if (r.find(Strings::upper(prefix)) == 0)
+                            completions.emplace_back(r.c_str());
                     }
                     
                     const auto& symbols = m_debugger.get_core().get_context().getSymbols().by_name();
@@ -608,6 +605,7 @@ void Dashboard::init() {
     m_repl.set_hint_callback([this](std::string const& input, int& contextLen, replxx::Replxx::Color& color) {
         std::vector<std::string> hints;
         std::string prefix;
+        color = replxx::Replxx::Color::GRAY;
         
         size_t first_space = input.find_first_of(" \t");
         if (first_space == std::string::npos) {
@@ -624,6 +622,71 @@ void Dashboard::init() {
             
             if (is_eval) {
                 size_t lastSep = input.find_last_of(" \t,()[]{}+-*/");
+                
+                // Check if we are inside a function call for hints
+                size_t openParen = input.find_last_of('(');
+                size_t closeParen = input.find_last_of(')');
+                if (openParen != std::string::npos && (closeParen == std::string::npos || closeParen < openParen)) {
+                    size_t funcEnd = openParen;
+                    while (funcEnd > 0 && std::isspace(input[funcEnd-1])) funcEnd--;
+                    size_t funcStart = funcEnd;
+                    while (funcStart > 0 && (std::isalnum(input[funcStart-1]) || input[funcStart-1] == '_')) funcStart--;
+                    
+                    if (funcStart < funcEnd) {
+                        std::string funcName = Strings::upper(input.substr(funcStart, funcEnd - funcStart));
+                        const auto& funcs = Expression::get_functions();
+                        auto it = funcs.find(funcName);
+                        if (it != funcs.end()) {
+                            // Calculate current argument index
+                            int arg_idx = 0;
+                            bool in_str = false;
+                            int depth = 0;
+                            for (size_t i = openParen + 1; i < input.length(); ++i) {
+                                char c = input[i];
+                                if (in_str) {
+                                    if (c == '"') in_str = false;
+                                } else {
+                                    if (c == '"') in_str = true;
+                                    else if (c == '(' || c == '[' || c == '{') depth++;
+                                    else if (c == ')' || c == ']' || c == '}') depth--;
+                                    else if (c == ',' && depth == 0) arg_idx++;
+                                }
+                            }
+
+                            std::string params = it->second.params;
+                            std::vector<std::string> param_list;
+                            size_t start = 0;
+                            int p_depth = 0;
+                            int ellipsis_idx = -1;
+                            for (size_t i = 0; i < params.length(); ++i) {
+                                if (params[i] == '[') p_depth++;
+                                else if (params[i] == ']') p_depth--;
+                                else if (params[i] == ',' && p_depth == 0) {
+                                    std::string p = Strings::trim(params.substr(start, i - start));
+                                    if (p == "...") ellipsis_idx = (int)param_list.size();
+                                    param_list.push_back(p);
+                                    start = i + 1;
+                                }
+                            }
+                            std::string last_p = Strings::trim(params.substr(start));
+                            if (last_p == "...") ellipsis_idx = (int)param_list.size();
+                            param_list.push_back(last_p);
+
+                            int start_idx = arg_idx;
+                            if (ellipsis_idx != -1 && arg_idx >= ellipsis_idx) start_idx = ellipsis_idx;
+                            else if (arg_idx >= (int)param_list.size()) return hints;
+
+                            std::string hint_str;
+                            for (size_t i = start_idx; i < param_list.size(); ++i) {
+                                if (i > (size_t)start_idx) hint_str += ", ";
+                                hint_str += param_list[i];
+                            }
+                            hints.push_back(hint_str + ")");
+                            return hints;
+                        }
+                    }
+                }
+
                 if (lastSep == std::string::npos) prefix = input;
                 else prefix = input.substr(lastSep + 1);
                 
@@ -639,9 +702,9 @@ void Dashboard::init() {
                         }
                     }
                 } else {
-                    for (const auto& kw : eval_keywords) {
-                        if (kw.find(prefix) == 0 && kw.length() > prefix.length()) {
-                            hints.push_back(kw);
+                    for (const auto& pair : Expression::get_functions()) {
+                        if (pair.first.find(Strings::upper(prefix)) == 0 && pair.first.length() > prefix.length()) {
+                            hints.push_back(pair.first);
                         }
                     }
                     
@@ -655,7 +718,6 @@ void Dashboard::init() {
             }
         }
         
-        color = replxx::Replxx::Color::GRAY;
         return hints;
     });
 

@@ -450,11 +450,11 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
         {"_",   {100, false, true,  &Expression::operator_unary_minus, {
             {T::Number}, {T::Register}, {T::Symbol},
             {T::Address}, {T::Words}, {T::Bytes}
-        }}},
+        }, "Negation"}},
         {"#",   {100, false, true,  &Expression::operator_unary_plus, {
             {T::Number}, {T::Register}, {T::Symbol},
             {T::Address}, {T::Words}, {T::Bytes}
-        }}},
+        }, "Unary Plus"}},
         {"+",   {80, true,  false, &Expression::operator_plus, {
             // Scalar + Scalar
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
@@ -470,7 +470,7 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
             {T::Address, T::Number}, {T::Address, T::Register}, {T::Address, T::Symbol},
             // Scalar + Address
             {T::Number, T::Address}, {T::Register, T::Address}, {T::Symbol, T::Address}
-        }}},
+        }, "Addition / Concatenation"}},
         {"-",   {80, true,  false, &Expression::operator_minus, {
             // Scalar - Scalar
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
@@ -482,96 +482,96 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
             {T::Address, T::Number}, {T::Address, T::Register}, {T::Address, T::Symbol},
             // Scalar - Address
             {T::Number, T::Address}, {T::Register, T::Address}, {T::Symbol, T::Address}
-        }}},
+        }, "Subtraction"}},
         {"*",   {90, true, false, &Expression::operator_mul, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
             {T::String, T::Number}
-        }}},
+        }, "Multiplication / Repeat String"}},
         {"/",   {90, true, false, &Expression::operator_div, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Division"}},
         {"%",   {90, true, false, &Expression::operator_mod, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Modulo"}},
         {"<<",  {70, true, false, &Expression::operator_shl, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Shift Left"}},
         {">>",  {70, true, false, &Expression::operator_shr, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Shift Right"}},
         {"==",  {66, true, false, &Expression::operator_eq, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
             {T::String, T::String}
-        }}},
+        }, "Equal"}},
         {"!=",  {66, true, false, &Expression::operator_neq, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol},
             {T::String, T::String}
-        }}},
+        }, "Not Equal"}},
         {"<",   {68, true, false, &Expression::operator_lt, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Less Than"}},
         {">",   {68, true, false, &Expression::operator_gt, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Greater Than"}},
         {"<=",  {68, true, false, &Expression::operator_lte, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Less or Equal"}},
         {">=",  {68, true, false, &Expression::operator_gte, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Greater or Equal"}},
         {"&",   {60, true, false, &Expression::operator_and, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Bitwise AND"}},
         {"^",   {50, true, false, &Expression::operator_xor, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Bitwise XOR"}},
         {"|",   {40, true, false, &Expression::operator_or, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Bitwise OR"}},
         {"~",   {100, false, true, &Expression::operator_not, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "Bitwise NOT"}},
         {"&&",  {30, true, false, &Expression::operator_logical_and, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Logical AND"}},
         {"||",  {20, true, false, &Expression::operator_logical_or, {
             {T::Number, T::Number}, {T::Number, T::Register}, {T::Number, T::Symbol},
             {T::Register, T::Number}, {T::Register, T::Register}, {T::Register, T::Symbol},
             {T::Symbol, T::Number}, {T::Symbol, T::Register}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Logical OR"}},
         {"!",   {100, false, true, &Expression::operator_logical_not, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "Logical NOT"}},
         {"x",   {15, true, false, &Expression::operator_repeat, {
             {T::Bytes, T::Number}, {T::Words, T::Number}, {T::Address, T::Number},
             {T::Bytes, T::Register}, {T::Words, T::Register}, {T::Address, T::Register},
@@ -579,7 +579,7 @@ const std::map<std::string, Expression::OperatorInfo>& Expression::get_operators
             {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number},
             {T::Number, T::Register}, {T::Register, T::Register}, {T::Symbol, T::Register},
             {T::Number, T::Symbol}, {T::Register, T::Symbol}, {T::Symbol, T::Symbol}
-        }}},
+        }, "Repeat Collection"}},
     };
     return ops;
 }
@@ -1078,118 +1078,118 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
     static const std::map<std::string, FunctionInfo> funcs = {
         {"LOW",  {1, &Expression::function_low, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"LO",   {1, &Expression::function_low, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"HIGH", {1, &Expression::function_high, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"HI",   {1, &Expression::function_high, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"CHECKSUM", {-1, &Expression::function_checksum, {
-        }}},
+        }, "v1, v2, ..."}},
         {"CRC", {-1, &Expression::function_crc, {
-        }}},
+        }, "v1, v2, ..."}},
         {"LEN", {-1, &Expression::function_len, {
-        }}},
+        }, "collection"}},
         {"UPPER", {1, &Expression::function_upper, {
             {T::String}
-        }}},
+        }, "\"string\""}},
         {"LOWER", {1, &Expression::function_lower, {
             {T::String}
-        }}},
+        }, "\"string\""}},
         {"ABS", {1, &Expression::function_abs, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"SIGN", {1, &Expression::function_sign, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"SQRT", {1, &Expression::function_sqrt, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"MIN", {-1, &Expression::function_min, {
-        }}},
+        }, "v1, v2, ..."}},
         {"MAX", {-1, &Expression::function_max, {
-        }}},
+        }, "v1, v2, ..."}},
         {"CLAMP", {3, &Expression::function_clamp, {
             {T::Number, T::Number, T::Number},
             {T::Bytes, T::Number, T::Number},
             {T::Words, T::Number, T::Number},
             {T::Address, T::Number, T::Number}
-        }}},
+        }, "val, min, max"}},
         {"SIN", {1, &Expression::function_sin, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "rad"}},
         {"COS", {1, &Expression::function_cos, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "rad"}},
         {"DEG", {1, &Expression::function_deg, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"RAD", {1, &Expression::function_rad, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"INT", {1, &Expression::function_int, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"FLOOR", {1, &Expression::function_int, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"ROUND", {1, &Expression::function_round, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"CEIL", {1, &Expression::function_ceil, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"POW2", {1, &Expression::function_pow2, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "exponent"}},
         {"ALIGN", {2, &Expression::function_align, {
             {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
-        }}},
+        }, "val, base"}},
         {"WRAP", {2, &Expression::function_wrap, {
             {T::Number, T::Number}, {T::Register, T::Number}, {T::Symbol, T::Number}
-        }}},
+        }, "val, limit"}},
         {"SUM", {-1, &Expression::function_sum, {
-        }}},
+        }, "v1, v2, ..."}},
         {"AVG", {-1, &Expression::function_avg, {
-        }}},
+        }, "v1, v2, ..."}},
         {"ALL", {-1, &Expression::function_all, {
-        }}},
+        }, "v1, v2, ..., target"}},
         {"ANY", {-1, &Expression::function_any, {
-        }}},
+        }, "v1, v2, ..., target"}},
         {"ASM", {-1, &Expression::function_asm, {
             {T::String},
             {T::Number, T::String}, {T::Register, T::String}, {T::Symbol, T::String}
-        }}},
+        }, "[addr], \"code\""}},
         {"COPY", {1, &Expression::function_copy, {
             {T::Number}, {T::Register}, {T::Symbol},
             {T::String}, {T::Bytes}, {T::Words}, {T::Address}
-        }}},
+        }, "collection"}},
         {"BYTES", {-1, &Expression::function_bytes, {
-        }}},
+        }, "v1, v2, ..."}},
         {"WORDS", {-1, &Expression::function_words, {
-        }}}
+        }, "v1, v2, ..."}}
         ,{"STR", {1, &Expression::function_str, {
             {T::Number}, {T::Register}, {T::Symbol}, {T::String}
-        }}},
+        }, "value"}},
         {"VAL", {1, &Expression::function_val, {
             {T::String}
-        }}},
+        }, "\"string\""}},
         {"HEX", {1, &Expression::function_hex, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"BIN", {1, &Expression::function_bin, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"BCD", {1, &Expression::function_bcd, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}},
+        }, "value"}},
         {"DEC", {1, &Expression::function_dec, {
             {T::Number}, {T::Register}, {T::Symbol}
-        }}}
+        }, "value"}}
     };
     return funcs;
 }

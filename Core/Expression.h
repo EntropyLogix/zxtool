@@ -116,6 +116,30 @@ public:
     Value function_checksum(const std::vector<Value>& args);
     Value function_crc(const std::vector<Value>& args);
 
+    struct OperatorInfo {
+        int precedence;
+        bool left_assoc;
+        bool is_unary;
+        Value (Expression::*apply)(const std::vector<Value>&);
+        std::vector<std::vector<Value::Type>> signatures;
+        std::string description;
+        void check(const std::string& name, const std::vector<Value>& args) const {
+            check_types(name, args, signatures);
+        }
+    };
+    struct FunctionInfo {
+        int num_args;
+        Value (Expression::*apply)(const std::vector<Value>&);
+        std::vector<std::vector<Value::Type>> signatures;
+        std::string params;
+        void check(const std::string& name, const std::vector<Value>& args) const {
+            check_types(name, args, signatures);
+        }
+    };
+
+    static const std::map<std::string, OperatorInfo>& get_operators();
+    static const std::map<std::string, FunctionInfo>& get_functions();
+
 private:
     enum class TokenType {
         UNKNOWN,
@@ -138,24 +162,6 @@ private:
         LBRACE_W
     };
     Core& m_core;
-    struct OperatorInfo {
-        int precedence;
-        bool left_assoc;
-        bool is_unary;
-        Value (Expression::*apply)(const std::vector<Value>&);
-        std::vector<std::vector<Value::Type>> signatures;
-        void check(const std::string& name, const std::vector<Value>& args) const {
-            check_types(name, args, signatures);
-        }
-    };
-    struct FunctionInfo {
-        int num_args;
-        Value (Expression::*apply)(const std::vector<Value>&);
-        std::vector<std::vector<Value::Type>> signatures;
-        void check(const std::string& name, const std::vector<Value>& args) const {
-            check_types(name, args, signatures);
-        }
-    };
     struct Token {
         TokenType type;
         Value value;
@@ -164,9 +170,6 @@ private:
         const FunctionInfo* func_info = nullptr;
         int argc = 0;
     };
-
-    static const std::map<std::string, OperatorInfo>& get_operators();
-    static const std::map<std::string, FunctionInfo>& get_functions();
 
     bool parse_operator(const std::string& expr, size_t& index, std::vector<Token>& tokens);
     bool parse_punctuation(const std::string& expr, size_t& index, std::vector<Token>& tokens);
