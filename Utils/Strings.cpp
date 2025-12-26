@@ -322,7 +322,7 @@ bool Strings::is_assignment(const std::string& expr) {
 
 std::string Strings::find_preceding_word(const std::string& input, size_t pos) {
     if (pos == 0) return "";
-    size_t end = input.find_last_not_of(" \t", pos - 1);
+    size_t end = find_last_non_space(input, pos - 1);
     if (end == std::string::npos) return "";
     
     size_t start = end;
@@ -341,4 +341,12 @@ bool Strings::is_identifier(const std::string& s) {
         }
     }
     return true;
+}
+
+size_t Strings::find_first_non_space(const std::string& s, size_t pos) {
+    return s.find_first_not_of(" \t", pos);
+}
+
+size_t Strings::find_last_non_space(const std::string& s, size_t pos) {
+    return s.find_last_not_of(" \t", pos);
 }

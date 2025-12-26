@@ -573,6 +573,16 @@ Terminal::Completion Dashboard::get_completions(const std::string& input) {
                 result.replace_pos = (int)(best_cmd.length() + current_arg_start + start_idx + (raw_prefix.length() - result.prefix.length()));
                 if (result.prefix.empty()) result.replace_pos = (int)input.length();
 
+                bool expect_term = true;
+                if (start_idx > 0) {
+                    size_t last_char_pos = Strings::find_last_non_space(current_arg, start_idx - 1);
+                    if (last_char_pos != std::string::npos) {
+                        char c = current_arg[last_char_pos];
+                        if (c == ')' || c == ']' || c == '}') expect_term = false;
+                    }
+                }
+
+                if (expect_term) {
                 std::string prefix_upper = Strings::upper(result.prefix);
                 
                 // Functions
@@ -606,6 +616,7 @@ Terminal::Completion Dashboard::get_completions(const std::string& input) {
                     std::string sym_upper = Strings::upper(pair.first);
                     if (sym_upper.find(prefix_upper) == 0) result.candidates.push_back(pair.first);
                 }
+                }
             } else if (type == CTX_SYMBOL) {
                 result.is_custom_context = true;
                 std::string current_arg = arg_full.substr(current_arg_start);
@@ -629,7 +640,7 @@ Terminal::Completion Dashboard::get_completions(const std::string& input) {
                 entry.custom_completer(input, param_index, current_arg, result);
             }
         } else {
-            size_t first_non_space = input.find_first_not_of(" \t");
+            size_t first_non_space = Strings::find_first_non_space(input);
             if (first_non_space == std::string::npos) first_non_space = 0;
             result.replace_pos = (int)first_non_space;
             result.prefix = trimmed_input;
@@ -727,11 +738,11 @@ std::string Dashboard::calculate_hint(const std::string& input, std::string& hin
         }
 
         std::string operator_hint;
-        size_t last_char_pos = input.find_last_not_of(" \t");
+        size_t last_char_pos = Strings::find_last_non_space(input);
         if (last_char_pos != std::string::npos) {
             char last_char = input[last_char_pos];
             if (last_char == 'x') {
-                size_t prev_pos = input.find_last_not_of(" \t", last_char_pos - 1);
+                size_t prev_pos = Strings::find_last_non_space(input, last_char_pos - 1);
                 if (prev_pos != std::string::npos) {
                     char prev_char = input[prev_pos];
                     if (prev_char == ']' || prev_char == '}') {

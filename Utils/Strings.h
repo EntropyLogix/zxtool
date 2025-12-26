@@ -40,6 +40,8 @@ public:
     static bool is_assignment(const std::string& expr);
     static std::string find_preceding_word(const std::string& input, size_t pos);
     static bool is_identifier(const std::string& s);
+    static size_t find_first_non_space(const std::string& s, size_t pos = 0);
+    static size_t find_last_non_space(const std::string& s, size_t pos = std::string::npos);
 };
 
 #endif//__STRINGS_H__
