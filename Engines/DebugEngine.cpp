@@ -6,16 +6,12 @@
 #include <vector>
 #include <cctype>
 #include <algorithm>
-#include <utility>
 
 #include "../Utils/Strings.h"
 #include "../Utils/Terminal.h"
 #include "../Utils/Checksum.h"
 #include "../Core/Expression.h"
-#include "../Core/Variables.h"
-#include <numeric>
 #include <limits>
-#include <bitset>
 
 static constexpr const char* HISTORY_FILE = ".zxtool_history";
 
@@ -150,23 +146,47 @@ void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::o
     if (line.operands.empty()) return;
     using Operand = Z80Analyzer<Memory>::CodeLine::Operand;
     for (size_t i = 0; i < line.operands.size(); ++i) {
-        if (i > 0) os << ", ";
+        if (i > 0)
+            os << ", ";
         const auto& op = line.operands[i];
         bool is_num = (op.type == Operand::IMM8 || op.type == Operand::IMM16 || op.type == Operand::MEM_IMM16);
-        if (is_num) os << color_num;
+        if (is_num)
+            os << color_num;
         switch (op.type) {
-            case Operand::REG8: case Operand::REG16: case Operand::CONDITION: os << op.s_val; break;
-            case Operand::IMM8: os << "$" << Strings::hex((uint8_t)op.num_val); break;
-            case Operand::IMM16: os << "$" << Strings::hex((uint16_t)op.num_val); break;
-            case Operand::MEM_IMM16: os << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
-            case Operand::PORT_IMM8: os << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
-            case Operand::MEM_REG16: os << "(" << op.s_val << ")"; break;
-            case Operand::MEM_INDEXED: os << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
-            case Operand::STRING: os << "\"" << op.s_val << "\""; break;
-            case Operand::CHAR_LITERAL: os << "'" << (char)op.num_val << "'"; break;
-            default: break;
+            case Operand::REG8:
+            case Operand::REG16:
+            case Operand::CONDITION:
+                os << op.s_val;
+                break;
+            case Operand::IMM8:
+                os << "$" << Strings::hex((uint8_t)op.num_val);
+                break;
+            case Operand::IMM16:
+                os << "$" << Strings::hex((uint16_t)op.num_val);
+                break;
+            case Operand::MEM_IMM16:
+                os << "($" << Strings::hex((uint16_t)op.num_val) << ")";
+                break;
+            case Operand::PORT_IMM8:
+                os << "($" << Strings::hex((uint8_t)op.num_val) << ")";
+                break;
+            case Operand::MEM_REG16:
+                os << "(" << op.s_val << ")";
+                break;
+            case Operand::MEM_INDEXED:
+                os << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")";
+                break;
+            case Operand::STRING:
+                os << "\"" << op.s_val << "\"";
+                break;
+            case Operand::CHAR_LITERAL:
+                os << "'" << (char)op.num_val << "'";
+                break;
+            default:
+                break;
         }
-        if (is_num) os << color_rst;
+        if (is_num)
+            os << color_rst;
     }
 }
 
@@ -180,9 +200,10 @@ std::vector<std::string> CodeView::render() {
         if (!line.mnemonic.empty()) {
             std::stringstream ss;
             ss << "  " << m_theme.value_dim << Strings::hex((uint16_t)line.address) << ": ";
-            for(size_t i=0; i<std::min((size_t)4, line.bytes.size()); ++i)
+            for (size_t i = 0; i < std::min((size_t)4, line.bytes.size()); ++i)
                 ss << Strings::hex(line.bytes[i]) << " ";
-            for(size_t i=line.bytes.size(); i<4; ++i) ss << "   ";
+            for (size_t i = line.bytes.size(); i<4; ++i)
+                ss << "   ";
             ss << " ";
             ss << std::left << std::setw(5) << line.mnemonic << " ";
             format_operands(line, ss, "", "");
@@ -363,9 +384,19 @@ void Dashboard::draw_prompt() {
 }
 
 bool Dashboard::scroll_up() {
-    if (m_focus == FOCUS_MEMORY) { m_memory_view.scroll(-16); return true; }
-    else if (m_focus == FOCUS_CODE) { m_auto_follow = false; m_code_view.scroll(-1); return true; }
-    else if (m_focus == FOCUS_STACK) { m_stack_view.scroll(-2); return true; }
+    if (m_focus == FOCUS_MEMORY) {
+        m_memory_view.scroll(-16);
+        return true;
+    }
+    else if (m_focus == FOCUS_CODE) {
+        m_auto_follow = false;
+        m_code_view.scroll(-1);
+        return true;
+    }
+    else if (m_focus == FOCUS_STACK) {
+        m_stack_view.scroll(-2);
+        return true;
+    }
     return false;
 }
 
@@ -455,17 +486,21 @@ void Dashboard::complete_options(const std::string& full_input, int param_index,
     result.prefix = prefix;
     if (param_index == 0) {
         std::vector<std::string> opts = {"colors", "syntax"};
-        for (const auto& o : opts) if (o.find(prefix) == 0) result.candidates.push_back(o);
+        for (const auto& o : opts)
+            if (o.find(prefix) == 0)
+                result.candidates.push_back(o);
     } else if (param_index == 1) {
         std::stringstream ss(full_input);
         std::string cmd, first_arg;
         ss >> cmd >> first_arg;
-        
         std::vector<std::string> opts;
-        if (Strings::lower(first_arg) == "syntax") opts = {"intel", "zilog"};
-        else opts = {"on", "off"};
-        
-        for (const auto& o : opts) if (o.find(prefix) == 0) result.candidates.push_back(o);
+        if (Strings::lower(first_arg) == "syntax")
+            opts = {"intel", "zilog"};
+        else
+            opts = {"on", "off"};
+        for (const auto& o : opts)
+            if (o.find(prefix) == 0)
+                result.candidates.push_back(o);
     }
 }
 

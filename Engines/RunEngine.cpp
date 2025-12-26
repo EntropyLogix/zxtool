@@ -1,12 +1,9 @@
 #include "RunEngine.h"
 #include <iostream>
-#include <iomanip>
 #include <chrono>
-#include <stdexcept>
 #include "../Utils/Strings.h"
 
-RunEngine::RunEngine(Core& core, const Options& options)
-    : m_core(core), m_options(options) {}
+RunEngine::RunEngine(Core& core, const Options& options) : m_core(core), m_options(options) {}
 
 int RunEngine::run() {
     auto& m_cpu = m_core.get_cpu();
@@ -20,28 +17,26 @@ int RunEngine::run() {
         if (colon != std::string::npos) {
             try {
                 long long s = std::stoll(ep.substr(colon + 1));
-                if (runSteps == 0) runSteps = s;
-            } catch (...) {}
+                if (runSteps == 0)
+                    runSteps = s;
+            } catch (...) {
+            }
             ep = ep.substr(0, colon);
         }
         int32_t val = 0;
         Strings::parse_integer(ep, val);
         m_cpu.set_PC((uint16_t)val);
     }
-
     if (runSteps > 0) {
-        for (long long i = 0; i < runSteps; ++i) {
+        for (long long i = 0; i < runSteps; ++i)
             m_cpu.step();
-        }
-    } else if (m_options.runTicks > 0) {
+    } else if (m_options.runTicks > 0)
         m_cpu.run(m_options.runTicks);
-    } else if (m_options.timeout > 0) {
+    else if (m_options.timeout > 0) {
         auto start = std::chrono::steady_clock::now();
-        while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() < m_options.timeout) {
+        while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() < m_options.timeout)
             m_cpu.run(m_cpu.get_ticks() + 100000);
-        }
     }
-
     if (m_options.dumpRegs) {
         std::cout << "PC: " << Strings::hex(m_cpu.get_PC()) << " SP: " << Strings::hex(m_cpu.get_SP()) << "\n";
         std::cout << "AF: " << Strings::hex(m_cpu.get_AF()) << " BC: " << Strings::hex(m_cpu.get_BC()) << "\n";
@@ -53,7 +48,6 @@ int RunEngine::run() {
         std::cout << "Flags: " << ((f & 0x80) ? 'S' : '-') << ((f & 0x40) ? 'Z' : '-') << ((f & 0x20) ? '5' : '-') << ((f & 0x10) ? 'H' : '-')
                   << ((f & 0x08) ? '3' : '-') << ((f & 0x04) ? 'P' : '-') << ((f & 0x02) ? 'N' : '-') << ((f & 0x01) ? 'C' : '-') << "\n";
     }
-
     if (!m_options.dumpCodeStr.empty()) {
         auto print_line = [](const auto& line){
             std::cout << Strings::hex(line.address) << ": " << line.mnemonic;
