@@ -269,14 +269,14 @@ void Strings::find_opener(const std::string& input, char& opener, size_t& opener
 Strings::ParamInfo Strings::analyze_params(const std::string& input, size_t opener_pos, int max_args) {
     ParamInfo info;
     info.last_comma_pos = opener_pos;
-    int d = 0;
+    int depth = 0;
     for (size_t i = opener_pos + 1; i < input.length(); ++i) {
         char c = input[i];
         if (c == '(' || c == '[' || c == '{')
-            d++;
+            depth++;
         else if (c == ')' || c == ']' || c == '}')
-            d--;
-        else if (c == ',' && d == 0) {
+            depth--;
+        else if (c == ',' && depth == 0) {
             info.count++;
             if (max_args != -1 && info.count == max_args && info.error_comma_pos == std::string::npos)
                 info.error_comma_pos = i;
@@ -295,7 +295,6 @@ Strings::ParamInfo Strings::analyze_params(const std::string& input, size_t open
 bool Strings::is_assignment(const std::string& expr) {
     int depth = 0;
     bool in_string = false;
-
     for (size_t i = 0; i < expr.length(); ++i) {
         char c = expr[i];
         if (in_string) {
@@ -308,16 +307,15 @@ bool Strings::is_assignment(const std::string& expr) {
             continue;
         }
         if (c == '\'') {
-            if (i + 2 < expr.length() && expr[i+2] == '\'') {
+            if (i + 2 < expr.length() && expr[i+2] == '\'')
                 i += 2;
-            }
             continue;
         }
-        if (c == '(' || c == '[' || c == '{') {
+        if (c == '(' || c == '[' || c == '{')
             depth++;
-        } else if (c == ')' || c == ']' || c == '}') {
+        else if (c == ')' || c == ']' || c == '}')
             depth--;
-        } else if (c == '=' && depth == 0) {
+        else if (c == '=' && depth == 0) {
             bool is_cmp = false;
             if (i > 0) {
                 char prev = expr[i-1];
@@ -329,9 +327,8 @@ bool Strings::is_assignment(const std::string& expr) {
                 if (next == '=')
                     is_cmp = true;
             }
-            if (!is_cmp) {
+            if (!is_cmp)
                 return true;
-            }
         }
     }
     return false;
@@ -355,9 +352,8 @@ std::string Strings::find_preceding_word(const std::string& input, size_t pos) {
 
 bool Strings::is_identifier(const std::string& s) {
     for (char c : s) {
-        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_')
             return false;
-        }
     }
     return true;
 }
