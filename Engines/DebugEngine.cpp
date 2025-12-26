@@ -873,23 +873,7 @@ void Dashboard::perform_evaluate(const std::string& expr, bool detailed) {
     try {
         Expression eval(m_debugger.get_core());
         Expression::Value val = eval.evaluate(expr);
-        
-        if (detailed && !expr.empty() && expr[0] == '@') {
-            bool is_var = Strings::is_identifier(expr.substr(1));
-            if (is_var) {
-                m_output_buffer << "VARIABLE: " << expr << "\n";
-                std::string type_name = "Unknown";
-                if (val.is_address()) type_name = "Address (Pointer)";
-                else if (val.is_number()) type_name = "Number";
-                else if (val.is_bytes()) type_name = "Bytes (Array)";
-                else if (val.is_words()) type_name = "Words (Array)";
-                else if (val.is_string()) type_name = "String";
-                else if (val.is_register()) type_name = "Register";
-                m_output_buffer << "Type:     " << type_name << "\n";
-                m_output_buffer << "------------------------------------------------------------\n";
-            }
-        }
-        m_output_buffer << format(val, detailed) << "\n";
+        m_output_buffer << format(val, detailed, expr) << "\n";
     } catch (const std::exception& e) {
         m_output_buffer << "Error: " << e.what() << "\n";
     }
@@ -1416,6 +1400,24 @@ std::string Dashboard::format_disasm(uint16_t addr, const Z80Analyzer<Memory>::C
     return lss.str();
 }
 
+void Dashboard::format_variable_header(std::stringstream& ss, const Expression::Value& val, const std::string& expr) {
+    if (!expr.empty() && expr[0] == '@') {
+        bool is_var = Strings::is_identifier(expr.substr(1));
+        if (is_var) {
+            ss << "VARIABLE: " << expr << "\n";
+            std::string type_name = "Unknown";
+            if (val.is_address()) type_name = "Address (Pointer)";
+            else if (val.is_number()) type_name = "Number";
+            else if (val.is_bytes()) type_name = "Bytes (Array)";
+            else if (val.is_words()) type_name = "Words (Array)";
+            else if (val.is_string()) type_name = "String";
+            else if (val.is_register()) type_name = "Register";
+            ss << "Type:     " << type_name << "\n";
+            ss << "------------------------------------------------------------\n";
+        }
+    }
+}
+
 void Dashboard::format_detailed_number(std::stringstream& ss, const Expression::Value& val) {
     auto& core = m_debugger.get_core();
     double d = (val.type() == Expression::Value::Type::Number) ? val.number() : (double)val.reg().read(core.get_cpu());
@@ -1746,11 +1748,11 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
     }
 }
 
-std::string Dashboard::format(const Expression::Value& val, bool detailed) {
+std::string Dashboard::format(const Expression::Value& val, bool detailed, const std::string& expr) {
     std::stringstream ss;
     
     if (detailed) {
-        // --- DETAILED VIEW (??) ---
+        format_variable_header(ss, val, expr);
         switch (val.type()) {
             case Expression::Value::Type::Number:
             case Expression::Value::Type::Register:
@@ -1776,24 +1778,20 @@ std::string Dashboard::format(const Expression::Value& val, bool detailed) {
                 std::string s = val.string();
                 size_t len = s.length();
                 std::string display_s = s;
-                if (len > 30) {
+                if (len > 30)
                     display_s = s.substr(0, 27) + "...";
-                }
-                
                 ss << "STRING:   \"" << display_s << "\" (" << len << " chars)\n";
                 ss << "------------------------------------------------------------\n";
-                
                 ss << "Bytes:    ";
                 size_t limit = std::min(len, (size_t)16);
                 for (size_t i = 0; i < limit; ++i) {
-                    if (i > 0) ss << ",";
+                    if (i > 0)
+                        ss << ",";
                     ss << "$" << Strings::hex((uint8_t)s[i]);
                 }
-                if (len > limit) {
+                if (len > limit)
                     ss << "... (+" << (len - limit) << " more)";
-                }
                 ss << "\n";
-                
                 uint32_t crc = Checksum::CRC32_START;
                 uint8_t checksum = 0;
                 for (char c : s) {
@@ -1802,74 +1800,73 @@ std::string Dashboard::format(const Expression::Value& val, bool detailed) {
                     crc = Checksum::crc32_update(crc, b);
                 }
                 crc = Checksum::crc32_finalize(crc);
-                
                 ss << "Checks:   Checksum: $" << Strings::hex(checksum) << ", CRC32: $" << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << crc << std::dec;
                 break;
             }
         }
         std::string res = ss.str();
-        if (!res.empty() && res.back() == '\n') res.pop_back();
+        if (!res.empty() && res.back() == '\n')
+            res.pop_back();
         return res;
     } else {
-        // --- STANDARD VIEW (?) ---
         switch (val.type()) {
-        case Expression::Value::Type::Number: {
-            double d = val.number();
-            if (d == (int64_t)d) {
-                int64_t i = (int64_t)d;
-                if (i >= -128 && i <= 255) {
-                    ss << "$" << Strings::hex((uint8_t)i) << " (" << i << ")";
-                } else if (i >= -32768 && i <= 65535) {
-                    ss << "$" << Strings::hex((uint16_t)i) << " (" << i << ")";
-                } else {
-                    std::stringstream temp_ss;
-                    temp_ss << std::hex << std::uppercase << i;
-                    ss << "$" << temp_ss.str() << " (" << i << ")";
-                }
-            } else {
-                ss << d;
-            }
-            break;
-        }
-        case Expression::Value::Type::String: {
-            std::string s = val.string();
-            if (s.length() > 50) s = s.substr(0, 47) + "...";
-            ss << "\"" << s << "\"";
-            break;
-        }
-        case Expression::Value::Type::Bytes:
-            ss << format_sequence(val.bytes(), "{", "}", " ", true, true);
-            break;
-        case Expression::Value::Type::Words:
-            ss << format_sequence(val.words(), "W{", "}", " ", true, true);
-            break;
-        case Expression::Value::Type::Address:
-            ss << format_sequence(val.address(), "[", "]", ", ", true, true);
-            break;
-        case Expression::Value::Type::Register: {
-            std::string name = val.reg().getName();
-            uint16_t v = val.reg().read(m_debugger.get_core().get_cpu());
-            if (val.reg().is_16bit())
-                ss << name << "=$" << Strings::hex(v) << " (" << v << ")";
-            else {
-                ss << name << "=$" << Strings::hex((uint8_t)v) << " (" << v << ")";
-                if (name == "F") {
-                    ss << " [";
-                    const char* syms = "SZYHXPNC";
-                    for (int i = 7; i >= 0; --i) {
-                        bool bit = (v >> i) & 1;
-                        ss << (bit ? syms[7-i] : '.');
+            case Expression::Value::Type::Number: {
+                double d = val.number();
+                if (d == (int64_t)d) {
+                    int64_t i = (int64_t)d;
+                    if (i >= -128 && i <= 255)
+                        ss << "$" << Strings::hex((uint8_t)i) << " (" << i << ")";
+                    else if (i >= -32768 && i <= 65535)
+                        ss << "$" << Strings::hex((uint16_t)i) << " (" << i << ")";
+                    else {
+                        std::stringstream temp_ss;
+                        temp_ss << std::hex << std::uppercase << i;
+                        ss << "$" << temp_ss.str() << " (" << i << ")";
                     }
-                    ss << "]";
-                }
+                } else
+                    ss << d;
+                break;
             }
-            break;
-        }
-        case Expression::Value::Type::Symbol: {
-            uint16_t v = val.symbol().read();
-            ss << val.symbol().getName() << " ($" << Strings::hex(v) << ")";
-            break;
-        }
+            case Expression::Value::Type::String: {
+                std::string s = val.string();
+                if (s.length() > 50)
+                    s = s.substr(0, 47) + "...";
+                ss << "\"" << s << "\"";
+                break;
+            }
+            case Expression::Value::Type::Bytes:
+                ss << format_sequence(val.bytes(), "{", "}", " ", true, true);
+                break;
+            case Expression::Value::Type::Words:
+                ss << format_sequence(val.words(), "W{", "}", " ", true, true);
+                break;
+            case Expression::Value::Type::Address:
+                ss << format_sequence(val.address(), "[", "]", ", ", true, true);
+                break;
+            case Expression::Value::Type::Register: {
+                std::string name = val.reg().getName();
+                uint16_t v = val.reg().read(m_debugger.get_core().get_cpu());
+                if (val.reg().is_16bit())
+                    ss << name << "=$" << Strings::hex(v) << " (" << v << ")";
+                else {
+                    ss << name << "=$" << Strings::hex((uint8_t)v) << " (" << v << ")";
+                    if (name == "F") {
+                        ss << " [";
+                        const char* syms = "SZYHXPNC";
+                        for (int i = 7; i >= 0; --i) {
+                            bool bit = (v >> i) & 1;
+                            ss << (bit ? syms[7-i] : '.');
+                        }
+                        ss << "]";
+                    }
+                }
+                break;
+            }
+            case Expression::Value::Type::Symbol: {
+                uint16_t v = val.symbol().read();
+                ss << val.symbol().getName() << " ($" << Strings::hex(v) << ")";
+                break;
+            }
         }
     }
     return ss.str();

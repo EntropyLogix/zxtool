@@ -245,13 +245,14 @@ private:
     
     void perform_evaluate(const std::string& expr, bool detailed);
     void perform_set(const std::string& args, bool detailed);
-    std::string format(const Expression::Value& val, bool detailed = false);
+    std::string format(const Expression::Value& val, bool detailed = false, const std::string& expr = "");
     bool is_assignment(const std::string& expr);
     
     // Format helpers
     void format_detailed_number(std::stringstream& ss, const Expression::Value& val);
     void format_detailed_address(std::stringstream& ss, const Expression::Value& val);
     void format_detailed_collection(std::stringstream& ss, const Expression::Value& val);
+    void format_variable_header(std::stringstream& ss, const Expression::Value& val, const std::string& expr);
     void print_asm_info(std::stringstream& ss, uint16_t addr);
     std::string format_disasm(uint16_t addr, const Z80Analyzer<Memory>::CodeLine& line);
     void update_crc32(uint32_t& crc, uint8_t b);
