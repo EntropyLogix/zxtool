@@ -16,6 +16,7 @@
 #include "../Cmd/Options.h"
 #include "../Core/Expression.h"
 #include "../Utils/Terminal.h"
+#include "../Utils/Strings.h"
 
 struct Theme {
     std::string header_focus = Terminal::rgb_fg(109, 222, 111) + Terminal::BOLD;
@@ -252,8 +253,6 @@ private:
     void format_detailed_address(std::stringstream& ss, const Expression::Value& val);
     void format_detailed_collection(std::stringstream& ss, const Expression::Value& val);
     void print_asm_info(std::stringstream& ss, uint16_t addr);
-    std::string format_hex_fixed(uint64_t v, int width);
-    std::string format_bin_fixed(uint64_t v, int wwidth);
     std::string format_disasm(uint16_t addr, const Z80Analyzer<Memory>::CodeLine& line);
     void update_crc32(uint32_t& crc, uint8_t b);
 
@@ -262,15 +261,7 @@ private:
     Terminal::Completion get_completions(const std::string& input);
     std::string calculate_hint(const std::string& input, std::string& color, int& error_pos);
 
-    struct ParamInfo {
-        int count = 0;
-        size_t last_comma_pos = 0;
-        size_t error_comma_pos = std::string::npos;
-        bool current_has_text = false;
-    };
-    void find_opener(const std::string& input, char& opener, size_t& opener_pos);
-    ParamInfo analyze_params(const std::string& input, size_t opener_pos, int max_args = -1);
-    std::string get_collection_hint(const std::string& input, const ParamInfo& info, char opener, const std::string& type_prefix);
+    std::string get_collection_hint(const std::string& input, const Strings::ParamInfo& info, char opener, const std::string& type_prefix);
 };
 
 class DebugEngine : public Engine {

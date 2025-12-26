@@ -481,13 +481,7 @@ Terminal::Completion Dashboard::get_completions(const std::string& input) {
 
         for (const auto& pair : m_commands) {
             const std::string& cmd = pair.first;
-            bool is_alnum = true;
-            for (char c : cmd) {
-                if (!isalnum(static_cast<unsigned char>(c)) && c != '_') {
-                    is_alnum = false;
-                    break;
-                }
-            }
+            bool is_alnum = Strings::is_identifier(cmd);
             bool req_sep = is_alnum;
 
             if (input.length() >= cmd.length()) {
@@ -657,61 +651,7 @@ Terminal::Completion Dashboard::get_completions(const std::string& input) {
         return result;
 }
 
-void Dashboard::find_opener(const std::string& input, char& opener, size_t& opener_pos) {
-    int depth_paren = 0;
-    int depth_bracket = 0;
-    int depth_brace = 0;
-    opener = 0;
-    opener_pos = std::string::npos;
-    
-    for (size_t i = input.length(); i > 0; --i) {
-        char c = input[i-1];
-        if (c == ')') depth_paren++;
-        else if (c == ']') depth_bracket++;
-        else if (c == '}') depth_brace++;
-        else if (c == '(') {
-            if (depth_paren > 0) depth_paren--;
-            else { opener = '('; opener_pos = i-1; break; }
-        }
-        else if (c == '[') {
-            if (depth_bracket > 0) depth_bracket--;
-            else { opener = '['; opener_pos = i-1; break; }
-        }
-        else if (c == '{') {
-            if (depth_brace > 0) depth_brace--;
-            else { opener = '{'; opener_pos = i-1; break; }
-        }
-    }
-}
-
-Dashboard::ParamInfo Dashboard::analyze_params(const std::string& input, size_t opener_pos, int max_args) {
-    ParamInfo info;
-    info.last_comma_pos = opener_pos;
-    int d = 0;
-    
-    for (size_t i = opener_pos + 1; i < input.length(); ++i) {
-        char c = input[i];
-        if (c == '(' || c == '[' || c == '{') d++;
-        else if (c == ')' || c == ']' || c == '}') d--;
-        else if (c == ',' && d == 0) {
-            info.count++;
-            if (max_args != -1 && info.count == max_args && info.error_comma_pos == std::string::npos) {
-                info.error_comma_pos = i;
-            }
-            info.last_comma_pos = i;
-        }
-    }
-    
-    for (size_t i = info.last_comma_pos + 1; i < input.length(); ++i) {
-        if (!std::isspace(static_cast<unsigned char>(input[i]))) {
-            info.current_has_text = true;
-            break;
-        }
-    }
-    return info;
-}
-
-std::string Dashboard::get_collection_hint(const std::string& input, const ParamInfo& info, char opener, const std::string& type_prefix) {
+std::string Dashboard::get_collection_hint(const std::string& input, const Strings::ParamInfo& info, char opener, const std::string& type_prefix) {
     char closer = (opener == '[') ? ']' : '}';
     std::string range_marker = (opener == '}') ? "end}" : "end]";
     
@@ -757,13 +697,12 @@ std::string Dashboard::calculate_hint(const std::string& input, std::string& hin
         }
 
         auto get_syntax_hint = [&]() -> std::string {
-            std::string trimmed = Strings::trim(input);
-            size_t space_pos = input.find_first_of(" \t");
-            if (space_pos != std::string::npos) {
-                std::string cmd = input.substr(0, space_pos);
+            auto parts = Strings::split_once(input, " \t");
+            if (parts.first.length() < input.length()) {
+                std::string cmd = parts.first;
                 auto it = m_commands.find(cmd);
                 if (it != m_commands.end() && !it->second.syntax.empty()) {
-                    std::string args = input.substr(space_pos + 1);
+                    std::string args = parts.second;
                     if (args.empty() || std::all_of(args.begin(), args.end(), [](unsigned char c){ return std::isspace(c); })) {
                         return it->second.syntax;
                     }
@@ -804,25 +743,18 @@ std::string Dashboard::calculate_hint(const std::string& input, std::string& hin
 
         char opener = 0;
         size_t opener_pos = std::string::npos;
-        find_opener(input, opener, opener_pos);
+        Strings::find_opener(input, opener, opener_pos);
 
         std::string context_hint;
         if (opener_pos != std::string::npos) {
             if (opener == '(') {
-                size_t end_func = input.find_last_not_of(" \t", opener_pos - 1);
-                if (end_func != std::string::npos) {
-                    size_t start_func = end_func;
-                    while (start_func > 0) {
-                        char c = input[start_func - 1];
-                        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') break;
-                        start_func--;
-                    }
-                    std::string func_name = input.substr(start_func, end_func - start_func + 1);
+                std::string func_name = Strings::find_preceding_word(input, opener_pos);
+                if (!func_name.empty()) {
                     std::string func_upper = Strings::upper(func_name);
                     const auto& funcs = Expression::get_functions();
                     auto it = funcs.find(func_upper);
                     if (it != funcs.end()) {
-                        ParamInfo info = analyze_params(input, opener_pos, it->second.num_args);
+                        Strings::ParamInfo info = Strings::analyze_params(input, opener_pos, it->second.num_args);
                         
                         if (it->second.num_args != -1 && info.count >= it->second.num_args) {
                              hint_color = Terminal::rgb_fg(255, 100, 100);
@@ -853,12 +785,12 @@ std::string Dashboard::calculate_hint(const std::string& input, std::string& hin
                     }
                 }
             } else if (opener == '[') {
-                ParamInfo info = analyze_params(input, opener_pos);
+                Strings::ParamInfo info = Strings::analyze_params(input, opener_pos);
                 context_hint = get_collection_hint(input, info, '[', "addr");
             } else if (opener == '{') {
                 bool is_word = (opener_pos > 0 && input[opener_pos-1] == 'W');
                 std::string type = is_word ? "word" : "byte";
-                ParamInfo info = analyze_params(input, opener_pos);
+                Strings::ParamInfo info = Strings::analyze_params(input, opener_pos);
                 context_hint = get_collection_hint(input, info, '{', type);
             }
         }
@@ -897,13 +829,7 @@ void Dashboard::perform_evaluate(const std::string& expr, bool detailed) {
         Expression::Value val = eval.evaluate(expr);
         
         if (detailed && !expr.empty() && expr[0] == '@') {
-            bool is_var = true;
-            for (size_t i = 1; i < expr.length(); ++i) {
-                if (!isalnum(expr[i]) && expr[i] != '_') {
-                    is_var = false;
-                    break;
-                }
-            }
+            bool is_var = Strings::is_identifier(expr.substr(1));
             if (is_var) {
                 m_output_buffer << "VARIABLE: " << expr << "\n";
                 std::string type_name = "Unknown";
@@ -929,16 +855,15 @@ void Dashboard::perform_set(const std::string& args_str, bool detailed) {
         m_output_buffer << "Error: Missing arguments for set command.\n";
         return;
     }
-    std::string lhs_str, rhs_str;
-    std::pair<std::string, std::string> parts;
-    if (args.find('=') != std::string::npos)
-        parts = Strings::split_once(args, '=');
-    else
-        parts = Strings::split_once(args, " \t");
-    lhs_str = Strings::trim(parts.first);
-    rhs_str = Strings::trim(parts.second);
+    size_t eq_pos = args.find('=');
+    if (eq_pos == std::string::npos) {
+        m_output_buffer << "Error: Invalid syntax for set. '=' is required. Use: set <target> = <value>\n";
+        return;
+    }
+    std::string lhs_str = Strings::trim(args.substr(0, eq_pos));
+    std::string rhs_str = Strings::trim(args.substr(eq_pos + 1));
     if (lhs_str.empty() || rhs_str.empty()) {
-        m_output_buffer << "Error: Invalid syntax for set. Use: set <target> [=] <value>\n";
+        m_output_buffer << "Error: Invalid syntax for set. Use: set <target> = <value>\n";
         return;
     }
     try {
@@ -957,14 +882,14 @@ void Dashboard::cmd_evaluate(const std::string& args) {
 }
 
 void Dashboard::cmd_expression(const std::string& args) {
-    if (is_assignment(args))
+    if (Strings::is_assignment(args))
         perform_set(args, false);
     else
         perform_evaluate(args, false);
 }
 
 void Dashboard::cmd_expression_detailed(const std::string& args) {
-    if (is_assignment(args))
+    if (Strings::is_assignment(args))
         perform_set(args, true);
     else
         perform_evaluate(args, true);
@@ -1408,28 +1333,6 @@ void Dashboard::print_asm_info(std::stringstream& ss, uint16_t addr) {
     }
 }
 
-std::string Dashboard::format_hex_fixed(uint64_t v, int w) {
-    std::stringstream hss;
-    hss << std::hex << std::uppercase << std::setfill('0');
-    if (w == 8) hss << std::setw(2) << (v & 0xFF);
-    else if (w == 16) hss << std::setw(4) << (v & 0xFFFF);
-    else if (w == 32) {
-        hss << std::setw(8) << (v & 0xFFFFFFFF);
-    } else {
-        hss << std::setw(16) << v;
-    }
-    return hss.str();
-}
-
-std::string Dashboard::format_bin_fixed(uint64_t v, int bits) {
-    std::string b;
-    for (int i = bits - 1; i >= 0; --i) {
-        b += ((v >> i) & 1) ? '1' : '0';
-        if (i > 0 && i % 8 == 0) b += " ";
-    }
-    return b;
-}
-
 std::string Dashboard::format_disasm(uint16_t addr, const Z80Analyzer<Memory>::CodeLine& line) {
     std::stringstream lss;
     lss << "$" << Strings::hex(addr) << ": ";
@@ -1482,15 +1385,15 @@ void Dashboard::format_detailed_number(std::stringstream& ss, const Expression::
         else if (i_val >= std::numeric_limits<int32_t>::min() && i_val <= std::numeric_limits<uint32_t>::max()) width = 32;
     }
     
-    ss << "VALUE: $" << format_hex_fixed((uint64_t)i_val, width) << " (" << std::dec << i_val << ") | Number (" << width << "-bit)\n";
+    ss << "VALUE: $" << Strings::hex((uint64_t)i_val, width) << " (" << std::dec << i_val << ") | Number (" << width << "-bit)\n";
     ss << "------------------------------------------------------------\n";
     ss << "Signed:  " << (i_val >= 0 ? "+" : "") << i_val << "\n";
 
     if (width == 64) {
-        ss << "Binary:  Hi: %" << format_bin_fixed((uint64_t)i_val >> 32, 32) << "\n";
-        ss << "         Lo: %" << format_bin_fixed((uint64_t)i_val & 0xFFFFFFFF, 32);
+        ss << "Binary:  Hi: %" << Strings::bin((uint64_t)i_val >> 32, 32) << "\n";
+        ss << "         Lo: %" << Strings::bin((uint64_t)i_val & 0xFFFFFFFF, 32);
     } else {
-        ss << "Binary:  %" << format_bin_fixed((uint64_t)i_val, width);
+        ss << "Binary:  %" << Strings::bin((uint64_t)i_val, width);
         if (width == 8) ss << " (bits 7..0)";
         else if (width == 16) ss << " (bits 15..0)";
         
@@ -1924,49 +1827,4 @@ std::string Dashboard::format(const Expression::Value& val, bool detailed) {
         }
     }
     return ss.str();
-}
-
-bool Dashboard::is_assignment(const std::string& expr) {
-    int depth = 0;
-    bool in_string = false;
-
-    for (size_t i = 0; i < expr.length(); ++i) {
-        char c = expr[i];
-        if (in_string) {
-            if (c == '"')
-                in_string = false;
-            continue;
-        }
-        if (c == '"') {
-            in_string = true;
-            continue;
-        }
-        if (c == '\'') {
-            if (i + 2 < expr.length() && expr[i+2] == '\'') {
-                i += 2;
-            }
-            continue;
-        }
-        if (c == '(' || c == '[' || c == '{') {
-            depth++;
-        } else if (c == ')' || c == ']' || c == '}') {
-            depth--;
-        } else if (c == '=' && depth == 0) {
-            bool is_cmp = false;
-            if (i > 0) {
-                char prev = expr[i-1];
-                if (prev == '!' || prev == '<' || prev == '>' || prev == '=')
-                    is_cmp = true;
-            }
-            if (i + 1 < expr.length()) {
-                char next = expr[i+1];
-                if (next == '=')
-                    is_cmp = true;
-            }
-            if (!is_cmp) {
-                return true;
-            }
-        }
-    }
-    return false;
 }

@@ -19,6 +19,16 @@ std::string Strings::hex(uint16_t v) {
     return ss.str();
 }
 
+std::string Strings::hex(uint64_t v, int bit_width) {
+    std::stringstream ss;
+    ss << std::hex << std::uppercase << std::setfill('0');
+    if (bit_width == 8) ss << std::setw(2) << (v & 0xFF);
+    else if (bit_width == 16) ss << std::setw(4) << (v & 0xFFFF);
+    else if (bit_width == 32) ss << std::setw(8) << (v & 0xFFFFFFFF);
+    else ss << std::setw(16) << v;
+    return ss.str();
+}
+
 std::string Strings::bin(uint8_t v) {
     char buffer[9];
     buffer[8] = '\0';
@@ -37,6 +47,15 @@ std::string Strings::bin(uint16_t v) {
         v >>= 1;
     }
     return std::string(buffer);
+}
+
+std::string Strings::bin(uint64_t v, int bit_width) {
+    std::string b;
+    for (int i = bit_width - 1; i >= 0; --i) {
+        b += ((v >> i) & 1) ? '1' : '0';
+        if (i > 0 && i % 8 == 0) b += " ";
+    }
+    return b;
 }
 
 size_t Strings::length(const std::string& s, bool visible) {
@@ -200,4 +219,126 @@ std::pair<std::string, std::string> Strings::split_once(const std::string& s, co
     if (pos == std::string::npos)
         return {s, ""};
     return {s.substr(0, pos), s.substr(pos + 1)};
+}
+
+void Strings::find_opener(const std::string& input, char& opener, size_t& opener_pos) {
+    int depth_paren = 0;
+    int depth_bracket = 0;
+    int depth_brace = 0;
+    opener = 0;
+    opener_pos = std::string::npos;
+    
+    for (size_t i = input.length(); i > 0; --i) {
+        char c = input[i-1];
+        if (c == ')') depth_paren++;
+        else if (c == ']') depth_bracket++;
+        else if (c == '}') depth_brace++;
+        else if (c == '(') {
+            if (depth_paren > 0) depth_paren--;
+            else { opener = '('; opener_pos = i-1; break; }
+        }
+        else if (c == '[') {
+            if (depth_bracket > 0) depth_bracket--;
+            else { opener = '['; opener_pos = i-1; break; }
+        }
+        else if (c == '{') {
+            if (depth_brace > 0) depth_brace--;
+            else { opener = '{'; opener_pos = i-1; break; }
+        }
+    }
+}
+
+Strings::ParamInfo Strings::analyze_params(const std::string& input, size_t opener_pos, int max_args) {
+    ParamInfo info;
+    info.last_comma_pos = opener_pos;
+    int d = 0;
+    
+    for (size_t i = opener_pos + 1; i < input.length(); ++i) {
+        char c = input[i];
+        if (c == '(' || c == '[' || c == '{') d++;
+        else if (c == ')' || c == ']' || c == '}') d--;
+        else if (c == ',' && d == 0) {
+            info.count++;
+            if (max_args != -1 && info.count == max_args && info.error_comma_pos == std::string::npos) {
+                info.error_comma_pos = i;
+            }
+            info.last_comma_pos = i;
+        }
+    }
+    
+    for (size_t i = info.last_comma_pos + 1; i < input.length(); ++i) {
+        if (!std::isspace(static_cast<unsigned char>(input[i]))) {
+            info.current_has_text = true;
+            break;
+        }
+    }
+    return info;
+}
+
+bool Strings::is_assignment(const std::string& expr) {
+    int depth = 0;
+    bool in_string = false;
+
+    for (size_t i = 0; i < expr.length(); ++i) {
+        char c = expr[i];
+        if (in_string) {
+            if (c == '"')
+                in_string = false;
+            continue;
+        }
+        if (c == '"') {
+            in_string = true;
+            continue;
+        }
+        if (c == '\'') {
+            if (i + 2 < expr.length() && expr[i+2] == '\'') {
+                i += 2;
+            }
+            continue;
+        }
+        if (c == '(' || c == '[' || c == '{') {
+            depth++;
+        } else if (c == ')' || c == ']' || c == '}') {
+            depth--;
+        } else if (c == '=' && depth == 0) {
+            bool is_cmp = false;
+            if (i > 0) {
+                char prev = expr[i-1];
+                if (prev == '!' || prev == '<' || prev == '>' || prev == '=')
+                    is_cmp = true;
+            }
+            if (i + 1 < expr.length()) {
+                char next = expr[i+1];
+                if (next == '=')
+                    is_cmp = true;
+            }
+            if (!is_cmp) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+std::string Strings::find_preceding_word(const std::string& input, size_t pos) {
+    if (pos == 0) return "";
+    size_t end = input.find_last_not_of(" \t", pos - 1);
+    if (end == std::string::npos) return "";
+    
+    size_t start = end;
+    while (start > 0) {
+        char c = input[start - 1];
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') break;
+        start--;
+    }
+    return input.substr(start, end - start + 1);
+}
+
+bool Strings::is_identifier(const std::string& s) {
+    for (char c : s) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') {
+            return false;
+        }
+    }
+    return true;
 }
