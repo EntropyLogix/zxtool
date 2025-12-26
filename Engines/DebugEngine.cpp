@@ -450,6 +450,25 @@ void Dashboard::run() {
     m_editor.history_save(HISTORY_FILE);
 }
 
+void Dashboard::complete_options(const std::string& full_input, int param_index, const std::string& arg_full, Terminal::Completion& result) {
+    std::string prefix = Strings::trim(arg_full);
+    result.prefix = prefix;
+    if (param_index == 0) {
+        std::vector<std::string> opts = {"colors", "syntax"};
+        for (const auto& o : opts) if (o.find(prefix) == 0) result.candidates.push_back(o);
+    } else if (param_index == 1) {
+        std::stringstream ss(full_input);
+        std::string cmd, first_arg;
+        ss >> cmd >> first_arg;
+        
+        std::vector<std::string> opts;
+        if (Strings::lower(first_arg) == "syntax") opts = {"intel", "zilog"};
+        else opts = {"on", "off"};
+        
+        for (const auto& o : opts) if (o.find(prefix) == 0) result.candidates.push_back(o);
+    }
+}
+
 Terminal::Completion Dashboard::get_completions(const std::string& input) {
     static constexpr const char* SEPARATORS = " \t,()[]{}+-*/%^&|~<>!=:";
 
@@ -491,30 +510,80 @@ Terminal::Completion Dashboard::get_completions(const std::string& input) {
 
         if (command_found) {
             std::string arg_full = input.substr(best_cmd.length());
-            
-            if (best_cmd == "eval" || best_cmd == "?" || best_cmd == "??" || 
-                best_cmd == "set" || best_cmd == "watch" || best_cmd == "break") {
-                
-                result.is_custom_context = true;
-                
-                size_t last_sep = arg_full.find_last_of(SEPARATORS);
-                size_t start_idx = (last_sep == std::string::npos) ? 0 : last_sep + 1;
-                std::string raw_prefix = arg_full.substr(start_idx);
-                
-                size_t first_non_space = raw_prefix.find_first_not_of(" \t");
-                if (first_non_space == std::string::npos) {
-                    result.prefix = "";
-                    result.replace_pos = (int)(best_cmd.length() + start_idx + raw_prefix.length());
-                } else {
-                    result.prefix = Strings::trim(raw_prefix);
-                    result.replace_pos = (int)(best_cmd.length() + start_idx + first_non_space);
+            const auto& entry = m_commands.at(best_cmd);
+
+            // Determine which parameter we are completing
+            int param_index = 0;
+            size_t current_arg_start = 0;
+            int bracket_depth = 0;
+            bool in_quote = false;
+            bool is_set = (best_cmd == "set");
+
+            // Skip initial whitespace
+            size_t i = 0;
+            while (i < arg_full.length() && std::isspace(arg_full[i])) i++;
+            current_arg_start = i;
+
+            for (; i < arg_full.length(); ++i) {
+                char c = arg_full[i];
+                if (c == '"') in_quote = !in_quote;
+                else if (!in_quote) {
+                    if (c == '[' || c == '(' || c == '{') bracket_depth++;
+                    else if (c == ']' || c == ')' || c == '}') { if (bracket_depth > 0) bracket_depth--; }
+                    else if (bracket_depth == 0) {
+                        bool is_sep = std::isspace(c);
+                        if (is_set && c == '=') is_sep = true;
+
+                        if (is_sep) {
+                            // Check if we are actually moving to a new argument
+                            // If we are at the end of the string, we are still in the current arg (or starting new if space was last char)
+                            // But get_completions is called with input up to cursor.
+                            // If the last char is space/sep, we are starting a new arg.
+                            
+                            // We consume the separator(s)
+                            size_t next_start = i + 1;
+                            while (next_start < arg_full.length() && std::isspace(arg_full[next_start])) next_start++;
+                            
+                            // If we have reached the end of the string, it means the cursor is after a separator
+                            // so we are indeed in the next parameter.
+                            if (next_start == arg_full.length()) {
+                                param_index++;
+                                current_arg_start = next_start;
+                                break;
+                            }
+                            
+                            // If there is more text, we advance
+                            param_index++;
+                            current_arg_start = next_start;
+                            i = next_start - 1;
+                        }
+                    }
                 }
+            }
+
+            CompletionType type = CTX_NONE;
+            if (param_index < (int)entry.param_types.size()) {
+                type = entry.param_types[param_index];
+            } else if (!entry.param_types.empty() && entry.param_types.back() == CTX_EXPRESSION) {
+                type = CTX_EXPRESSION;
+            }
+            
+            if (type == CTX_EXPRESSION) {
+                result.is_custom_context = true;
+                std::string current_arg = arg_full.substr(current_arg_start);
+                size_t last_sep = current_arg.find_last_of(SEPARATORS);
+                size_t start_idx = (last_sep == std::string::npos) ? 0 : last_sep + 1;
+                std::string raw_prefix = current_arg.substr(start_idx);
+                
+                result.prefix = Strings::trim(raw_prefix);
+                result.replace_pos = (int)(best_cmd.length() + current_arg_start + start_idx + (raw_prefix.length() - result.prefix.length()));
+                if (result.prefix.empty()) result.replace_pos = (int)input.length();
 
                 std::string prefix_upper = Strings::upper(result.prefix);
                 
                 // Functions
                 for (const auto& pair : Expression::get_functions()) {
-                    if (pair.first.find(prefix_upper) == 0) result.candidates.push_back(pair.first);
+                    if (Strings::upper(pair.first).find(prefix_upper) == 0) result.candidates.push_back(pair.first);
                 }
                 
                 // Registers
@@ -543,6 +612,27 @@ Terminal::Completion Dashboard::get_completions(const std::string& input) {
                     std::string sym_upper = Strings::upper(pair.first);
                     if (sym_upper.find(prefix_upper) == 0) result.candidates.push_back(pair.first);
                 }
+            } else if (type == CTX_SYMBOL) {
+                result.is_custom_context = true;
+                std::string current_arg = arg_full.substr(current_arg_start);
+                result.prefix = Strings::trim(current_arg);
+                result.replace_pos = (int)(best_cmd.length() + current_arg_start);
+                std::string prefix_upper = Strings::upper(result.prefix);
+
+                auto& symbols = m_debugger.get_core().get_context().getSymbols();
+                for (const auto& pair : symbols.by_name()) {
+                    if (Strings::upper(pair.first).find(prefix_upper) == 0) result.candidates.push_back(pair.first);
+                }
+                auto& vars = m_debugger.get_core().get_context().getVariables();
+                for (const auto& pair : vars.by_name()) {
+                    std::string var_name = "@" + pair.first;
+                    if (Strings::upper(var_name).find(prefix_upper) == 0) result.candidates.push_back(var_name);
+                }
+            } else if (type == CTX_CUSTOM && entry.custom_completer) {
+                result.is_custom_context = true;
+                std::string current_arg = arg_full.substr(current_arg_start);
+                result.replace_pos = (int)(best_cmd.length() + current_arg_start);
+                entry.custom_completer(input, param_index, current_arg, result);
             }
         } else {
             size_t first_non_space = input.find_first_not_of(" \t");
@@ -685,6 +775,16 @@ std::string Dashboard::calculate_hint(const std::string& input, std::string& hin
         if (!res.is_custom_context) {
             if (!completion_hint.empty()) return completion_hint;
             return get_syntax_hint();
+        }
+
+        if (res.is_custom_context && res.prefix.empty() && !res.candidates.empty() && res.candidates.size() <= 10) {
+             std::string hint;
+             for(size_t i=0; i<res.candidates.size(); ++i) {
+                 if (i > 0) hint += "|";
+                 hint += res.candidates[i];
+                 if (hint.length() > 30) { hint += "..."; break; }
+             }
+             return hint;
         }
 
         std::string operator_hint;
@@ -909,6 +1009,48 @@ void Dashboard::cmd_options(const std::string& args) {
         m_output_buffer << "Timeout:         " << opts.timeout << "s\n";
     } else {
         m_output_buffer << "No configurable options available.\n";
+    }
+}
+
+void Dashboard::cmd_watch(const std::string& args) {
+    if (args.empty()) {
+        m_show_watch = !m_show_watch;
+        return;
+    }
+    try {
+        Expression eval(m_debugger.get_core());
+        auto val = eval.evaluate(args);
+        uint16_t addr = 0;
+        if (val.is_address() && !val.address().empty()) addr = val.address()[0];
+        else if (val.is_number()) addr = (uint16_t)val.number();
+        else if (val.is_symbol()) addr = val.symbol().read();
+        else { m_output_buffer << "Invalid address.\n"; return; }
+        m_debugger.add_watch(addr);
+        m_show_watch = true;
+        m_output_buffer << "Watch added: $" << Strings::hex(addr) << "\n";
+    } catch (const std::exception& e) {
+        m_output_buffer << "Error: " << e.what() << "\n";
+    }
+}
+
+void Dashboard::cmd_break(const std::string& args) {
+    if (args.empty()) {
+        m_show_breakpoints = !m_show_breakpoints;
+        return;
+    }
+    try {
+        Expression eval(m_debugger.get_core());
+        auto val = eval.evaluate(args);
+        uint16_t addr = 0;
+        if (val.is_address() && !val.address().empty()) addr = val.address()[0];
+        else if (val.is_number()) addr = (uint16_t)val.number();
+        else if (val.is_symbol()) addr = val.symbol().read();
+        else { m_output_buffer << "Invalid address.\n"; return; }
+        m_debugger.add_breakpoint(addr);
+        m_show_breakpoints = true;
+        m_output_buffer << "Breakpoint set: $" << Strings::hex(addr) << "\n";
+    } catch (const std::exception& e) {
+        m_output_buffer << "Error: " << e.what() << "\n";
     }
 }
 

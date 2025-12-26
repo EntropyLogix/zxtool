@@ -167,15 +167,20 @@ public:
     {
         m_debugger.set_logger([this](const std::string& msg){ log(msg); });
         m_commands = {
-            {"evaluate", {&Dashboard::cmd_evaluate, true, "expression"}},
-            {"eval", {&Dashboard::cmd_evaluate, true, "expression"}},
-            {"quit", {&Dashboard::cmd_quit, true, ""}},
-            {"q", {&Dashboard::cmd_quit, true, ""}},
-            {"set", {&Dashboard::cmd_set, true, "target = value"}},
-            {"undef", {&Dashboard::cmd_undef, true, "symbol"}},
-            {"?", {&Dashboard::cmd_expression, false, "expression"}},
-            {"??", {&Dashboard::cmd_expression_detailed, false, "expression"}},
-            {"options", {&Dashboard::cmd_options, false, "[subcommand]"}}
+            {"evaluate", {&Dashboard::cmd_evaluate, true, "expression", {CTX_EXPRESSION}}},
+            {"eval", {&Dashboard::cmd_evaluate, true, "expression", {CTX_EXPRESSION}}},
+            {"quit", {&Dashboard::cmd_quit, true, "", {}}},
+            {"q", {&Dashboard::cmd_quit, true, "", {}}},
+            {"set", {&Dashboard::cmd_set, true, "target = value", {CTX_EXPRESSION, CTX_EXPRESSION, CTX_EXPRESSION}}},
+            {"undef", {&Dashboard::cmd_undef, true, "symbol", {CTX_SYMBOL}}},
+            {"?", {&Dashboard::cmd_expression, false, "expression", {CTX_EXPRESSION}}},
+            {"??", {&Dashboard::cmd_expression_detailed, false, "expression", {CTX_EXPRESSION}}},
+            {"options", {&Dashboard::cmd_options, false, "color|syntax", {CTX_CUSTOM, CTX_CUSTOM}, 
+                [this](const std::string& f, int i, const std::string& a, Terminal::Completion& r){ complete_options(f, i, a, r); }
+            }},
+            {"watch", {&Dashboard::cmd_watch, true, "address", {CTX_EXPRESSION}}},
+            {"break", {&Dashboard::cmd_break, true, "address", {CTX_EXPRESSION}}},
+            {"b", {&Dashboard::cmd_break, true, "address", {CTX_EXPRESSION}}}
         };
     }
     void run();
@@ -199,10 +204,15 @@ private:
     bool m_show_watch = false;
     bool m_show_breakpoints = false;
     bool m_auto_follow = true;
+    
+    enum CompletionType { CTX_NONE, CTX_EXPRESSION, CTX_SYMBOL, CTX_CUSTOM };
+
     struct CommandEntry {
         void (Dashboard::*handler)(const std::string&);
         bool require_separator;
         std::string syntax;
+        std::vector<CompletionType> param_types;
+        std::function<void(const std::string& full_input, int param_index, const std::string& args, Terminal::Completion& result)> custom_completer = nullptr;
     };
     std::map<std::string, CommandEntry> m_commands;
     Terminal::LineEditor m_editor;
@@ -228,6 +238,9 @@ private:
     void cmd_set(const std::string& args);
     void cmd_undef(const std::string& args);
     void cmd_options(const std::string& args);
+    void cmd_watch(const std::string& args);
+    void cmd_break(const std::string& args);
+    void complete_options(const std::string& full_input, int param_index, const std::string& args, Terminal::Completion& result);
     
     void perform_evaluate(const std::string& expr, bool detailed);
     void perform_set(const std::string& args, bool detailed);
