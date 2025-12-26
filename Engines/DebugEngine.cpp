@@ -765,7 +765,7 @@ std::string Dashboard::calculate_hint(const std::string& input, std::string& hin
                 if (it != m_commands.end() && !it->second.syntax.empty()) {
                     std::string args = input.substr(space_pos + 1);
                     if (args.empty() || std::all_of(args.begin(), args.end(), [](unsigned char c){ return std::isspace(c); })) {
-                        return args.empty() ? (" " + it->second.syntax) : it->second.syntax;
+                        return it->second.syntax;
                     }
                 }
             }
