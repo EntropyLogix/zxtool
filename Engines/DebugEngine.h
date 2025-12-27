@@ -17,6 +17,10 @@
 #include "../Core/Expression.h"
 #include "../Utils/Terminal.h"
 #include "../Utils/Strings.h"
+#include "../Utils/Commands.h"
+#include "Autocompletion.h"
+#include "Hint.h"
+#include "Debugger.h"
 
 struct Theme {
     std::string header_focus = Terminal::rgb_fg(109, 222, 111) + Terminal::BOLD;
@@ -107,58 +111,10 @@ private:
     bool m_pc_moved = false;
 };
 
-class Debugger {
-public:
-    using Logger = std::function<void(const std::string&)>;
-    struct Breakpoint
-    {
-        uint16_t addr;
-        bool enabled;
-    };
-
-    Debugger(Core& core, const Options& options) : m_core(core), m_options(options) { m_prev_state = m_core.get_cpu().save_state(); }
-    ~Debugger() = default;
-
-    void set_logger(Logger logger) { m_logger = logger; }
-    Core& get_core() { return m_core; }
-    const Options& get_options() const { return m_options; }
-    const std::vector<Breakpoint>& get_breakpoints() const { return m_breakpoints; }
-    const std::vector<uint16_t>& get_watches() const { return m_watches; }
-    uint16_t get_last_pc() const { return m_last_pc; }
-    bool has_history() const { return m_has_history; }
-    bool pc_moved() const { return m_pc_moved; }
-    uint64_t get_tstates() const { return m_core.get_cpu().get_ticks(); }
-    const Core::CpuType::State& get_prev_state() const { return m_prev_state; }
-
-    void add_breakpoint(uint16_t addr) { m_breakpoints.push_back({addr, true}); }
-    void remove_breakpoint(uint16_t addr) {
-        m_breakpoints.erase(std::remove_if(m_breakpoints.begin(), m_breakpoints.end(), 
-            [addr](const Breakpoint& b){ return b.addr == addr; }), m_breakpoints.end());
-    }
-    void add_watch(uint16_t addr) { m_watches.push_back(addr); }
-    void remove_watch(uint16_t addr) {
-        m_watches.erase(std::remove(m_watches.begin(), m_watches.end(), addr), m_watches.end());
-    }
-    bool check_breakpoints(uint16_t pc);
-    void step(int n);
-    void next();
-
-private:
-    Core& m_core;
-    const Options& m_options;
-    Logger m_logger;
-    std::vector<Breakpoint> m_breakpoints;
-    std::vector<uint16_t> m_watches;
-    uint16_t m_last_pc = 0;
-    bool m_has_history = false;
-    bool m_pc_moved = false;
-    Core::CpuType::State m_prev_state;
-
-    void log(const std::string& msg) { if (m_logger) m_logger(msg); }
-};
-
 class Dashboard {
 public:
+    friend class Autocompletion;
+    friend class Hint;
     Dashboard(Debugger& debugger) 
         : m_debugger(debugger)
         , m_memory_view(debugger.get_core(), 4, m_theme)
@@ -177,7 +133,7 @@ public:
             {"?", {&Dashboard::cmd_expression, false, "expression", {CTX_EXPRESSION}}},
             {"??", {&Dashboard::cmd_expression_detailed, false, "expression", {CTX_EXPRESSION}}},
             {"options", {&Dashboard::cmd_options, false, "color|syntax", {CTX_CUSTOM, CTX_CUSTOM}, 
-                [this](const std::string& f, int i, const std::string& a, Terminal::Completion& r){ complete_options(f, i, a, r); }
+                [this](const std::string& f, int i, const std::string& a, Terminal::Completion& r){ m_autocompletion.complete_options(f, i, a, r); }
             }},
             {"watch", {&Dashboard::cmd_watch, true, "address", {CTX_EXPRESSION}}},
             {"break", {&Dashboard::cmd_break, true, "address", {CTX_EXPRESSION}}},
@@ -217,6 +173,8 @@ private:
     };
     std::map<std::string, CommandEntry> m_commands;
     Terminal::LineEditor m_editor;
+    Autocompletion m_autocompletion{ *this };
+    Hint m_hint{ *this };
     
     void validate_focus();
     void handle_command(const std::string& input);
@@ -241,7 +199,6 @@ private:
     void cmd_options(const std::string& args);
     void cmd_watch(const std::string& args);
     void cmd_break(const std::string& args);
-    void complete_options(const std::string& full_input, int param_index, const std::string& args, Terminal::Completion& result);
     
     void perform_evaluate(const std::string& expr, bool detailed);
     void perform_set(const std::string& args, bool detailed);
@@ -258,11 +215,6 @@ private:
     void update_crc32(uint32_t& crc, uint8_t b);
 
     template <typename T> std::string format_sequence(const std::vector<T>& data, const std::string& prefix, const std::string& suffix, const std::string& separator, bool use_hex_prefix, bool allow_step_gt_1);
-
-    Terminal::Completion get_completions(const std::string& input);
-    std::string calculate_hint(const std::string& input, std::string& color, int& error_pos);
-
-    std::string get_collection_hint(const std::string& input, const Strings::ParamInfo& info, char opener, const std::string& type_prefix);
 };
 
 class DebugEngine : public Engine {

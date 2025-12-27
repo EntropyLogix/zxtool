@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include "../Utils/Strings.h"
+#include "../Utils/Commands.h"
 #include "../Utils/Terminal.h"
 #include "../Utils/Checksum.h"
 #include "../Core/Expression.h"
@@ -325,59 +326,6 @@ void CodeView::scroll(int delta) {
     }
 }
 
-bool Debugger::check_breakpoints(uint16_t pc) {
-    for (const auto& bp : m_breakpoints)
-        if (bp.enabled && bp.addr == pc)
-            return true;
-    return false;
-}
-
-void Debugger::step(int n) {
-    m_prev_state = m_core.get_cpu().save_state();
-    for (int i = 0; i < n; ++i) {
-        if (i > 0 && check_breakpoints(m_core.get_cpu().get_PC()))
-            break;
-        uint16_t pc_before = m_core.get_cpu().get_PC();
-        m_core.get_cpu().step();
-        uint16_t pc_after = m_core.get_cpu().get_PC();
-        m_last_pc = pc_before;
-        m_has_history = true;
-        m_pc_moved = (pc_before != pc_after);
-    }
-}
-
-void Debugger::next() {
-    m_prev_state = m_core.get_cpu().save_state();
-    uint16_t pc_before = m_core.get_cpu().get_PC();
-        
-    uint16_t temp_pc = pc_before;
-    auto line = m_core.get_analyzer().parse_instruction(temp_pc);
-        
-    if (line.mnemonic.empty()) { 
-        m_core.get_cpu().step(); 
-    }
-    else {
-        using Type = Z80Analyzer<Memory>::CodeLine::Type;
-        bool is_call = line.has_flag(Type::CALL);
-        bool is_block = line.has_flag(Type::BLOCK);
-
-        if (is_call || is_block) {
-            uint16_t next_pc = temp_pc;
-            log("Stepping over... (Target: " + Strings::hex(next_pc) + ")");
-            while (m_core.get_cpu().get_PC() != next_pc) {
-                if (check_breakpoints(m_core.get_cpu().get_PC()))
-                    break;
-                m_core.get_cpu().step();
-            }
-        } else
-            m_core.get_cpu().step();
-    }
-    uint16_t pc_after = m_core.get_cpu().get_PC();
-    m_last_pc = pc_before;
-    m_has_history = true;
-    m_pc_moved = (pc_before != pc_after);
-}
-
 void Dashboard::draw_prompt() {
     std::string prompt = (m_focus == FOCUS_CMD) ? (m_theme.header_focus + "[COMMAND] " + Terminal::RESET) : (Terminal::RESET + m_theme.header_blur + "[COMMAND] " + Terminal::RESET);
     m_editor.draw(prompt);
@@ -419,8 +367,8 @@ bool Dashboard::scroll_down() {
 
 void Dashboard::run() {
     m_editor.history_load(HISTORY_FILE);
-    m_editor.set_completion_callback([this](const std::string& input) { return get_completions(input); });
-    m_editor.set_hint_callback([this](const std::string& input, std::string& color, int& error_pos) { return calculate_hint(input, color, error_pos); });
+    m_editor.set_completion_callback([this](const std::string& input) { return m_autocompletion.get(input); });
+    m_editor.set_hint_callback([this](const std::string& input, std::string& color, int& error_pos) { return m_hint.calculate(input, color, error_pos); });
     update_code_view();
     m_memory_view.set_address(m_debugger.get_core().get_cpu().get_PC());
     m_stack_view.set_address(m_debugger.get_core().get_cpu().get_SP());
@@ -481,385 +429,6 @@ void Dashboard::run() {
     m_editor.history_save(HISTORY_FILE);
 }
 
-void Dashboard::complete_options(const std::string& full_input, int param_index, const std::string& arg_full, Terminal::Completion& result) {
-    std::string prefix = Strings::trim(arg_full);
-    result.prefix = prefix;
-    if (param_index == 0) {
-        std::vector<std::string> opts = {"colors", "syntax"};
-        for (const auto& o : opts)
-            if (o.find(prefix) == 0)
-                result.candidates.push_back(o);
-    } else if (param_index == 1) {
-        std::stringstream ss(full_input);
-        std::string cmd, first_arg;
-        ss >> cmd >> first_arg;
-        std::vector<std::string> opts;
-        if (Strings::lower(first_arg) == "syntax")
-            opts = {"intel", "zilog"};
-        else
-            opts = {"on", "off"};
-        for (const auto& o : opts)
-            if (o.find(prefix) == 0)
-                result.candidates.push_back(o);
-    }
-}
-
-Terminal::Completion Dashboard::get_completions(const std::string& input) {
-    static constexpr const char* SEPARATORS = " \t,()[]{}+-*/%^&|~<>!=:";
-
-    Terminal::Completion result;
-        std::string trimmed_input = Strings::trim(input);
-        if (trimmed_input.empty()) return result;
-
-        std::string best_cmd;
-        bool command_found = false;
-
-        for (const auto& pair : m_commands) {
-            const std::string& cmd = pair.first;
-            bool is_alnum = Strings::is_identifier(cmd);
-            bool req_sep = is_alnum;
-
-            if (input.length() >= cmd.length()) {
-                if (input.compare(0, cmd.length(), cmd) == 0) {
-                    bool is_match = false;
-                    if (req_sep) {
-                        if (input.length() > cmd.length() && std::isspace(static_cast<unsigned char>(input[cmd.length()]))) {
-                            is_match = true;
-                        }
-                    } else {
-                        is_match = true;
-                    }
-                    if (is_match && cmd.length() > best_cmd.length()) {
-                        best_cmd = cmd;
-                        command_found = true;
-                    }
-                }
-            }
-        }
-
-        if (command_found) {
-            std::string arg_full = input.substr(best_cmd.length());
-            const auto& entry = m_commands.at(best_cmd);
-
-            // Determine which parameter we are completing
-            int param_index = 0;
-            size_t current_arg_start = 0;
-            int bracket_depth = 0;
-            bool in_quote = false;
-            bool is_set = (best_cmd == "set");
-
-            // Skip initial whitespace
-            size_t i = 0;
-            while (i < arg_full.length() && std::isspace(arg_full[i])) i++;
-            current_arg_start = i;
-
-            for (; i < arg_full.length(); ++i) {
-                char c = arg_full[i];
-                if (c == '"') in_quote = !in_quote;
-                else if (!in_quote) {
-                    if (c == '[' || c == '(' || c == '{') bracket_depth++;
-                    else if (c == ']' || c == ')' || c == '}') { if (bracket_depth > 0) bracket_depth--; }
-                    else if (bracket_depth == 0) {
-                        bool is_sep = std::isspace(c);
-                        if (is_set && c == '=') is_sep = true;
-
-                        if (is_sep) {
-                            // Check if we are actually moving to a new argument
-                            // If we are at the end of the string, we are still in the current arg (or starting new if space was last char)
-                            // But get_completions is called with input up to cursor.
-                            // If the last char is space/sep, we are starting a new arg.
-                            
-                            // We consume the separator(s)
-                            size_t next_start = i + 1;
-                            while (next_start < arg_full.length() && std::isspace(arg_full[next_start])) next_start++;
-                            
-                            // If we have reached the end of the string, it means the cursor is after a separator
-                            // so we are indeed in the next parameter.
-                            if (next_start == arg_full.length()) {
-                                param_index++;
-                                current_arg_start = next_start;
-                                break;
-                            }
-                            
-                            // If there is more text, we advance
-                            param_index++;
-                            current_arg_start = next_start;
-                            i = next_start - 1;
-                        }
-                    }
-                }
-            }
-
-            CompletionType type = CTX_NONE;
-            if (param_index < (int)entry.param_types.size()) {
-                type = entry.param_types[param_index];
-            } else if (!entry.param_types.empty() && entry.param_types.back() == CTX_EXPRESSION) {
-                type = CTX_EXPRESSION;
-            }
-            
-            if (type == CTX_EXPRESSION) {
-                result.is_custom_context = true;
-                std::string current_arg = arg_full.substr(current_arg_start);
-                size_t last_sep = current_arg.find_last_of(SEPARATORS);
-                size_t start_idx = (last_sep == std::string::npos) ? 0 : last_sep + 1;
-                std::string raw_prefix = current_arg.substr(start_idx);
-                
-                result.prefix = Strings::trim(raw_prefix);
-                result.replace_pos = (int)(best_cmd.length() + current_arg_start + start_idx + (raw_prefix.length() - result.prefix.length()));
-                if (result.prefix.empty()) result.replace_pos = (int)input.length();
-
-                bool expect_term = true;
-                if (start_idx > 0) {
-                    size_t last_char_pos = Strings::find_last_non_space(current_arg, start_idx - 1);
-                    if (last_char_pos != std::string::npos) {
-                        char c = current_arg[last_char_pos];
-                        if (c == ')' || c == ']' || c == '}') expect_term = false;
-                    }
-                }
-
-                if (expect_term) {
-                std::string prefix_upper = Strings::upper(result.prefix);
-                
-                // Functions
-                for (const auto& pair : Expression::get_functions()) {
-                    if (Strings::upper(pair.first).find(prefix_upper) == 0) result.candidates.push_back(pair.first);
-                }
-                
-                // Registers
-                static const std::vector<std::string> regs = {
-                    "AF", "BC", "DE", "HL", "IX", "IY", "SP", "PC", 
-                    "AF'", "BC'", "DE'", "HL'",
-                    "A", "F", "B", "C", "D", "E", "H", "L", "I", "R"
-                };
-                for (const auto& r : regs) {
-                    if (Strings::upper(r).find(prefix_upper) == 0) result.candidates.push_back(r);
-                }
-
-                // Variables
-                if (!result.prefix.empty() && result.prefix[0] == '@') {
-                    auto& vars = m_debugger.get_core().get_context().getVariables();
-                    for (const auto& pair : vars.by_name()) {
-                        std::string var_name = "@" + pair.first;
-                        std::string var_upper = Strings::upper(var_name);
-                        if (var_upper.find(prefix_upper) == 0) result.candidates.push_back(var_name);
-                    }
-                }
-
-                // Symbols
-                auto& symbols = m_debugger.get_core().get_context().getSymbols();
-                for (const auto& pair : symbols.by_name()) {
-                    std::string sym_upper = Strings::upper(pair.first);
-                    if (sym_upper.find(prefix_upper) == 0) result.candidates.push_back(pair.first);
-                }
-                }
-            } else if (type == CTX_SYMBOL) {
-                result.is_custom_context = true;
-                std::string current_arg = arg_full.substr(current_arg_start);
-                result.prefix = Strings::trim(current_arg);
-                result.replace_pos = (int)(best_cmd.length() + current_arg_start);
-                std::string prefix_upper = Strings::upper(result.prefix);
-
-                auto& symbols = m_debugger.get_core().get_context().getSymbols();
-                for (const auto& pair : symbols.by_name()) {
-                    if (Strings::upper(pair.first).find(prefix_upper) == 0) result.candidates.push_back(pair.first);
-                }
-                auto& vars = m_debugger.get_core().get_context().getVariables();
-                for (const auto& pair : vars.by_name()) {
-                    std::string var_name = "@" + pair.first;
-                    if (Strings::upper(var_name).find(prefix_upper) == 0) result.candidates.push_back(var_name);
-                }
-            } else if (type == CTX_CUSTOM && entry.custom_completer) {
-                result.is_custom_context = true;
-                std::string current_arg = arg_full.substr(current_arg_start);
-                result.replace_pos = (int)(best_cmd.length() + current_arg_start);
-                entry.custom_completer(input, param_index, current_arg, result);
-            }
-        } else {
-            size_t first_non_space = Strings::find_first_non_space(input);
-            if (first_non_space == std::string::npos) first_non_space = 0;
-            result.replace_pos = (int)first_non_space;
-            result.prefix = trimmed_input;
-
-            for (const auto& pair : m_commands) {
-                const std::string& cmd = pair.first;
-                if (cmd.find(trimmed_input) == 0) result.candidates.push_back(cmd);
-            }
-        }
-
-        // Sort and unique
-        std::sort(result.candidates.begin(), result.candidates.end(), [](const std::string& a, const std::string& b) {
-            std::string ua = Strings::upper(a);
-            std::string ub = Strings::upper(b);
-            if (ua != ub) return ua < ub;
-            return a < b;
-        });
-        result.candidates.erase(std::unique(result.candidates.begin(), result.candidates.end()), result.candidates.end());
-        return result;
-}
-
-std::string Dashboard::get_collection_hint(const std::string& input, const Strings::ParamInfo& info, char opener, const std::string& type_prefix) {
-    char closer = (opener == '[') ? ']' : '}';
-    std::string range_marker = (opener == '}') ? "end}" : "end]";
-    
-    if (info.count == 0) {
-        if (!info.current_has_text) return type_prefix + " | start..end" + closer;
-        size_t range_op = input.find("..", info.last_comma_pos + 1);
-        if (range_op != std::string::npos) {
-            bool has_end_val = false;
-            for (size_t k = range_op + 2; k < input.length(); ++k) {
-                 if (!std::isspace(static_cast<unsigned char>(input[k]))) {
-                     has_end_val = true;
-                     break;
-                 }
-            }
-            return has_end_val ? std::string(1, closer) : range_marker;
-        }
-    }
-    
-    std::string hint;
-    if (!info.current_has_text) hint += "..." + std::string(1, closer);
-    else hint += closer;
-    return hint;
-}
-
-std::string Dashboard::calculate_hint(const std::string& input, std::string& hint_color, int& input_error_pos) {
-        hint_color = m_theme.value_dim;
-        input_error_pos = -1;
-        if (input.empty()) return "";
-        if (m_focus != FOCUS_CMD) return "";
-        
-        Terminal::Completion res = get_completions(input);
-        std::string completion_hint;
-        if (!res.candidates.empty() && !res.prefix.empty()) {
-            const std::string& best = res.candidates[0];
-            std::string best_lower = Strings::lower(best);
-            std::string prefix_lower = Strings::lower(res.prefix);
-            
-            if (best_lower.find(prefix_lower) == 0) {
-                 if (best.length() > res.prefix.length()) {
-                     completion_hint = best.substr(res.prefix.length());
-                 }
-            }
-        }
-
-        auto get_syntax_hint = [&]() -> std::string {
-            auto parts = Strings::split_once(input, " \t");
-            if (parts.first.length() < input.length()) {
-                std::string cmd = parts.first;
-                auto it = m_commands.find(cmd);
-                if (it != m_commands.end() && !it->second.syntax.empty()) {
-                    std::string args = parts.second;
-                    if (args.empty() || std::all_of(args.begin(), args.end(), [](unsigned char c){ return std::isspace(c); })) {
-                        return it->second.syntax;
-                    }
-                }
-            }
-            return "";
-        };
-
-        if (!res.is_custom_context) {
-            if (!completion_hint.empty()) return completion_hint;
-            return get_syntax_hint();
-        }
-
-        if (res.is_custom_context && res.prefix.empty() && !res.candidates.empty() && res.candidates.size() <= 10) {
-             std::string hint;
-             for(size_t i=0; i<res.candidates.size(); ++i) {
-                 if (i > 0) hint += "|";
-                 hint += res.candidates[i];
-                 if (hint.length() > 30) { hint += "..."; break; }
-             }
-             return hint;
-        }
-
-        std::string operator_hint;
-        size_t last_char_pos = Strings::find_last_non_space(input);
-        if (last_char_pos != std::string::npos) {
-            char last_char = input[last_char_pos];
-            if (last_char == 'x') {
-                size_t prev_pos = Strings::find_last_non_space(input, last_char_pos - 1);
-                if (prev_pos != std::string::npos) {
-                    char prev_char = input[prev_pos];
-                    if (prev_char == ']' || prev_char == '}') {
-                        operator_hint = " count";
-                    }
-                }
-            }
-        }
-
-        char opener = 0;
-        size_t opener_pos = std::string::npos;
-        Strings::find_opener(input, opener, opener_pos);
-
-        std::string context_hint;
-        if (opener_pos != std::string::npos) {
-            if (opener == '(') {
-                std::string func_name = Strings::find_preceding_word(input, opener_pos);
-                if (!func_name.empty()) {
-                    std::string func_upper = Strings::upper(func_name);
-                    const auto& funcs = Expression::get_functions();
-                    auto it = funcs.find(func_upper);
-                    if (it != funcs.end()) {
-                        Strings::ParamInfo info = Strings::analyze_params(input, opener_pos, it->second.num_args);
-                        
-                        if (it->second.num_args != -1 && info.count >= it->second.num_args) {
-                             hint_color = Terminal::rgb_fg(255, 100, 100);
-                             input_error_pos = (info.error_comma_pos != std::string::npos) ? (int)info.error_comma_pos : (int)opener_pos;
-                             context_hint = ")";
-                        }
-
-                        if (context_hint.empty()) {
-                            std::vector<std::string> param_list = Strings::split(it->second.params, ',');
-                            for(auto& p : param_list) p = Strings::trim(p);
-                            
-                            bool is_variadic = false;
-                            if (!param_list.empty() && param_list.back() == "...") {
-                                is_variadic = true;
-                                param_list.pop_back();
-                            }
-
-                            std::string hint;
-                            if (info.count < (int)param_list.size()) {
-                                if (!info.current_has_text) hint += param_list[info.count];
-                                for (size_t k = info.count + 1; k < param_list.size(); ++k) hint += ", " + param_list[k];
-                                if (is_variadic) hint += ", ...";
-                            } else {
-                                if (is_variadic && !info.current_has_text) hint += "...";
-                            }
-                            context_hint = hint + ")";
-                        }
-                    }
-                }
-            } else if (opener == '[') {
-                Strings::ParamInfo info = Strings::analyze_params(input, opener_pos);
-                context_hint = get_collection_hint(input, info, '[', "addr");
-            } else if (opener == '{') {
-                bool is_word = (opener_pos > 0 && input[opener_pos-1] == 'W');
-                std::string type = is_word ? "word" : "byte";
-                Strings::ParamInfo info = Strings::analyze_params(input, opener_pos);
-                context_hint = get_collection_hint(input, info, '{', type);
-            }
-        }
-        
-        if (!operator_hint.empty()) {
-            if (context_hint == ")" || context_hint == "]" || context_hint == "}") {
-                return operator_hint + context_hint;
-            }
-            return operator_hint;
-        }
-
-        if (!completion_hint.empty()) {
-            if (context_hint == ")" || context_hint == "]" || context_hint == "}") {
-                return completion_hint + context_hint;
-            }
-            return completion_hint;
-        }
-        
-        if (!context_hint.empty()) return context_hint;
-        
-        return get_syntax_hint();
-}
-
 void Dashboard::validate_focus() {
     int attempts = 0;
     while (attempts < FOCUS_COUNT && ((m_focus == FOCUS_MEMORY && !m_show_mem) || (m_focus == FOCUS_REGS && !m_show_regs) || (m_focus == FOCUS_STACK && !m_show_stack) ||
@@ -912,14 +481,14 @@ void Dashboard::cmd_evaluate(const std::string& args) {
 }
 
 void Dashboard::cmd_expression(const std::string& args) {
-    if (Strings::is_assignment(args))
+    if (Commands::is_assignment(args))
         perform_set(args, false);
     else
         perform_evaluate(args, false);
 }
 
 void Dashboard::cmd_expression_detailed(const std::string& args) {
-    if (Strings::is_assignment(args))
+    if (Commands::is_assignment(args))
         perform_set(args, true);
     else
         perform_evaluate(args, true);
@@ -1215,7 +784,8 @@ int DebugEngine::run() {
         try {
             std::string ep = m_options.entryPointStr;
             auto parts = Strings::split(ep, ':');
-            if (!parts.empty()) ep = parts[0];
+            if (!parts.empty())
+                ep = parts[0];
             
             int32_t val = 0;
             if (Strings::parse_integer(ep, val))
@@ -1402,7 +972,7 @@ std::string Dashboard::format_disasm(uint16_t addr, const Z80Analyzer<Memory>::C
 
 void Dashboard::format_variable_header(std::stringstream& ss, const Expression::Value& val, const std::string& expr) {
     if (!expr.empty() && expr[0] == '@') {
-        bool is_var = Strings::is_identifier(expr.substr(1));
+        bool is_var = Commands::is_identifier(expr.substr(1));
         if (is_var) {
             ss << "VARIABLE: " << expr << "\n";
             std::string type_name = "Unknown";
@@ -1750,7 +1320,6 @@ void Dashboard::format_detailed_collection(std::stringstream& ss, const Expressi
 
 std::string Dashboard::format(const Expression::Value& val, bool detailed, const std::string& expr) {
     std::stringstream ss;
-    
     if (detailed) {
         format_variable_header(ss, val, expr);
         switch (val.type()) {

@@ -29,6 +29,9 @@ add_executable(zxtool
                 Engines/RunEngine.cpp
                 Engines/DisassembleEngine.cpp
                 Engines/DebugEngine.cpp
+                Engines/Debugger.cpp
+                Engines/Autocompletion.cpp
+                Engines/Hint.cpp
                 Files/AsmFiles.cpp
                 Files/BinFiles.cpp
                 Files/Z80File.cpp
@@ -37,6 +40,7 @@ add_executable(zxtool
                 Files/FileManager.cpp
                 Utils/Checksum.cpp
                 Utils/Strings.cpp
+                Utils/Commands.cpp
                 Utils/Terminal.cpp
   )
 
