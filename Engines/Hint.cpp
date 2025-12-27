@@ -190,8 +190,7 @@ void Hint::update_cache(const std::string& input) {
                 in_quote = !in_quote;
                 continue;
             }
-            if (in_quote)
-                continue;
+            if (in_quote) continue;
             if (c == '(' || c == '[' || c == '{') {
                 stack.push_back({c, i});
             } else if (c == ')' || c == ']' || c == '}') {
@@ -216,8 +215,9 @@ void Hint::update_cache(const std::string& input) {
 std::string Hint::calculate(const std::string& input, int cursor_pos, std::string& color, int& error_pos, std::vector<int>& highlights) {
     if (input != m_last_input) {
         m_last_input = input;
-        update_cache(input);
+        if (m_dashboard.m_show_bracket_highlight) update_cache(input);
     }
+
     if (m_cached_highlight) {
         bool found = false;
         for (const auto& pair : m_cached_brackets) {
@@ -242,6 +242,8 @@ std::string Hint::calculate(const std::string& input, int cursor_pos, std::strin
         }
     }
 
+    if (!m_dashboard.m_show_autocompletion) return "";
+
     Terminal::Completion completion_result = m_dashboard.m_autocompletion.get(input);
     std::string completion_hint = get_completion_hint(completion_result);
     if (!completion_result.is_custom_context) {
@@ -251,12 +253,12 @@ std::string Hint::calculate(const std::string& input, int cursor_pos, std::strin
     }
     if (completion_result.is_custom_context && completion_result.prefix.empty() && !completion_result.candidates.empty() && completion_result.candidates.size() <= 10) {
         std::string hint;
-        for (size_t i=0; i<completion_result.candidates.size(); ++i) {
+        for(size_t i=0; i<completion_result.candidates.size(); ++i) {
             if (i > 0)
                 hint += "|";
             hint += completion_result.candidates[i];
-            if (hint.length() > 30)
-                hint += "..."; break;
+            if (hint.length() > 80) {
+                hint += "..."; break; }
         }
         return hint;
     }

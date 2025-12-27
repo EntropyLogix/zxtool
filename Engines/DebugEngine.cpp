@@ -367,7 +367,11 @@ bool Dashboard::scroll_down() {
 
 void Dashboard::run() {
     m_editor.history_load(HISTORY_FILE);
-    m_editor.set_completion_callback([this](const std::string& input) { return m_autocompletion.get(input); });
+    m_editor.set_completion_callback([this](const std::string& input) { 
+        if (!m_show_autocompletion)
+            return Terminal::Completion();
+        return m_autocompletion.get(input); 
+    });
     m_editor.set_hint_callback([this](const std::string& input, int cursor_pos, std::string& color, int& error_pos, std::vector<int>& highlights) { return m_hint.calculate(input, cursor_pos, color, error_pos, highlights); });
     update_code_view();
     m_memory_view.set_address(m_debugger.get_core().get_cpu().get_PC());
@@ -492,6 +496,14 @@ void Dashboard::cmd_quit(const std::string&) {
     m_running = false;
 }
 
+void Dashboard::cmd_help(const std::string&) {
+    m_output_buffer << "Available commands:\n";
+    m_output_buffer << "------------------------------------------------------------\n";
+    for (const auto& pair : m_commands) {
+        m_output_buffer << std::left << std::setw(15) << pair.first << pair.second.syntax << "\n";
+    }
+}
+
 void Dashboard::cmd_set(const std::string& args_str) {
     perform_set(args_str, false);
 }
@@ -508,25 +520,78 @@ void Dashboard::cmd_undef(const std::string& args_str) {
         m_output_buffer << "Error: Symbol '" << name << "' not found.\n";
 }
 
+void Dashboard::update_theme() {
+    if (m_show_colors) {
+        m_theme = m_default_theme;
+    } else {
+        m_theme.header_focus = "";
+        m_theme.header_blur = "";
+        m_theme.separator = "";
+        m_theme.address = "";
+        m_theme.value = "";
+        m_theme.value_dim = "";
+        m_theme.highlight = "";
+        m_theme.label = "";
+        m_theme.mnemonic = "";
+        m_theme.operand_num = "";
+        m_theme.reg = "";
+        m_theme.comment = "";
+        m_theme.pc_fg = "";
+        m_theme.pc_bg = "";
+        m_theme.error = "";
+        m_theme.hint_error = "";
+        m_theme.bracket_match = "";
+    }
+    if (m_show_colors) {
+        m_editor.set_highlight_color(m_default_theme.bracket_match);
+        m_editor.set_error_color(m_default_theme.hint_error);
+    } else {
+        m_editor.set_highlight_color("");
+        m_editor.set_error_color("");
+    }
+}
+
 void Dashboard::cmd_options(const std::string& args) {
     std::string trimmed_args = Strings::trim(args);
     if (trimmed_args.empty()) {
         const auto& opts = m_debugger.get_options();
         m_output_buffer << "OPTIONS:\n";
         m_output_buffer << "------------------------------------------------------------\n";
+        m_output_buffer << "colors:          " << (m_show_colors ? "on" : "off") << "\n";
+        m_output_buffer << "autocompletion:  " << (m_show_autocompletion ? "on" : "off") << "\n";
+        m_output_buffer << "bracketshighlight: " << (m_show_bracket_highlight ? "on" : "off") << "\n";
         m_output_buffer << "Input Files:     ";
         for (size_t i = 0; i < opts.inputFiles.size(); ++i) {
             if (i > 0) m_output_buffer << ", ";
             m_output_buffer << opts.inputFiles[i];
         }
         m_output_buffer << "\n";
-        m_output_buffer << "Output File:     " << (opts.outputFile.empty() ? "(none)" : opts.outputFile) << "\n";
-        m_output_buffer << "Entry Point:     " << (opts.entryPointStr.empty() ? "(default)" : opts.entryPointStr) << "\n";
-        m_output_buffer << "Run Steps:       " << opts.runSteps << "\n";
-        m_output_buffer << "Run Ticks:       " << opts.runTicks << "\n";
-        m_output_buffer << "Timeout:         " << opts.timeout << "s\n";
     } else {
-        m_output_buffer << "No configurable options available.\n";
+        std::stringstream ss(trimmed_args);
+        std::string opt, val;
+        ss >> opt >> val;
+        opt = Strings::lower(opt);
+        val = Strings::lower(val);
+
+        if (opt == "colors") {
+            if (val == "on") m_show_colors = true;
+            else if (val == "off") m_show_colors = false;
+            else { m_output_buffer << "Invalid value for colors (on/off)\n"; return; }
+            update_theme();
+            m_output_buffer << "Colors " << (m_show_colors ? "enabled" : "disabled") << "\n";
+        } else if (opt == "autocompletion") {
+            if (val == "on") m_show_autocompletion = true;
+            else if (val == "off") m_show_autocompletion = false;
+            else { m_output_buffer << "Invalid value for autocompletion (on/off)\n"; return; }
+            m_output_buffer << "Autocompletion " << (m_show_autocompletion ? "enabled" : "disabled") << "\n";
+        } else if (opt == "bracketshighlight") {
+            if (val == "on") m_show_bracket_highlight = true;
+            else if (val == "off") m_show_bracket_highlight = false;
+            else { m_output_buffer << "Invalid value for bracketshighlight (on/off)\n"; return; }
+            m_output_buffer << "Bracket highlight " << (m_show_bracket_highlight ? "enabled" : "disabled") << "\n";
+        } else {
+            m_output_buffer << "Unknown option: " << opt << "\n";
+        }
     }
 }
 

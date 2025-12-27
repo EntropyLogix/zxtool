@@ -119,19 +119,12 @@ void Autocompletion::complete_options(const std::string& full_input, int param_i
     std::string prefix = Strings::trim(arg_full);
     result.prefix = prefix;
     if (param_index == 0) {
-        std::vector<std::string> opts = {"colors", "syntax"};
+        std::vector<std::string> opts = {"colors", "autocompletion", "bracketshighlight"};
         for (const auto& o : opts)
             if (o.find(prefix) == 0)
                 result.candidates.push_back(o);
     } else if (param_index == 1) {
-        std::stringstream ss(full_input);
-        std::string cmd, first_arg;
-        ss >> cmd >> first_arg;
-        std::vector<std::string> opts;
-        if (Strings::lower(first_arg) == "syntax")
-            opts = {"intel", "zilog"};
-        else
-            opts = {"on", "off"};
+        std::vector<std::string> opts = {"on", "off"};
         for (const auto& o : opts) {
             if (o.find(prefix) == 0)
                 result.candidates.push_back(o);

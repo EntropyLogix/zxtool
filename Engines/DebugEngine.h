@@ -132,11 +132,12 @@ public:
             {"eval", {&Dashboard::cmd_evaluate, true, "expression", {CTX_EXPRESSION}}},
             {"quit", {&Dashboard::cmd_quit, true, "", {}}},
             {"q", {&Dashboard::cmd_quit, true, "", {}}},
+            {"help", {&Dashboard::cmd_help, false, "", {}}},
             {"set", {&Dashboard::cmd_set, true, "target = value", {CTX_EXPRESSION, CTX_EXPRESSION, CTX_EXPRESSION}}},
             {"undef", {&Dashboard::cmd_undef, true, "symbol", {CTX_SYMBOL}}},
             {"?", {&Dashboard::cmd_expression, false, "expression", {CTX_EXPRESSION}}},
             {"??", {&Dashboard::cmd_expression_detailed, false, "expression", {CTX_EXPRESSION}}},
-            {"options", {&Dashboard::cmd_options, false, "color|syntax", {CTX_CUSTOM, CTX_CUSTOM}, 
+            {"options", {&Dashboard::cmd_options, false, "colors|autocompletion|bracketshighlight value", {CTX_CUSTOM, CTX_CUSTOM}, 
                 [this](const std::string& f, int i, const std::string& a, Terminal::Completion& r){ m_autocompletion.complete_options(f, i, a, r); }
             }},
             {"watch", {&Dashboard::cmd_watch, true, "address", {CTX_EXPRESSION}}},
@@ -152,6 +153,7 @@ private:
 
     Debugger& m_debugger;
     Theme m_theme;
+    Theme m_default_theme;
     bool m_running = true;
     std::stringstream m_output_buffer;
     MemoryView m_memory_view;
@@ -165,6 +167,9 @@ private:
     bool m_show_watch = false;
     bool m_show_breakpoints = false;
     bool m_auto_follow = true;
+    bool m_show_colors = true;
+    bool m_show_autocompletion = true;
+    bool m_show_bracket_highlight = true;
     
     enum CompletionType { CTX_NONE, CTX_EXPRESSION, CTX_SYMBOL, CTX_CUSTOM };
 
@@ -193,6 +198,7 @@ private:
     void print_output_buffer();
     void log(const std::string& msg) { m_output_buffer << msg << "\n"; }
     void update_code_view();
+    void update_theme();
 
     void cmd_evaluate(const std::string& args);
     void cmd_expression(const std::string& args);
@@ -203,6 +209,7 @@ private:
     void cmd_options(const std::string& args);
     void cmd_watch(const std::string& args);
     void cmd_break(const std::string& args);
+    void cmd_help(const std::string& args);
     
     void perform_evaluate(const std::string& expr, bool detailed);
     void perform_set(const std::string& args, bool detailed);
