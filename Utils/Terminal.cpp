@@ -350,7 +350,7 @@ void Terminal::LineEditor::draw(const std::string& prompt) {
         for (int h : m_highlights) if (h == i) is_highlight = true;
         bool is_error = (m_error_pos != -1 && i >= m_error_pos);
 
-        if (is_highlight) std::cout << m_highlight_color << Terminal::BOLD;
+        if (is_highlight) std::cout << m_highlight_color;
         else if (is_error) std::cout << m_error_color;
 
         std::cout << m_buffer[i];
