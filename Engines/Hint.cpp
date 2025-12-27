@@ -137,8 +137,11 @@ std::string Hint::get_context_hint(const std::string& input, std::string& hint_c
     return "";
 }
 
-std::string Hint::calculate(const std::string& input, int cursor_pos, std::string& color, int& error_pos, std::vector<int>& highlights) {
-    bool enable_highlight = false;
+void Hint::update_cache(const std::string& input) {
+    m_cached_brackets.clear();
+    m_cached_unclosed.clear();
+    m_cached_highlight = false;
+
     std::string trimmed_input = Strings::trim(input);
     if (!trimmed_input.empty()) {
         std::string best_cmd;
@@ -174,62 +177,69 @@ std::string Hint::calculate(const std::string& input, int cursor_pos, std::strin
                 type = Dashboard::CTX_EXPRESSION;
             
             if (type == Dashboard::CTX_EXPRESSION)
-                enable_highlight = true;
+                m_cached_highlight = true;
         }
     }
 
-    if (enable_highlight) {
-    std::vector<std::pair<char, int>> stack;
-    bool in_quote = false;
-    int open_idx = -1;
-    int close_idx = -1;
-
-    for (int i = 0; i < (int)input.length(); ++i) {
-        char c = input[i];
-        if (c == '"') {
-            in_quote = !in_quote;
-            continue;
-        }
-        if (in_quote) continue;
-
-        if (c == '(' || c == '[' || c == '{') {
-            stack.push_back({c, i});
-        } else if (c == ')' || c == ']' || c == '}') {
-            if (!stack.empty()) {
-                char open_c = stack.back().first;
-                int o_idx = stack.back().second;
-                bool match = (open_c == '(' && c == ')') || 
-                             (open_c == '[' && c == ']') || 
-                             (open_c == '{' && c == '}');
-                
-                if (match) {
-                    if (o_idx < cursor_pos && cursor_pos <= i + 1) {
-                        if (open_idx == -1) {
-                            open_idx = o_idx;
-                            close_idx = i;
-                        }
+    if (m_cached_highlight) {
+        std::vector<std::pair<char, int>> stack;
+        bool in_quote = false;
+        for (int i = 0; i < (int)input.length(); ++i) {
+            char c = input[i];
+            if (c == '"') {
+                in_quote = !in_quote;
+                continue;
+            }
+            if (in_quote)
+                continue;
+            if (c == '(' || c == '[' || c == '{') {
+                stack.push_back({c, i});
+            } else if (c == ')' || c == ']' || c == '}') {
+                if (!stack.empty()) {
+                    char open_c = stack.back().first;
+                    int o_idx = stack.back().second;
+                    bool match = (open_c == '(' && c == ')') || 
+                                 (open_c == '[' && c == ']') || 
+                                 (open_c == '{' && c == '}');
+                    if (match) {
+                        m_cached_brackets.push_back({o_idx, i});
+                        stack.pop_back();
                     }
-                    stack.pop_back();
                 }
             }
         }
+        for (const auto& p : stack)
+            m_cached_unclosed.push_back(p.second);
     }
+}
 
-    if (open_idx != -1 && close_idx != -1) {
-        if (input[open_idx] == '{' && open_idx > 0 && input[open_idx - 1] == 'W')
-            highlights.push_back(open_idx - 1);
-        highlights.push_back(open_idx);
-        highlights.push_back(close_idx);
-    } else if (!stack.empty()) {
-        for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
-            if (it->second < cursor_pos) {
-                if (input[it->second] == '{' && it->second > 0 && input[it->second - 1] == 'W')
-                    highlights.push_back(it->second - 1);
-                highlights.push_back(it->second);
+std::string Hint::calculate(const std::string& input, int cursor_pos, std::string& color, int& error_pos, std::vector<int>& highlights) {
+    if (input != m_last_input) {
+        m_last_input = input;
+        update_cache(input);
+    }
+    if (m_cached_highlight) {
+        bool found = false;
+        for (const auto& pair : m_cached_brackets) {
+            if (pair.first < cursor_pos && cursor_pos <= pair.second + 1) {
+                if (input[pair.first] == '{' && pair.first > 0 && input[pair.first - 1] == 'W')
+                    highlights.push_back(pair.first - 1);
+                highlights.push_back(pair.first);
+                highlights.push_back(pair.second);
+                found = true;
                 break;
             }
         }
-    }
+        if (!found && !m_cached_unclosed.empty()) {
+            for (auto it = m_cached_unclosed.rbegin(); it != m_cached_unclosed.rend(); ++it) {
+                if (*it < cursor_pos) {
+                    if (input[*it] == '{' && *it > 0 && input[*it - 1] == 'W')
+                        highlights.push_back(*it - 1);
+                    highlights.push_back(*it);
+                    break;
+                }
+            }
+        }
     }
 
     Terminal::Completion completion_result = m_dashboard.m_autocompletion.get(input);
@@ -241,7 +251,7 @@ std::string Hint::calculate(const std::string& input, int cursor_pos, std::strin
     }
     if (completion_result.is_custom_context && completion_result.prefix.empty() && !completion_result.candidates.empty() && completion_result.candidates.size() <= 10) {
         std::string hint;
-        for(size_t i=0; i<completion_result.candidates.size(); ++i) {
+        for (size_t i=0; i<completion_result.candidates.size(); ++i) {
             if (i > 0)
                 hint += "|";
             hint += completion_result.candidates[i];

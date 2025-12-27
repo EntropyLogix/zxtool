@@ -54,7 +54,7 @@ public:
         };
 
         using CompletionCallback = std::function<Completion(const std::string&)>;
-        using HintCallback = std::function<std::string(const std::string&, std::string& color, int& error_pos)>;
+        using HintCallback = std::function<std::string(const std::string&, int cursor_pos, std::string& color, int& error_pos, std::vector<int>& highlights)>;
 
         LineEditor();
         void history_load(const std::string& filename);
@@ -63,6 +63,8 @@ public:
 
         void set_completion_callback(CompletionCallback cb);
         void set_hint_callback(HintCallback cb);
+        void set_highlight_color(const std::string& color) { m_highlight_color = color; }
+        void set_error_color(const std::string& color) { m_error_color = color; }
 
         Result on_key(const Input& key);
         void draw(const std::string& prompt);
@@ -86,6 +88,9 @@ public:
         std::string m_current_hint;
         std::string m_hint_color;
         int m_error_pos = -1;
+        std::string m_highlight_color;
+        std::string m_error_color;
+        std::vector<int> m_highlights;
 
         void update_hint();
     };

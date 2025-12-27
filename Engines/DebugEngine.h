@@ -39,7 +39,7 @@ struct Theme {
     std::string pc_bg = Terminal::rgb_bg(102, 102, 102);
     std::string error = Terminal::rgb_fg(255, 0, 0);
     std::string hint_error = Terminal::rgb_fg(255, 100, 100);
-    std::string bracket_match = Terminal::rgb_fg(0, 255, 0);
+    std::string bracket_match = Terminal::rgb_fg(255, 0, 255);
 };
 
 class DebugView {
@@ -125,6 +125,8 @@ public:
         , m_code_view(debugger.get_core(), 15, m_theme)
     {
         m_debugger.set_logger([this](const std::string& msg){ log(msg); });
+        m_editor.set_highlight_color(m_theme.bracket_match);
+        m_editor.set_error_color(m_theme.hint_error);
         m_commands = {
             {"evaluate", {&Dashboard::cmd_evaluate, true, "expression", {CTX_EXPRESSION}}},
             {"eval", {&Dashboard::cmd_evaluate, true, "expression", {CTX_EXPRESSION}}},
