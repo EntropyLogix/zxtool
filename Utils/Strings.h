@@ -8,13 +8,6 @@
 
 class Strings {
 public:
-    struct ParamInfo {
-        int count = 0;
-        size_t last_comma_pos = 0;
-        size_t error_comma_pos = std::string::npos;
-        bool current_has_text = false;
-    };
-
     static std::string hex(uint8_t v);
     static std::string hex(uint16_t v);
     static std::string hex(uint64_t v, int bit_width);
@@ -35,11 +28,6 @@ public:
     static std::pair<std::string, std::string> split_once(const std::string& s, char delimiter);
     static std::pair<std::string, std::string> split_once(const std::string& s, const std::string& delimiters);
 
-    static void find_opener(const std::string& input, char& opener, size_t& opener_pos);
-    static ParamInfo analyze_params(const std::string& input, size_t opener_pos, int max_args = -1);
-    static bool is_assignment(const std::string& expr);
-    static std::string find_preceding_word(const std::string& input, size_t pos);
-    static bool is_identifier(const std::string& s);
     static size_t find_first_non_space(const std::string& s, size_t pos = 0);
     static size_t find_last_non_space(const std::string& s, size_t pos = std::string::npos);
 };
