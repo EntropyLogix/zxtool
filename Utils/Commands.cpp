@@ -175,3 +175,36 @@ bool Commands::is_identifier(const std::string& s) {
     }
     return true;
 }
+
+int Commands::find_matching_bracket(const std::string& input, int pos) {
+    if (pos < 0 || pos >= (int)input.length()) return -1;
+    
+    std::vector<std::pair<char, int>> stack;
+    bool in_quote = false;
+    
+    for (int i = 0; i < (int)input.length(); ++i) {
+        char c = input[i];
+        if (c == '"') {
+            in_quote = !in_quote;
+            continue;
+        }
+        
+        if (in_quote) continue;
+        
+        if (c == '(' || c == '[' || c == '{') {
+            stack.push_back({c, i});
+        } else if (c == ')' || c == ']' || c == '}') {
+            if (!stack.empty()) {
+                char open = stack.back().first;
+                int open_idx = stack.back().second;
+                bool match = (open == '(' && c == ')') || (open == '[' && c == ']') || (open == '{' && c == '}');
+                if (match) {
+                    stack.pop_back();
+                    if (open_idx == pos) return i;
+                    if (i == pos) return open_idx;
+                }
+            }
+        }
+    }
+    return -1;
+}

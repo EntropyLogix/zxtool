@@ -2,6 +2,8 @@
 #include "DebugEngine.h"
 #include "../Utils/Strings.h"
 #include "../Utils/Commands.h"
+#include <utility>
+#include <cctype>
 
 Hint::Hint(Dashboard& dashboard) : m_dashboard(dashboard) {}
 
@@ -79,16 +81,16 @@ std::string Hint::get_operator_hint(const std::string& input) {
 std::string Hint::get_function_hint(const std::string& input, size_t opener_pos, std::string& hint_color, int& error_pos) {
     std::string func_name = Commands::find_preceding_word(input, opener_pos);
     if (func_name.empty())
-        return "";
+        return ")";
     std::string func_upper = Strings::upper(func_name);
     const auto& funcs = Expression::get_functions();
     auto it = funcs.find(func_upper);
     if (it == funcs.end())
-        return "";
+        return ")";
     const auto& func_info = it->second;
     Commands::ParamInfo info = Commands::analyze_params(input, opener_pos, func_info.num_args);
     if (func_info.num_args != -1 && info.count >= func_info.num_args) {
-        hint_color = Terminal::rgb_fg(255, 100, 100);
+        hint_color = m_dashboard.m_theme.hint_error;
         error_pos = (info.error_comma_pos != std::string::npos) ? (int)info.error_comma_pos : (int)opener_pos;
         return ")";
     }
@@ -135,7 +137,101 @@ std::string Hint::get_context_hint(const std::string& input, std::string& hint_c
     return "";
 }
 
-std::string Hint::calculate(const std::string& input, std::string& color, int& error_pos) {
+std::string Hint::calculate(const std::string& input, int cursor_pos, std::string& color, int& error_pos, std::vector<int>& highlights) {
+    bool enable_highlight = false;
+    std::string trimmed_input = Strings::trim(input);
+    if (!trimmed_input.empty()) {
+        std::string best_cmd;
+        for (const auto& pair : m_dashboard.m_commands) {
+            const std::string& cmd = pair.first;
+            bool is_alnum = Commands::is_identifier(cmd);
+            bool require_separator = is_alnum;
+            if (input.length() >= cmd.length()) {
+                if (input.compare(0, cmd.length(), cmd) == 0) {
+                    bool is_match = false;
+                    if (require_separator) {
+                        if (input.length() > cmd.length() && std::isspace(static_cast<unsigned char>(input[cmd.length()])))
+                            is_match = true;
+                    } else
+                        is_match = true;
+                    if (is_match && cmd.length() > best_cmd.length())
+                        best_cmd = cmd;
+                }
+            }
+        }
+
+        if (!best_cmd.empty()) {
+            std::string arguments_part = input.substr(best_cmd.length());
+            const auto& entry = m_dashboard.m_commands.at(best_cmd);
+            int parameter_index = 0;
+            size_t current_argument_offset = 0;
+            Commands::get_current_arg(arguments_part, parameter_index, current_argument_offset);
+            
+            Dashboard::CompletionType type = Dashboard::CTX_NONE;
+            if (parameter_index < (int)entry.param_types.size())
+                type = entry.param_types[parameter_index];
+            else if (!entry.param_types.empty() && entry.param_types.back() == Dashboard::CTX_EXPRESSION)
+                type = Dashboard::CTX_EXPRESSION;
+            
+            if (type == Dashboard::CTX_EXPRESSION)
+                enable_highlight = true;
+        }
+    }
+
+    if (enable_highlight) {
+    std::vector<std::pair<char, int>> stack;
+    bool in_quote = false;
+    int open_idx = -1;
+    int close_idx = -1;
+
+    for (int i = 0; i < (int)input.length(); ++i) {
+        char c = input[i];
+        if (c == '"') {
+            in_quote = !in_quote;
+            continue;
+        }
+        if (in_quote) continue;
+
+        if (c == '(' || c == '[' || c == '{') {
+            stack.push_back({c, i});
+        } else if (c == ')' || c == ']' || c == '}') {
+            if (!stack.empty()) {
+                char open_c = stack.back().first;
+                int o_idx = stack.back().second;
+                bool match = (open_c == '(' && c == ')') || 
+                             (open_c == '[' && c == ']') || 
+                             (open_c == '{' && c == '}');
+                
+                if (match) {
+                    if (o_idx < cursor_pos && cursor_pos <= i + 1) {
+                        if (open_idx == -1) {
+                            open_idx = o_idx;
+                            close_idx = i;
+                        }
+                    }
+                    stack.pop_back();
+                }
+            }
+        }
+    }
+
+    if (open_idx != -1 && close_idx != -1) {
+        if (input[open_idx] == '{' && open_idx > 0 && input[open_idx - 1] == 'W')
+            highlights.push_back(open_idx - 1);
+        highlights.push_back(open_idx);
+        highlights.push_back(close_idx);
+    } else if (!stack.empty()) {
+        for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
+            if (it->second < cursor_pos) {
+                if (input[it->second] == '{' && it->second > 0 && input[it->second - 1] == 'W')
+                    highlights.push_back(it->second - 1);
+                highlights.push_back(it->second);
+                break;
+            }
+        }
+    }
+    }
+
     Terminal::Completion completion_result = m_dashboard.m_autocompletion.get(input);
     std::string completion_hint = get_completion_hint(completion_result);
     if (!completion_result.is_custom_context) {

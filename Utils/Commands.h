@@ -19,6 +19,7 @@ public:
     static std::string find_preceding_word(const std::string& input, size_t pos);
     static void get_current_arg(const std::string& input, int& arg_index, size_t& arg_start);
     static bool is_identifier(const std::string& s);
+    static int find_matching_bracket(const std::string& input, int pos);
 };
 
 #endif // __COMMANDS_H__

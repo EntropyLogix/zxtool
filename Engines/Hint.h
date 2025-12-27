@@ -10,7 +10,7 @@ class Dashboard;
 class Hint {
 public:
     Hint(Dashboard& dashboard);
-    std::string calculate(const std::string& input, std::string& color, int& error_pos);
+    std::string calculate(const std::string& input, int cursor_pos, std::string& color, int& error_pos, std::vector<int>& highlights);
 
 private:
     Dashboard& m_dashboard;

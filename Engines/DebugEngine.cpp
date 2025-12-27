@@ -368,7 +368,7 @@ bool Dashboard::scroll_down() {
 void Dashboard::run() {
     m_editor.history_load(HISTORY_FILE);
     m_editor.set_completion_callback([this](const std::string& input) { return m_autocompletion.get(input); });
-    m_editor.set_hint_callback([this](const std::string& input, std::string& color, int& error_pos) { return m_hint.calculate(input, color, error_pos); });
+    m_editor.set_hint_callback([this](const std::string& input, int cursor_pos, std::string& color, int& error_pos, std::vector<int>& highlights) { return m_hint.calculate(input, cursor_pos, color, error_pos, highlights); });
     update_code_view();
     m_memory_view.set_address(m_debugger.get_core().get_cpu().get_PC());
     m_stack_view.set_address(m_debugger.get_core().get_cpu().get_SP());

@@ -183,6 +183,8 @@ Terminal::Input Terminal::read_key() {
 
 Terminal::LineEditor::LineEditor() {
     m_hint_color = Terminal::DIM;
+    m_highlight_color = Terminal::rgb_fg(0, 255, 0);
+    m_error_color = Terminal::rgb_fg(255, 100, 100);
 }
 
 void Terminal::LineEditor::history_load(const std::string& filename) {
@@ -224,8 +226,10 @@ void Terminal::LineEditor::set_hint_callback(HintCallback cb) {
 }
 
 void Terminal::LineEditor::update_hint() {
-    if (m_hint_cb)
-        m_current_hint = m_hint_cb(m_buffer, m_hint_color, m_error_pos);
+    if (m_hint_cb) {
+        m_highlights.clear();
+        m_current_hint = m_hint_cb(m_buffer, m_cursor_pos, m_hint_color, m_error_pos, m_highlights);
+    }
     else
         m_current_hint.clear();
 }
@@ -236,6 +240,7 @@ void Terminal::LineEditor::clear() {
     m_current_hint.clear();
     m_error_pos = -1;
     m_last_completion.candidates.clear();
+    m_highlights.clear();
     m_completion_index = -1;
 }
 
@@ -275,17 +280,28 @@ Terminal::LineEditor::Result Terminal::LineEditor::on_key(const Input& in) {
         }
         return Result::CONTINUE;
     } else if (in.key == Key::RIGHT) {
-        if (m_cursor_pos < (int)m_buffer.length())
+        if (m_cursor_pos < (int)m_buffer.length()) {
             m_cursor_pos++;
-        else if (!m_current_hint.empty()) {
+            update_hint();
+        } else if (!m_current_hint.empty()) {
             m_buffer += m_current_hint;
             m_cursor_pos += m_current_hint.length();
             update_hint();
         }
         return Result::CONTINUE;
     } else if (in.key == Key::LEFT) {
-        if (m_cursor_pos > 0)
+        if (m_cursor_pos > 0) {
             m_cursor_pos--;
+            update_hint();
+        }
+        return Result::CONTINUE;
+    } else if (in.key == Key::HOME) {
+        m_cursor_pos = 0;
+        update_hint();
+        return Result::CONTINUE;
+    } else if (in.key == Key::END) {
+        m_cursor_pos = (int)m_buffer.length();
+        update_hint();
         return Result::CONTINUE;
     } else if (in.key == Key::TAB) {
         if (m_buffer.empty())
@@ -329,11 +345,17 @@ Terminal::LineEditor::Result Terminal::LineEditor::on_key(const Input& in) {
 
 void Terminal::LineEditor::draw(const std::string& prompt) {
     std::cout << "\r\x1b[K" << prompt;
-    if (m_error_pos != -1 && m_error_pos < (int)m_buffer.length()) {
-        std::cout << m_buffer.substr(0, m_error_pos);
-        std::cout << Terminal::rgb_fg(255, 100, 100) << m_buffer.substr(m_error_pos) << Terminal::RESET;
-    } else
-        std::cout << m_buffer;
+    for (int i = 0; i < (int)m_buffer.length(); ++i) {
+        bool is_highlight = false;
+        for (int h : m_highlights) if (h == i) is_highlight = true;
+        bool is_error = (m_error_pos != -1 && i >= m_error_pos);
+
+        if (is_highlight) std::cout << m_highlight_color << Terminal::BOLD;
+        else if (is_error) std::cout << m_error_color;
+
+        std::cout << m_buffer[i];
+        if (is_highlight || is_error) std::cout << Terminal::RESET;
+    }
     if (!m_current_hint.empty() && m_cursor_pos == (int)m_buffer.length()) {
         std::cout << m_hint_color << m_current_hint << Terminal::RESET;
         std::cout << "\x1b[" << m_current_hint.length() << "D";

@@ -38,6 +38,8 @@ struct Theme {
     std::string pc_fg = Terminal::rgb_fg(220, 220, 220);
     std::string pc_bg = Terminal::rgb_bg(102, 102, 102);
     std::string error = Terminal::rgb_fg(255, 0, 0);
+    std::string hint_error = Terminal::rgb_fg(255, 100, 100);
+    std::string bracket_match = Terminal::rgb_fg(0, 255, 0);
 };
 
 class DebugView {
