@@ -409,13 +409,7 @@ void Dashboard::run() {
                 handle_command(cmd);
                 Terminal::enable_raw_mode();
                 needs_repaint = true;
-            } else if (res == Terminal::LineEditor::Result::IGNORED) {
-                if (in.key == Terminal::Key::ESC) {
-                    m_focus = FOCUS_CODE; 
-                    validate_focus(); 
-                    needs_repaint = true;
-                }
-            } else
+            } else if (res != Terminal::LineEditor::Result::IGNORED)
                 draw_prompt();
         } else {
             if (in.key == Terminal::Key::ESC) {
