@@ -41,6 +41,8 @@ public:
     // Helper do ustawiania bitów typu w mapie (nie ruszając flag profilera)
     void set_map_type(CodeMap& map, uint16_t addr, ExtendedFlags type);
     ExtendedFlags get_map_type(const CodeMap& map, uint16_t addr);
+    
+    uint16_t find_prev_instruction(CodeMap& map, uint16_t target_addr);
 
 protected:
     // --- Override głównej pętli generowania ---

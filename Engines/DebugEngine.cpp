@@ -374,8 +374,8 @@ void Dashboard::run() {
     });
     m_editor.set_hint_callback([this](const std::string& input, int cursor_pos, std::string& color, int& error_pos, std::vector<int>& highlights) { return m_hint.calculate(input, cursor_pos, color, error_pos, highlights); });
     update_code_view();
+    update_stack_view();
     m_memory_view.set_address(m_debugger.get_core().get_cpu().get_PC());
-    m_stack_view.set_address(m_debugger.get_core().get_cpu().get_SP());
     validate_focus();
     Terminal::enable_raw_mode();
     std::string last_command;
@@ -469,6 +469,8 @@ void Dashboard::perform_set(const std::string& args_str, bool detailed) {
 
         eval.assign(lhs_str, val);
         m_output_buffer << lhs_str << " = " << format(val, detailed) << "\n";
+        update_code_view();
+        update_stack_view();
     } catch (const std::exception& e) {
         m_output_buffer << "Error: " << e.what() << "\n";
     }
@@ -502,6 +504,23 @@ void Dashboard::cmd_help(const std::string&) {
     for (const auto& pair : m_commands) {
         m_output_buffer << std::left << std::setw(15) << pair.first << pair.second.syntax << "\n";
     }
+}
+
+void Dashboard::cmd_step(const std::string& args) {
+    int count = 1;
+    if (!args.empty()) {
+        try {
+            Expression eval(m_debugger.get_core());
+            auto val = eval.evaluate(args);
+            count = (int)val.get_scalar(m_debugger.get_core());
+        } catch (const std::exception& e) {
+            m_output_buffer << "Error: " << e.what() << "\n";
+            return;
+        }
+    }
+    m_debugger.step(count);
+    update_code_view();
+    update_stack_view();
 }
 
 void Dashboard::cmd_set(const std::string& args_str) {
@@ -811,7 +830,21 @@ void Dashboard::print_footer() {
 void Dashboard::update_code_view() {
     if (!m_auto_follow)
         return;
-    m_code_view.set_address(m_debugger.get_core().get_cpu().get_PC());
+
+    auto& core = m_debugger.get_core();
+    uint16_t pc = core.get_cpu().get_PC();
+    uint16_t start = pc;
+    int context_rows = std::max(3, m_code_view.get_rows() / 3);
+
+    for (int i = 0; i < context_rows; ++i)
+        start = core.get_analyzer().find_prev_instruction(core.get_code_map(), start);
+    m_code_view.set_address(start);
+}
+
+void Dashboard::update_stack_view() {
+    if (!m_auto_follow)
+        return;
+    m_stack_view.set_address(m_debugger.get_core().get_cpu().get_SP());
 }
 
 void Dashboard::print_columns(const std::vector<std::string>& left, const std::vector<std::string>& right, size_t left_width) {

@@ -4,6 +4,7 @@
 
 Debugger::Debugger(Core& core, const Options& options) : m_core(core), m_options(options) { 
     m_prev_state = m_core.get_cpu().save_state(); 
+    m_trace.resize(64);
 }
 
 void Debugger::add_breakpoint(uint16_t addr) {
@@ -36,6 +37,7 @@ void Debugger::step(int n) {
         if (i > 0 && check_breakpoints(m_core.get_cpu().get_PC()))
             break;
         uint16_t pc_before = m_core.get_cpu().get_PC();
+        record_trace(pc_before);
         m_core.get_cpu().step();
         uint16_t pc_after = m_core.get_cpu().get_PC();
         m_last_pc = pc_before;
@@ -47,6 +49,7 @@ void Debugger::step(int n) {
 void Debugger::next() {
     m_prev_state = m_core.get_cpu().save_state();
     uint16_t pc_before = m_core.get_cpu().get_PC();
+    record_trace(pc_before);
         
     uint16_t temp_pc = pc_before;
     auto line = m_core.get_analyzer().parse_instruction(temp_pc);
@@ -65,6 +68,7 @@ void Debugger::next() {
             while (m_core.get_cpu().get_PC() != next_pc) {
                 if (check_breakpoints(m_core.get_cpu().get_PC()))
                     break;
+                record_trace(m_core.get_cpu().get_PC());
                 m_core.get_cpu().step();
             }
         } else
@@ -79,4 +83,18 @@ void Debugger::next() {
 void Debugger::log(const std::string& msg) {
     if (m_logger)
         m_logger(msg);
+}
+
+void Debugger::record_trace(uint16_t pc) {
+    m_trace[m_trace_head] = pc;
+    m_trace_head = (m_trace_head + 1) % m_trace.size();
+    if (m_trace_head == 0) m_trace_wrapped = true;
+}
+
+bool Debugger::is_traced(uint16_t pc) const {
+    size_t limit = m_trace_wrapped ? m_trace.size() : m_trace_head;
+    for (size_t i = 0; i < limit; ++i) {
+        if (m_trace[i] == pc) return true;
+    }
+    return false;
 }

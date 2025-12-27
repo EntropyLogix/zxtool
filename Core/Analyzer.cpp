@@ -133,3 +133,77 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
     start_address = static_cast<uint16_t>(pc);
     return result;
 }
+
+uint16_t Analyzer::find_prev_instruction(CodeMap& map, uint16_t target_addr) {
+    uint16_t ptr = target_addr - 1;
+    int safety = 0;
+    const int MAX_SAFETY = 32;
+
+    while (safety < MAX_SAFETY) {
+        uint8_t flags = map[ptr];
+
+        if (flags & Z80Analyzer<Memory>::FLAG_CODE_START) {
+            uint16_t temp = ptr;
+            this->parse_instruction(temp);
+            if (temp == target_addr) return ptr;
+            break; // Desync
+        }
+        
+        if (flags & Z80Analyzer<Memory>::FLAG_CODE_INTERIOR) {
+            ptr--;
+            safety++;
+            continue;
+        }
+
+        break; // Unknown
+    }
+
+    // 3. Slow Path: Heuristic
+    int search_depth = 24;
+    uint16_t start_scan = target_addr - search_depth;
+    
+    std::map<uint16_t, int> votes;
+    
+    for (int i = 0; i <= (search_depth - 4); ++i) {
+        uint16_t pc = start_scan + i;
+        uint16_t prev = pc;
+        int steps = 0;
+        
+        while (pc != target_addr && steps < 32) {
+            uint16_t dist = (target_addr - pc) & 0xFFFF;
+            if (dist > 0x8000) break; // Overshot target
+
+            prev = pc;
+            auto line = this->parse_instruction(pc);
+            if (line.bytes.empty()) pc++;
+            else pc += line.bytes.size();
+            pc &= 0xFFFF;
+            steps++;
+        }
+        if (pc == target_addr) {
+            votes[prev]++;
+        }
+    }
+
+    uint16_t winner = target_addr - 1;
+    int max_votes = -1;
+    
+    for (auto const& [addr, count] : votes) {
+        if (count > max_votes) {
+            max_votes = count;
+            winner = addr;
+        }
+    }
+
+    // 4. Self-repair
+    uint16_t temp_winner = winner;
+    auto line = this->parse_instruction(temp_winner);
+    size_t len = temp_winner - winner;
+    
+    map[winner] |= Z80Analyzer<Memory>::FLAG_CODE_START;
+    for (size_t i = 1; i < len; ++i) {
+        map[(uint16_t)(winner + i)] |= Z80Analyzer<Memory>::FLAG_CODE_INTERIOR;
+    }
+
+    return winner;
+}

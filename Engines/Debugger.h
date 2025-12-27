@@ -39,6 +39,8 @@ public:
     bool check_breakpoints(uint16_t pc);
     void step(int n);
     void next();
+    
+    bool is_traced(uint16_t pc) const;
 
 private:
     Core& m_core;
@@ -50,8 +52,13 @@ private:
     bool m_has_history = false;
     bool m_pc_moved = false;
     Core::CpuType::State m_prev_state;
+    
+    std::vector<uint16_t> m_trace;
+    size_t m_trace_head = 0;
+    bool m_trace_wrapped = false;
 
     void log(const std::string& msg);
+    void record_trace(uint16_t pc);
 };
 
 #endif // __DEBUGGER_H__

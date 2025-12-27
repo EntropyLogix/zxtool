@@ -98,13 +98,18 @@ public:
         else if (m_name == "IYL") cpu.set_IY((cpu.get_IY() & 0xFF00) | (value & 0xFF));
     }
     
-    static bool is_valid(const std::string& name) {
+    static const std::vector<std::string>& get_names() {
         static const std::vector<std::string> regs = {
             "AF", "BC", "DE", "HL", "IX", "IY", "SP", "PC", "WZ",
             "AF'", "BC'", "DE'", "HL'",
             "A", "B", "C", "D", "E", "H", "L", "I", "R", "F", "IFF1", "IFF2",
             "IXH", "IXL", "IYH", "IYL"
         };
+        return regs;
+    }
+
+    static bool is_valid(const std::string& name) {
+        const auto& regs = get_names();
         return std::find(regs.begin(), regs.end(), name) != regs.end();
     }
 

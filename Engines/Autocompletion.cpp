@@ -54,12 +54,7 @@ void Autocompletion::complete_expression(const std::string& full_input, const st
             if (Strings::upper(pair.first).find(prefix_upper) == 0)
                 result.candidates.push_back(pair.first);
         }
-        static const std::vector<std::string> regs = {
-            "AF", "BC", "DE", "HL", "IX", "IY", "SP", "PC", 
-            "AF'", "BC'", "DE'", "HL'",
-            "A", "F", "B", "C", "D", "E", "H", "L", "I", "R"
-        };
-        for (const auto& r : regs) {
+        for (const auto& r : Register::get_names()) {
             if (Strings::upper(r).find(prefix_upper) == 0)
                 result.candidates.push_back(r);
         }

@@ -103,6 +103,7 @@ public:
     void set_state(uint16_t pc, int width, uint16_t last_pc, bool has_history, bool pc_moved) {
         m_pc = pc; m_width = width; m_last_pc = last_pc; m_has_history = has_history; m_pc_moved = pc_moved;
     }
+    void set_debugger(Debugger* dbg) { m_debugger = dbg; }
 private:
     void format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst);
     uint16_t m_start_addr = 0;
@@ -111,6 +112,7 @@ private:
     uint16_t m_last_pc = 0;
     bool m_has_history = false;
     bool m_pc_moved = false;
+    Debugger* m_debugger = nullptr;
 };
 
 class Dashboard {
@@ -142,7 +144,9 @@ public:
             }},
             {"watch", {&Dashboard::cmd_watch, true, "address", {CTX_EXPRESSION}}},
             {"break", {&Dashboard::cmd_break, true, "address", {CTX_EXPRESSION}}},
-            {"b", {&Dashboard::cmd_break, true, "address", {CTX_EXPRESSION}}}
+            {"b", {&Dashboard::cmd_break, true, "address", {CTX_EXPRESSION}}},
+            {"step", {&Dashboard::cmd_step, true, "[count]", {CTX_EXPRESSION}}},
+            {"s", {&Dashboard::cmd_step, true, "[count]", {CTX_EXPRESSION}}}
         };
     }
     void run();
@@ -198,6 +202,7 @@ private:
     void print_output_buffer();
     void log(const std::string& msg) { m_output_buffer << msg << "\n"; }
     void update_code_view();
+    void update_stack_view();
     void update_theme();
 
     void cmd_evaluate(const std::string& args);
@@ -210,6 +215,7 @@ private:
     void cmd_watch(const std::string& args);
     void cmd_break(const std::string& args);
     void cmd_help(const std::string& args);
+    void cmd_step(const std::string& args);
     
     void perform_evaluate(const std::string& expr, bool detailed);
     void perform_set(const std::string& args, bool detailed);

@@ -213,6 +213,9 @@ void Hint::update_cache(const std::string& input) {
 }
 
 std::string Hint::calculate(const std::string& input, int cursor_pos, std::string& color, int& error_pos, std::vector<int>& highlights) {
+    color = m_dashboard.m_theme.value_dim;
+    error_pos = -1;
+
     if (input != m_last_input) {
         m_last_input = input;
         if (m_dashboard.m_show_bracket_highlight) update_cache(input);
