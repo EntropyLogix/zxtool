@@ -1895,6 +1895,7 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
         ctx.getSymbols().add(Symbol(name, num, type));
     } else if (target.is_address()) {
         auto& mem = m_core.get_memory();
+        auto& code_map = m_core.get_code_map();
         const auto& addrs = target.address();
         if (addrs.empty())
             syntax_error(ErrorCode::EVAL_INVALID_INDEXING, "Target address list is empty");
@@ -1906,6 +1907,7 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
             else
                 addr = addrs.back() + (uint16_t)(k - (addrs.size() - 1));
             mem.write(addr, data[k]);
+            code_map.invalidate_region(addr, 1);
         }
     } else
         syntax_error(ErrorCode::EVAL_TYPE_MISMATCH, "Left side must be a register, symbol, variable or address list");
