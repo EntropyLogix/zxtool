@@ -96,7 +96,8 @@ class CodeView : public DebugView {
 public:
     CodeView(Core& core, int rows, const Theme& theme) : DebugView(core, theme) { m_rows = rows; }
     std::vector<std::string> render() override;
-    void set_address(uint16_t addr) { m_start_addr = addr; }
+    void set_address(uint16_t addr) { m_start_addr = addr; m_skip_lines = 0; }
+    void set_skip_lines(int skip) { m_skip_lines = skip; }
     uint16_t get_address() const { return m_start_addr; }
     void scroll(int delta);
     void set_state(uint16_t pc, int width, uint16_t last_pc, bool has_history, bool pc_moved, uint64_t tstates, uint64_t prev_tstates) {
@@ -115,6 +116,7 @@ private:
     Debugger* m_debugger = nullptr;
     uint64_t m_tstates = 0;
     uint64_t m_prev_tstates = 0;
+    int m_skip_lines = 0;
 };
 
 class Dashboard {

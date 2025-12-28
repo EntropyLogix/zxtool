@@ -220,6 +220,7 @@ std::vector<std::string> CodeView::render() {
     auto* code_map = &m_core.get_code_map();
     bool first_line = true;
     int lines_count = 0;
+    int lines_to_skip = m_skip_lines;
     while (lines_count < m_rows) {
         auto lines = m_core.get_analyzer().parse_code(temp_pc_iter, 1, code_map);
         if (lines.empty())
@@ -229,24 +230,28 @@ std::vector<std::string> CodeView::render() {
         const Comment* block_cmt = ctx.getComments().find((uint16_t)line.address, Comment::Type::Block);
         bool has_block_desc = block_cmt && !block_cmt->getText().empty();
         bool has_label = !line.label.empty();
-        if (!first_line && (has_label || has_block_desc)) {
-            lines_out.push_back("");
-            lines_count++;
-        }
         if (block_cmt) {
              const auto& desc = block_cmt->getText();
              if (!desc.empty()) {
                  std::stringstream desc_ss(desc);
                  std::string segment;
                  while(lines_count < m_rows && std::getline(desc_ss, segment, '\n')) {
-                     lines_out.push_back(m_theme.value_dim + segment + Terminal::RESET);
-                     lines_count++;
+                     if (lines_to_skip > 0) {
+                         lines_to_skip--;
+                     } else {
+                         lines_out.push_back(m_theme.value_dim + segment + Terminal::RESET);
+                         lines_count++;
+                     }
                  }
              }
         }
         if (!line.label.empty() && lines_count < m_rows) {
-            lines_out.push_back(m_theme.label + line.label + ":" + Terminal::RESET);
-            lines_count++;
+            if (lines_to_skip > 0) {
+                lines_to_skip--;
+            } else {
+                lines_out.push_back(m_theme.label + line.label + ":" + Terminal::RESET);
+                lines_count++;
+            }
         }
         std::stringstream ss;
         bool is_pc = ((uint16_t)line.address == m_pc);
@@ -315,13 +320,21 @@ std::vector<std::string> CodeView::render() {
             s = Strings::padding(s, m_width);
             s += Terminal::RESET; 
             if (lines_count < m_rows) {
-                lines_out.push_back(s);
-                lines_count++;
+                if (lines_to_skip > 0) {
+                    lines_to_skip--;
+                } else {
+                    lines_out.push_back(s);
+                    lines_count++;
+                }
             }
         } else {
             if (lines_count < m_rows) {
-                lines_out.push_back(ss.str());
-                lines_count++;
+                if (lines_to_skip > 0) {
+                    lines_to_skip--;
+                } else {
+                    lines_out.push_back(ss.str());
+                    lines_count++;
+                }
             }
         }
         first_line = false;
@@ -883,12 +896,76 @@ void Dashboard::update_code_view() {
 
     auto& core = m_debugger.get_core();
     uint16_t pc = core.get_cpu().get_PC();
-    uint16_t start = pc;
-    int context_rows = std::max(3, m_code_view.get_rows() / 3);
+    int target_row = std::max(3, m_code_view.get_rows() / 3);
 
-    for (int i = 0; i < context_rows; ++i)
-        start = core.get_analyzer().parse_instruction_backwards(start, &core.get_code_map());
-    m_code_view.set_address(start);
+    auto count_meta_lines = [&](uint16_t addr) {
+        int lines = 0;
+        auto& ctx = core.get_analyzer().context;
+        const Comment* block_cmt = ctx.getComments().find(addr, Comment::Type::Block);
+        if (block_cmt && !block_cmt->getText().empty()) {
+             std::stringstream desc_ss(block_cmt->getText());
+             std::string segment;
+             while(std::getline(desc_ss, segment, '\n')) {
+                 lines++;
+             }
+        }
+        std::string label = core.get_context().getSymbols().get_label(addr);
+        if (!label.empty())
+            lines++;
+        return lines;
+    };
+
+    // Calculate lines occupied by PC instruction's metadata (which appear above it)
+    int pc_meta_lines = count_meta_lines(pc);
+    
+    // We want the instruction line itself to be at target_row.
+    // The lines above the instruction line are:
+    // 1. Metadata lines of the PC instruction itself.
+    // 2. Lines from previous instructions.
+    
+    int accumulated_lines_above = pc_meta_lines;
+    uint16_t scan_pc = pc;
+    int skip = 0;
+    int data_bytes_accumulator = 0;
+
+    if (accumulated_lines_above >= target_row) {
+        // PC metadata alone fills the space above
+        scan_pc = pc;
+        skip = accumulated_lines_above - target_row;
+    } else {
+        int steps = 0;
+        while (steps < 100) {
+            uint16_t prev = core.get_analyzer().parse_instruction_backwards(scan_pc, &core.get_code_map());
+            if (prev == scan_pc) prev = scan_pc - 1;
+
+            bool is_code = (core.get_code_map()[prev] & CodeMap::FLAG_CODE_START);
+            int lines_added = 0;
+            int meta = count_meta_lines(prev);
+
+            if (is_code || meta > 0) {
+                lines_added = 1 + meta;
+                data_bytes_accumulator = 0;
+            } else {
+                if (data_bytes_accumulator == 0) lines_added = 1;
+                data_bytes_accumulator = (data_bytes_accumulator + 1) % 8;
+            }
+            
+            if (accumulated_lines_above + lines_added > target_row) {
+                scan_pc = prev;
+                skip = (accumulated_lines_above + lines_added) - target_row;
+                break;
+            }
+            accumulated_lines_above += lines_added;
+            scan_pc = prev;
+            if (accumulated_lines_above == target_row) {
+                skip = 0;
+                break;
+            }
+            steps++;
+        }
+    }
+    m_code_view.set_address(scan_pc);
+    m_code_view.set_skip_lines(skip);
 }
 
 void Dashboard::update_stack_view() {

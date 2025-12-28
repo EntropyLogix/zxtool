@@ -78,7 +78,10 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
         } 
         else if (forcedType == TYPE_BYTE) {
             size_t count = 1;
-            while (pc + count < 0x10000 && get_map_type(map, pc+count) == TYPE_BYTE) count++;
+            while (pc + count < 0x10000 && get_map_type(map, pc+count) == TYPE_BYTE) {
+                if (context.getSymbols().find((uint16_t)(pc + count))) break;
+                count++;
+            }
             if (count > 8)
                 count = 8; 
             uint16_t tmp = current_pc;
@@ -125,6 +128,7 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
             this->group_data_blocks(pc, result, instruction_limit, [&](uint32_t addr) {
                     if (addr >= 0x10000) return false;
                     // Stop if we hit a known block type or code flag
+                    if (addr != pc && context.getSymbols().find((uint16_t)addr)) return false;
                     if (get_map_type(map, addr) != TYPE_UNKNOWN) return false;
                     return !(map[addr] & (CodeMap::FLAG_CODE_START | CodeMap::FLAG_CODE_INTERIOR));
             });
