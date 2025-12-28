@@ -86,8 +86,8 @@ int RunEngine::run() {
                     uint16_t temp_pc = addr;
                     auto line = m_analyzer.parse_instruction(temp_pc);
                     print_line(line);
-                    if (temp_pc <= addr) temp_pc = addr + 1;
-                    addr = temp_pc;
+                    if (!line.bytes.empty()) addr += line.bytes.size();
+                    else addr++;
                 }
                 std::cout << "\n";
             }
@@ -109,8 +109,8 @@ int RunEngine::run() {
                 uint16_t temp_pc = addr;
                 auto line = m_analyzer.parse_instruction(temp_pc);
                 print_line(line);
-                if (temp_pc <= addr) temp_pc = addr + 1;
-                addr = temp_pc;
+                if (!line.bytes.empty()) addr += line.bytes.size();
+                else addr++;
             }
         }
     }

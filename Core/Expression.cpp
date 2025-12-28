@@ -1807,7 +1807,10 @@ Expression::Value Expression::execute_rpn(const std::vector<Token>& rpn) {
             }
         }
     }
-    return stack.empty() ? Value(0.0) : stack.back();
+    if (stack.empty()) return Value(0.0);
+    if (stack.size() > 1)
+        syntax_error(ErrorCode::GENERIC, "Expression result is ambiguous (missing operator?)");
+    return stack.back();
 }
 
 void Expression::assign(const std::string& lhs, const Value& rhs) {

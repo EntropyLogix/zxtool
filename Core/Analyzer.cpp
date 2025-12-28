@@ -29,21 +29,22 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
         else if (forcedType == TYPE_UNKNOWN) {
             is_code = true;
             if (use_map) {
-                if (map[current_pc] & Z80Analyzer<Memory>::FLAG_CODE_INTERIOR) {
+                if (map[current_pc] & CodeMap::FLAG_CODE_INTERIOR) {
                     pc++;
                     continue;
                 }
-                if ((map[current_pc] & Z80Analyzer<Memory>::FLAG_DATA_READ) && !(map[current_pc] & Z80Analyzer<Memory>::FLAG_CODE_START))
+                if ((map[current_pc] & CodeMap::FLAG_DATA_READ) && !(map[current_pc] & CodeMap::FLAG_CODE_START))
                     is_code = false;
             }
         }
         if (is_code) {
             uint16_t instr_start = current_pc;
             CodeLine line = this->parse_instruction(current_pc);
-            if (use_map && !(map[instr_start] & Z80Analyzer<Memory>::FLAG_CODE_START)) {
+            uint16_t instr_end = instr_start + (uint16_t)line.bytes.size();
+            if (use_map && !(map[instr_start] & CodeMap::FLAG_CODE_START)) {
                 bool collision = false;
-                for (uint16_t k = instr_start + 1; k < current_pc; ++k) {
-                    if (map[k] & Z80Analyzer<Memory>::FLAG_CODE_START) {
+                for (uint16_t k = instr_start + 1; k < instr_end; ++k) {
+                    if (map[k] & CodeMap::FLAG_CODE_START) {
                         collision = true;
                         break;
                     }
@@ -72,7 +73,7 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
                 pc &= 0xFFFF;
             } else {
                 result.push_back(line);
-                pc = current_pc;
+                pc += line.bytes.size();
             }
         } 
         else if (forcedType == TYPE_BYTE) {
@@ -125,85 +126,11 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
                     if (addr >= 0x10000) return false;
                     // Stop if we hit a known block type or code flag
                     if (get_map_type(map, addr) != TYPE_UNKNOWN) return false;
-                    return !(map[addr] & (Z80Analyzer<Memory>::FLAG_CODE_START | Z80Analyzer<Memory>::FLAG_CODE_INTERIOR));
+                    return !(map[addr] & (CodeMap::FLAG_CODE_START | CodeMap::FLAG_CODE_INTERIOR));
             });
             pc &= 0xFFFF;
         }
     }
     start_address = static_cast<uint16_t>(pc);
     return result;
-}
-
-uint16_t Analyzer::find_prev_instruction(CodeMap& map, uint16_t target_addr) {
-    uint16_t ptr = target_addr - 1;
-    int safety = 0;
-    const int MAX_SAFETY = 32;
-
-    while (safety < MAX_SAFETY) {
-        uint8_t flags = map[ptr];
-
-        if (flags & Z80Analyzer<Memory>::FLAG_CODE_START) {
-            uint16_t temp = ptr;
-            this->parse_instruction(temp);
-            if (temp == target_addr) return ptr;
-            break; // Desync
-        }
-        
-        if (flags & Z80Analyzer<Memory>::FLAG_CODE_INTERIOR) {
-            ptr--;
-            safety++;
-            continue;
-        }
-
-        break; // Unknown
-    }
-
-    // 3. Slow Path: Heuristic
-    int search_depth = 24;
-    uint16_t start_scan = target_addr - search_depth;
-    
-    std::map<uint16_t, int> votes;
-    
-    for (int i = 0; i <= (search_depth - 4); ++i) {
-        uint16_t pc = start_scan + i;
-        uint16_t prev = pc;
-        int steps = 0;
-        
-        while (pc != target_addr && steps < 32) {
-            uint16_t dist = (target_addr - pc) & 0xFFFF;
-            if (dist > 0x8000) break; // Overshot target
-
-            prev = pc;
-            auto line = this->parse_instruction(pc);
-            if (line.bytes.empty()) pc++;
-            else pc += line.bytes.size();
-            pc &= 0xFFFF;
-            steps++;
-        }
-        if (pc == target_addr) {
-            votes[prev]++;
-        }
-    }
-
-    uint16_t winner = target_addr - 1;
-    int max_votes = -1;
-    
-    for (auto const& [addr, count] : votes) {
-        if (count > max_votes) {
-            max_votes = count;
-            winner = addr;
-        }
-    }
-
-    // 4. Self-repair
-    uint16_t temp_winner = winner;
-    auto line = this->parse_instruction(temp_winner);
-    size_t len = temp_winner - winner;
-    
-    map[winner] |= Z80Analyzer<Memory>::FLAG_CODE_START;
-    for (size_t i = 1; i < len; ++i) {
-        map[(uint16_t)(winner + i)] |= Z80Analyzer<Memory>::FLAG_CODE_INTERIOR;
-    }
-
-    return winner;
 }

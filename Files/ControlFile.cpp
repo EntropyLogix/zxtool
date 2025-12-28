@@ -22,11 +22,24 @@ static int parse_int_len(const std::string& s) {
     } catch (...) { return 1; }
 }
 
-static std::string clean_skool_tags(const std::string& text) {
-    std::string result = text;
-    // Replace #R$XXXX with $XXXX
+static std::string clean_skool_tags(const std::string& text, Analyzer& analyzer) {
+    std::string result;
     static const std::regex r_tag("#R\\$([0-9A-Fa-f]+)");
-    result = std::regex_replace(result, r_tag, "\\$$1");
+    
+    std::smatch match;
+    std::string::const_iterator searchStart(text.cbegin());
+    while (std::regex_search(searchStart, text.cend(), match, r_tag)) {
+        result.append(searchStart, match[0].first);
+        std::string addrStr = match[1].str();
+        uint16_t addr = parse_hex_addr(addrStr);
+        std::string label = analyzer.context.getSymbols().get_label(addr);
+        if (!label.empty())
+            result += label + " ($" + addrStr + ")";
+        else
+            result += "$" + addrStr;
+        searchStart = match[0].second;
+    }
+    result.append(searchStart, text.cend());
 
     return result;
 }
@@ -36,12 +49,45 @@ bool ControlFile::load(const std::string& filename) {
     if (map.size() < 0x10000) map.resize(0x10000, 0);
     
     std::ifstream file(filename);
+    if (!file.is_open()) return false;
+
+    std::vector<std::string> lines;
     std::string line;
-    
     while (std::getline(file, line)) {
+        lines.push_back(line);
+    }
+    
+    // Pass 1: Load labels
+    for (const auto& line : lines) {
+        if (line.empty() || line[0] != '@') continue;
+        
+        size_t dollar = line.find('$');
+        if (dollar == std::string::npos) continue;
+        
+        size_t endOfAddr = line.find_first_of(" ,", dollar);
+        std::string addrStr = line.substr(dollar, endOfAddr - dollar);
+        uint16_t addr = parse_hex_addr(addrStr);
+        
+        std::string remainder;
+        if (endOfAddr != std::string::npos)
+             remainder = line.substr(endOfAddr + 1);
+
+        size_t labelPos = remainder.find("label=");
+        if (labelPos != std::string::npos) {
+            std::string name = remainder.substr(labelPos + 6);
+            size_t space = name.find_first_of(" \r\n\t");
+            if (space != std::string::npos) name = name.substr(0, space);
+            m_analyzer.context.getSymbols().add_label(addr, name);
+        }
+    }
+
+    // Pass 2: Process everything else
+    for (const auto& line : lines) {
         if (line.empty()) continue;
         
         char type = line[0];
+        if (type == '@') continue;
+
         size_t dollar = line.find('$');
         if (dollar == std::string::npos) continue;
         
@@ -80,14 +126,14 @@ bool ControlFile::load(const std::string& filename) {
         switch (type) {
             case 'c': // Code
                 m_analyzer.set_map_type(map, addr, Analyzer::TYPE_CODE); // This should probably be add_inline_comment
-                if (!remainder.empty()) m_analyzer.context.getComments().add(Comment(addr, clean_skool_tags(remainder), Comment::Type::Inline));
+                if (!remainder.empty()) m_analyzer.context.getComments().add(Comment(addr, clean_skool_tags(remainder, m_analyzer), Comment::Type::Inline));
                 break;
             case 'C': // Comment
                 if (!remainder.empty()) {
                     size_t first = remainder.find_first_not_of(" \t\r");
                     if (first != std::string::npos) {
                         size_t last = remainder.find_last_not_of(" \t\r");
-                        m_analyzer.context.getComments().add(Comment(addr, clean_skool_tags(remainder.substr(first, (last - first + 1))), Comment::Type::Inline));
+                        m_analyzer.context.getComments().add(Comment(addr, clean_skool_tags(remainder.substr(first, (last - first + 1)), m_analyzer), Comment::Type::Inline));
                     }
                 }
                 break;
@@ -95,7 +141,7 @@ bool ControlFile::load(const std::string& filename) {
             case 's': case 'S': // Space
             case 'g':           // Game state
                 set_range(Analyzer::TYPE_BYTE);
-                if (!remainder.empty() && type == 'b') m_analyzer.context.getComments().add(Comment(addr, "; " + clean_skool_tags(remainder), Comment::Type::Block));
+                if (!remainder.empty() && type == 'b') m_analyzer.context.getComments().add(Comment(addr, "; " + clean_skool_tags(remainder, m_analyzer), Comment::Type::Block));
                 break;
             case 'w': case 'W': // Word
                 set_range(Analyzer::TYPE_WORD);
@@ -106,21 +152,11 @@ bool ControlFile::load(const std::string& filename) {
             case 'i': // Ignore
                 set_range(Analyzer::TYPE_IGNORE);
                 break;
-            case '@': { // Label
-                size_t labelPos = remainder.find("label=");
-                if (labelPos != std::string::npos) {
-                    std::string name = remainder.substr(labelPos + 6);
-                    size_t space = name.find_first_of(" \r\n\t");
-                    if (space != std::string::npos) name = name.substr(0, space);
-                    m_analyzer.context.getSymbols().add_label(addr, name);
-                }
-                break;
-            }
             case 'D': case 'N': // Description
-                m_analyzer.context.getComments().add(Comment(addr, "; " + clean_skool_tags(remainder), Comment::Type::Block));
+                m_analyzer.context.getComments().add(Comment(addr, "; " + clean_skool_tags(remainder, m_analyzer), Comment::Type::Block));
                 break;
             case 'R': // Register info
-                m_analyzer.context.getComments().add(Comment(addr, "; [Regs: " + clean_skool_tags(remainder) + "]", Comment::Type::Block));
+                m_analyzer.context.getComments().add(Comment(addr, "; [Regs: " + clean_skool_tags(remainder, m_analyzer) + "]", Comment::Type::Block));
                 break;
         }
     }

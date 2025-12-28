@@ -68,12 +68,7 @@ std::vector<std::string> MemoryView::render() {
 
 std::vector<std::string> RegisterView::render() {
     std::vector<std::string> lines;
-    long long delta = (long long)m_tstates - m_prev.m_ticks;
-    std::stringstream extra;
-    extra << m_theme.value_dim << " T: " << Terminal::RESET << m_tstates;
-    if (delta > 0)
-        extra << m_theme.error << " (+" << delta << ")" << Terminal::RESET;
-    lines.push_back(format_header("REGS", extra.str()));
+    lines.push_back(format_header("REGS"));
     auto& cpu = m_core.get_cpu();
     auto fmt_reg16 = [&](const std::string& l, uint16_t v, uint16_t pv) -> std::string {
         std::stringstream ss;
@@ -193,7 +188,16 @@ void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::o
 
 std::vector<std::string> CodeView::render() {
     std::vector<std::string> lines_out;
-    lines_out.push_back(format_header("CODE"));
+    long long delta = (long long)m_tstates - m_prev_tstates;
+    std::stringstream ss_len;
+    ss_len << "T: " << m_tstates;
+    if (delta > 0) ss_len << " (+" << delta << ")";
+    int padding = std::max(1, m_width - 6 - (int)ss_len.str().length());
+    std::stringstream extra;
+    extra << std::string(padding, ' ') << m_theme.value_dim << "T: " << m_tstates << Terminal::RESET;
+    if (delta > 0)
+        extra << m_theme.highlight << " (+" << delta << ")" << Terminal::RESET;
+    lines_out.push_back(format_header("CODE", extra.str()));
     if (m_has_history && m_start_addr == m_pc && (m_last_pc != m_pc || !m_pc_moved)) {
         uint16_t hist_addr = m_last_pc;
         uint16_t temp_hist = hist_addr;
@@ -246,6 +250,7 @@ std::vector<std::string> CodeView::render() {
         }
         std::stringstream ss;
         bool is_pc = ((uint16_t)line.address == m_pc);
+        bool is_traced = (m_debugger && m_debugger->is_traced((uint16_t)line.address));
         std::string bg = is_pc ? m_theme.pc_bg : "";
         std::string rst = is_pc ? (Terminal::RESET + bg) : Terminal::RESET;
         if (is_pc) 
@@ -254,6 +259,8 @@ std::vector<std::string> CodeView::render() {
             ss << "   ";
         if (is_pc)
             ss << m_theme.pc_fg << Terminal::BOLD << Strings::hex((uint16_t)line.address) << rst << ": ";
+        else if (is_traced)
+            ss << m_theme.value_dim << Strings::hex((uint16_t)line.address) << rst << ": ";
         else
             ss << m_theme.address << Strings::hex((uint16_t)line.address) << rst << ": ";
         std::stringstream hex_ss;
@@ -276,12 +283,18 @@ std::vector<std::string> CodeView::render() {
         std::stringstream mn_ss;
         if (is_pc)
             mn_ss << Terminal::BOLD << m_theme.pc_fg;
+        else if (is_traced)
+            mn_ss << m_theme.value_dim;
         else
             mn_ss << m_theme.mnemonic;
         mn_ss << line.mnemonic << rst;
         if (!line.operands.empty()) {
             mn_ss << " ";
-            format_operands(line, mn_ss, m_theme.operand_num, rst);
+            if (is_traced && !is_pc) {
+                mn_ss << m_theme.value_dim;
+                format_operands(line, mn_ss, "", "");
+            } else
+                format_operands(line, mn_ss, m_theme.operand_num, rst);
         }
         std::string mn_str = mn_ss.str();
         ss << Strings::padding(Strings::truncate(mn_str, 15), 15);
@@ -321,14 +334,15 @@ void CodeView::scroll(int delta) {
         m_start_addr += delta;
     } else {
         uint16_t temp = m_start_addr;
-        m_core.get_analyzer().parse_instruction(temp);
-        m_start_addr = temp;
+        auto line = m_core.get_analyzer().parse_instruction(temp);
+        m_start_addr += line.bytes.size();
     }
 }
 
 void Dashboard::draw_prompt() {
     std::string prompt = (m_focus == FOCUS_CMD) ? (m_theme.header_focus + "[COMMAND] " + Terminal::RESET) : (Terminal::RESET + m_theme.header_blur + "[COMMAND] " + Terminal::RESET);
     m_editor.draw(prompt);
+    std::cout << "\033[?12h" << std::flush;
 }
 
 bool Dashboard::scroll_up() {
@@ -391,13 +405,55 @@ void Dashboard::run() {
         Terminal::Input in = Terminal::read_key();
         if (in.key == Terminal::Key::NONE)
             continue;
-        if (in.key == Terminal::Key::SHIFT_TAB) {
+        if (in.key == Terminal::Key::SHIFT_TAB || (in.key == Terminal::Key::TAB && (m_focus != FOCUS_CMD || m_editor.get_line().empty()))) {
+            m_last_focus = FOCUS_CMD; // Reset toggle history on manual navigation
             m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT); 
             validate_focus();
             needs_repaint = true;
             continue;
         }
-        if (m_focus == FOCUS_CMD) {
+
+        bool handled = false;
+
+        if (m_focus != FOCUS_CMD) {
+            if ((in.key == Terminal::Key::UP && scroll_up()) || (in.key == Terminal::Key::DOWN && scroll_down())) {
+                needs_repaint = true;
+                handled = true;
+            } else if (in.c == ' ') {
+                m_last_focus = m_focus;
+                m_focus = FOCUS_CMD;
+                needs_repaint = true;
+                handled = true;
+            }
+        } else {
+            if (in.c == ' ' && m_editor.get_line().empty() && m_last_focus != FOCUS_CMD) {
+                m_focus = m_last_focus;
+                validate_focus();
+                needs_repaint = true;
+                handled = true;
+            }
+        }
+
+        bool pass_to_editor = false;
+
+        if (!handled) {
+            if (m_focus == FOCUS_CMD) {
+                if (in.key == Terminal::Key::ESC) {
+                    m_editor.clear();
+                    needs_repaint = true;
+                } else
+                    pass_to_editor = true;
+            } else if (in.key == Terminal::Key::ESC) {
+                m_last_focus = m_focus;
+                m_focus = FOCUS_CMD;
+                needs_repaint = true;
+                handled = true;
+            } else if (!iscntrl(static_cast<unsigned char>(in.c)) || in.key == Terminal::Key::BACKSPACE || in.key == Terminal::Key::ENTER) {
+                pass_to_editor = true;
+            }
+        }
+
+        if (!handled && pass_to_editor) {
             auto res = m_editor.on_key(in);
             if (res == Terminal::LineEditor::Result::SUBMIT) {
                 std::string cmd = m_editor.get_line();
@@ -415,12 +471,6 @@ void Dashboard::run() {
                 needs_repaint = true;
             } else if (res != Terminal::LineEditor::Result::IGNORED)
                 draw_prompt();
-        } else {
-            if (in.key == Terminal::Key::ESC) {
-                m_focus = FOCUS_CMD;
-                needs_repaint = true;
-            } else if ((in.key == Terminal::Key::UP && scroll_up()) || (in.key == Terminal::Key::DOWN && scroll_down()))
-                needs_repaint = true;
         }
     }
     Terminal::disable_raw_mode();
@@ -706,7 +756,7 @@ void Dashboard::print_dashboard() {
     std::vector<std::string> right_lines;
     if (m_show_regs) {
         m_register_view.set_focus(m_focus == FOCUS_REGS);
-        m_register_view.set_state(m_debugger.get_prev_state(), m_debugger.get_tstates());
+        m_register_view.set_state(m_debugger.get_prev_state());
         auto regs_lines = m_register_view.render();
         left_lines.insert(left_lines.end(), regs_lines.begin(), regs_lines.end());
     }
@@ -730,7 +780,7 @@ void Dashboard::print_dashboard() {
                 view_pc = highlight_pc;
         }
         m_code_view.set_focus(m_focus == FOCUS_CODE);
-        m_code_view.set_state(highlight_pc, width, m_debugger.get_last_pc(), m_debugger.has_history(), m_debugger.pc_moved());
+        m_code_view.set_state(highlight_pc, width, m_debugger.get_last_pc(), m_debugger.has_history(), m_debugger.pc_moved(), m_debugger.get_tstates(), m_debugger.get_prev_state().m_ticks);
         auto code_lines = m_code_view.render();
         for (const auto& l : code_lines)
             std::cout << l << "\n";
@@ -837,7 +887,7 @@ void Dashboard::update_code_view() {
     int context_rows = std::max(3, m_code_view.get_rows() / 3);
 
     for (int i = 0; i < context_rows; ++i)
-        start = core.get_analyzer().find_prev_instruction(core.get_code_map(), start);
+        start = core.get_analyzer().parse_instruction_backwards(start, &core.get_code_map());
     m_code_view.set_address(start);
 }
 

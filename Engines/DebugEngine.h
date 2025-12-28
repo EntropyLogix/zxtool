@@ -75,11 +75,10 @@ class RegisterView : public DebugView {
 public:
     RegisterView(Core& core, const Theme& theme) : DebugView(core, theme) {}
     std::vector<std::string> render() override;
-    void set_state(const Core::CpuType::State& prev, uint64_t tstates) { m_prev = prev; m_tstates = tstates; }
+    void set_state(const Core::CpuType::State& prev) { m_prev = prev; }
 private:
     std::string format_flags(uint8_t f, uint8_t prev_f);
     Core::CpuType::State m_prev;
-    uint64_t m_tstates = 0;
 };
 
 class StackView : public DebugView {
@@ -100,8 +99,9 @@ public:
     void set_address(uint16_t addr) { m_start_addr = addr; }
     uint16_t get_address() const { return m_start_addr; }
     void scroll(int delta);
-    void set_state(uint16_t pc, int width, uint16_t last_pc, bool has_history, bool pc_moved) {
+    void set_state(uint16_t pc, int width, uint16_t last_pc, bool has_history, bool pc_moved, uint64_t tstates, uint64_t prev_tstates) {
         m_pc = pc; m_width = width; m_last_pc = last_pc; m_has_history = has_history; m_pc_moved = pc_moved;
+        m_tstates = tstates; m_prev_tstates = prev_tstates;
     }
     void set_debugger(Debugger* dbg) { m_debugger = dbg; }
 private:
@@ -113,6 +113,8 @@ private:
     bool m_has_history = false;
     bool m_pc_moved = false;
     Debugger* m_debugger = nullptr;
+    uint64_t m_tstates = 0;
+    uint64_t m_prev_tstates = 0;
 };
 
 class Dashboard {
@@ -126,6 +128,7 @@ public:
         , m_stack_view(debugger.get_core(), 4, m_theme)
         , m_code_view(debugger.get_core(), 15, m_theme)
     {
+        m_code_view.set_debugger(&m_debugger);
         m_debugger.set_logger([this](const std::string& msg){ log(msg); });
         m_editor.set_highlight_color(m_theme.bracket_match);
         m_editor.set_error_color(m_theme.hint_error);
@@ -154,6 +157,7 @@ public:
 private:    
     enum Focus { FOCUS_MEMORY, FOCUS_REGS, FOCUS_STACK, FOCUS_CODE, FOCUS_WATCH, FOCUS_BREAKPOINTS, FOCUS_CMD, FOCUS_COUNT };
     Focus m_focus = FOCUS_CMD;
+    Focus m_last_focus = FOCUS_CMD;
 
     Debugger& m_debugger;
     Theme m_theme;

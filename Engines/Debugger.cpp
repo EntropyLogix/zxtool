@@ -63,7 +63,7 @@ void Debugger::next() {
         bool is_block = line.has_flag(Type::BLOCK);
 
         if (is_call || is_block) {
-            uint16_t next_pc = temp_pc;
+            uint16_t next_pc = temp_pc + line.bytes.size();
             log("Stepping over... (Target: " + Strings::hex(next_pc) + ")");
             while (m_core.get_cpu().get_PC() != next_pc) {
                 if (check_breakpoints(m_core.get_cpu().get_PC()))
