@@ -105,6 +105,7 @@ public:
         m_tstates = tstates; m_prev_tstates = prev_tstates;
     }
     void set_debugger(Debugger* dbg) { m_debugger = dbg; }
+    void set_wrap_comments(bool wrap) { m_wrap_comments = wrap; }
 private:
     void format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst);
     uint16_t m_start_addr = 0;
@@ -117,6 +118,7 @@ private:
     uint64_t m_tstates = 0;
     uint64_t m_prev_tstates = 0;
     int m_skip_lines = 0;
+    bool m_wrap_comments = false;
 };
 
 class Dashboard {
@@ -180,6 +182,7 @@ private:
     bool m_show_colors = true;
     bool m_show_autocompletion = true;
     bool m_show_bracket_highlight = true;
+    bool m_wrap_comments = false;
     
     enum CompletionType { CTX_NONE, CTX_EXPRESSION, CTX_SYMBOL, CTX_CUSTOM };
 

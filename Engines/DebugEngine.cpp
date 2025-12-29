@@ -145,8 +145,17 @@ void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::o
         if (i > 0)
             os << ", ";
         const auto& op = line.operands[i];
+
+        std::string label;
+        if (op.type == Operand::IMM16 || op.type == Operand::MEM_IMM16) {
+             const Symbol* s = m_core.get_context().getSymbols().find((uint16_t)op.num_val);
+             if (s) label = s->getName();
+        }
+
         bool is_num = (op.type == Operand::IMM8 || op.type == Operand::IMM16 || op.type == Operand::MEM_IMM16);
-        if (is_num)
+        if (!label.empty() && !color_num.empty())
+            os << m_theme.label;
+        else if (is_num)
             os << color_num;
         switch (op.type) {
             case Operand::REG8:
@@ -158,10 +167,16 @@ void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::o
                 os << "$" << Strings::hex((uint8_t)op.num_val);
                 break;
             case Operand::IMM16:
-                os << "$" << Strings::hex((uint16_t)op.num_val);
+                if (!label.empty())
+                    os << label;
+                else
+                    os << "$" << Strings::hex((uint16_t)op.num_val);
                 break;
             case Operand::MEM_IMM16:
-                os << "($" << Strings::hex((uint16_t)op.num_val) << ")";
+                if (!label.empty())
+                    os << "(" << label << ")";
+                else
+                    os << "($" << Strings::hex((uint16_t)op.num_val) << ")";
                 break;
             case Operand::PORT_IMM8:
                 os << "($" << Strings::hex((uint8_t)op.num_val) << ")";
@@ -181,7 +196,7 @@ void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::o
             default:
                 break;
         }
-        if (is_num)
+        if (is_num || !label.empty())
             os << color_rst;
     }
 }
@@ -236,11 +251,35 @@ std::vector<std::string> CodeView::render() {
                  std::stringstream desc_ss(desc);
                  std::string segment;
                  while(lines_count < m_rows && std::getline(desc_ss, segment, '\n')) {
-                     if (lines_to_skip > 0) {
-                         lines_to_skip--;
+                     if (m_width > 0 && (int)segment.length() > m_width) {
+                         if (m_wrap_comments) {
+                             size_t pos = 0;
+                             while (pos < segment.length() && lines_count < m_rows) {
+                                 std::string sub = segment.substr(pos, m_width);
+                                 if (lines_to_skip > 0) {
+                                     lines_to_skip--;
+                                 } else {
+                                     lines_out.push_back(m_theme.value_dim + sub + Terminal::RESET);
+                                     lines_count++;
+                                 }
+                                 pos += m_width;
+                             }
+                         } else {
+                             std::string sub = segment.substr(0, m_width > 3 ? m_width - 3 : m_width) + (m_width > 3 ? "..." : "");
+                             if (lines_to_skip > 0) {
+                                 lines_to_skip--;
+                             } else {
+                                 lines_out.push_back(m_theme.value_dim + sub + Terminal::RESET);
+                                 lines_count++;
+                             }
+                         }
                      } else {
-                         lines_out.push_back(m_theme.value_dim + segment + Terminal::RESET);
-                         lines_count++;
+                         if (lines_to_skip > 0) {
+                             lines_to_skip--;
+                         } else {
+                             lines_out.push_back(m_theme.value_dim + segment + Terminal::RESET);
+                             lines_count++;
+                         }
                      }
                  }
              }
@@ -302,15 +341,49 @@ std::vector<std::string> CodeView::render() {
                 format_operands(line, mn_ss, m_theme.operand_num, rst);
         }
         std::string mn_str = mn_ss.str();
-        ss << Strings::padding(Strings::truncate(mn_str, 15), 15);
+
+        int comment_col = 30;
+        int visible_len = 0;
+        bool in_esc = false;
+        for (char c : mn_str) {
+            if (c == '\033') in_esc = true;
+            else if (in_esc) { if (c == 'm') in_esc = false; }
+            else visible_len++;
+        }
+        ss << mn_str;
+        int padding = comment_col - visible_len;
+        if (padding < 1) padding = 1;
+        ss << std::string(padding, ' ');
+
+        std::vector<std::string> extra_lines;
         const Comment* inline_cmt = ctx.getComments().find((uint16_t)line.address, Comment::Type::Inline);
         if (inline_cmt) {
              const auto& comment = inline_cmt->getText();
              if (!comment.empty()) {
                  std::string cmt_full = "; " + comment;
-                 if (cmt_full.length() > 45)
-                     cmt_full = cmt_full.substr(0, 42) + "...";
-                 ss << m_theme.comment << cmt_full << Terminal::RESET;
+                 int max_width = (m_width > 0) ? m_width : 80;
+                 int current_len = visible_len + padding;
+                 int available = max_width - current_len;
+                 if (available < 10) available = 10;
+
+                 if (m_wrap_comments) {
+                     if ((int)cmt_full.length() > available) {
+                         ss << m_theme.comment << cmt_full.substr(0, available) << Terminal::RESET;
+                         int next_available = m_width - comment_col;
+                         if (next_available < 10) next_available = 10;
+                         size_t pos = available;
+                         while (pos < cmt_full.length()) {
+                             extra_lines.push_back(cmt_full.substr(pos, next_available));
+                             pos += next_available;
+                         }
+                     } else {
+                         ss << m_theme.comment << cmt_full << Terminal::RESET;
+                     }
+                 } else {
+                     if ((int)cmt_full.length() > available)
+                         cmt_full = cmt_full.substr(0, available - 3) + "...";
+                     ss << m_theme.comment << cmt_full << Terminal::RESET;
+                 }
              }
         }
         if (m_width > 0) {
@@ -327,6 +400,17 @@ std::vector<std::string> CodeView::render() {
                     lines_count++;
                 }
             }
+            for (const auto& el : extra_lines) {
+                if (lines_count < m_rows) {
+                    if (lines_to_skip > 0) {
+                        lines_to_skip--;
+                    } else {
+                        std::string s = std::string(comment_col, ' ') + m_theme.comment + el + Terminal::RESET;
+                        lines_out.push_back(Strings::padding(s, m_width));
+                        lines_count++;
+                    }
+                }
+            }
         } else {
             if (lines_count < m_rows) {
                 if (lines_to_skip > 0) {
@@ -334,6 +418,16 @@ std::vector<std::string> CodeView::render() {
                 } else {
                     lines_out.push_back(ss.str());
                     lines_count++;
+                }
+            }
+            for (const auto& el : extra_lines) {
+                if (lines_count < m_rows) {
+                    if (lines_to_skip > 0) {
+                        lines_to_skip--;
+                    } else {
+                        lines_out.push_back(std::string(comment_col, ' ') + m_theme.comment + el + Terminal::RESET);
+                        lines_count++;
+                    }
                 }
             }
         }
@@ -642,6 +736,7 @@ void Dashboard::cmd_options(const std::string& args) {
         m_output_buffer << "colors:          " << (m_show_colors ? "on" : "off") << "\n";
         m_output_buffer << "autocompletion:  " << (m_show_autocompletion ? "on" : "off") << "\n";
         m_output_buffer << "bracketshighlight: " << (m_show_bracket_highlight ? "on" : "off") << "\n";
+        m_output_buffer << "comments:        " << (m_wrap_comments ? "wrap" : "truncate") << "\n";
         m_output_buffer << "Input Files:     ";
         for (size_t i = 0; i < opts.inputFiles.size(); ++i) {
             if (i > 0) m_output_buffer << ", ";
@@ -671,6 +766,11 @@ void Dashboard::cmd_options(const std::string& args) {
             else if (val == "off") m_show_bracket_highlight = false;
             else { m_output_buffer << "Invalid value for bracketshighlight (on/off)\n"; return; }
             m_output_buffer << "Bracket highlight " << (m_show_bracket_highlight ? "enabled" : "disabled") << "\n";
+        } else if (opt == "comments") {
+            if (val == "wrap") { m_wrap_comments = true; m_code_view.set_wrap_comments(true); }
+            else if (val == "truncate") { m_wrap_comments = false; m_code_view.set_wrap_comments(false); }
+            else { m_output_buffer << "Invalid value for comments (wrap/truncate)\n"; return; }
+            m_output_buffer << "Comments " << (m_wrap_comments ? "wrapping" : "truncation") << " enabled\n";
         } else {
             m_output_buffer << "Unknown option: " << opt << "\n";
         }
