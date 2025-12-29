@@ -106,13 +106,16 @@ public:
     }
     void set_debugger(Debugger* dbg) { m_debugger = dbg; }
     void set_wrap_comments(bool wrap) { m_wrap_comments = wrap; }
+    void set_cursor(uint16_t addr) { m_cursor_addr = addr; }
+    uint16_t get_cursor() const { return m_cursor_addr; }
+    void move_cursor(int delta);
 private:
     struct DisasmInfo {
         std::string text;
         int visible_len;
     };
     Z80Analyzer<Memory>::CodeLine resolve_line(uint16_t addr, bool& conflict, bool& shadow, bool& is_orphan);
-    DisasmInfo format_disasm(const Z80Analyzer<Memory>::CodeLine& line, bool is_pc, bool conflict, bool shadow, bool is_orphan, bool is_traced, bool is_smc);
+    DisasmInfo format_disasm(const Z80Analyzer<Memory>::CodeLine& line, bool is_pc, bool is_cursor, bool conflict, bool shadow, bool is_orphan, bool is_traced, bool is_smc);
     void format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst);
     uint16_t m_start_addr = 0;
     uint16_t m_pc = 0;
@@ -125,6 +128,7 @@ private:
     uint64_t m_prev_tstates = 0;
     int m_skip_lines = 0;
     bool m_wrap_comments = false;
+    uint16_t m_cursor_addr = 0;
 };
 
 class Dashboard {

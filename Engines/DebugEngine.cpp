@@ -272,9 +272,9 @@ Z80Analyzer<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& confli
     return line;
 }
 
-CodeView::DisasmInfo CodeView::format_disasm(const Z80Analyzer<Memory>::CodeLine& line, bool is_pc, bool conflict, bool shadow, bool is_orphan, bool is_traced, bool is_smc) {
+CodeView::DisasmInfo CodeView::format_disasm(const Z80Analyzer<Memory>::CodeLine& line, bool is_pc, bool is_cursor, bool conflict, bool shadow, bool is_orphan, bool is_traced, bool is_smc) {
     std::stringstream mn_ss;
-    std::string rst = is_pc ? (Terminal::RESET + m_theme.pc_bg) : Terminal::RESET;
+    std::string rst = is_cursor ? (Terminal::RESET + m_theme.pc_bg) : Terminal::RESET;
 
     if (is_pc) mn_ss << Terminal::BOLD << m_theme.pc_fg;
     else if (conflict || is_orphan) mn_ss << m_theme.error;
@@ -305,16 +305,7 @@ CodeView::DisasmInfo CodeView::format_disasm(const Z80Analyzer<Memory>::CodeLine
 
 std::vector<std::string> CodeView::render() {
     std::vector<std::string> lines_out;
-    long long delta = (long long)m_tstates - m_prev_tstates;
-    std::stringstream ss_len;
-    ss_len << "T: " << m_tstates;
-    if (delta > 0) ss_len << " (+" << delta << ")";
-    int padding = std::max(1, m_width - 6 - (int)ss_len.str().length());
-    std::stringstream extra;
-    extra << std::string(padding, ' ') << m_theme.value_dim << "T: " << m_tstates << Terminal::RESET;
-    if (delta > 0)
-        extra << m_theme.highlight << " (+" << delta << ")" << Terminal::RESET;
-    lines_out.push_back(format_header("CODE", extra.str()));
+    lines_out.push_back(""); // Placeholder for header
     if (m_has_history && m_start_addr == m_pc && (m_last_pc != m_pc || !m_pc_moved)) {
         uint16_t hist_addr = m_last_pc;
         uint16_t temp_hist = hist_addr;
@@ -329,16 +320,28 @@ std::vector<std::string> CodeView::render() {
                 }
             }
             std::stringstream ss;
-            if (is_smc) ss << m_theme.value_dim << "M " << Terminal::RESET;
-            else ss << "  ";
+            if (is_smc) ss << m_theme.value_dim << "M  " << Terminal::RESET;
+            else ss << "   ";
             ss << m_theme.value_dim << Strings::hex((uint16_t)line.address) << ": ";
-            for (size_t i = 0; i < std::min((size_t)4, line.bytes.size()); ++i)
-                ss << Strings::hex(line.bytes[i]) << " ";
-            for (size_t i = line.bytes.size(); i<4; ++i)
-                ss << "   ";
-            ss << " ";
-            ss << std::left << std::setw(5) << line.mnemonic << " ";
-            format_operands(line, ss, "", "");
+            std::stringstream hex_ss;
+            if (line.bytes.size() > 3)
+                hex_ss << Strings::hex(line.bytes[0]) << " " << Strings::hex(line.bytes[1]) << " ..";
+            else {
+                for(size_t i=0; i<line.bytes.size(); ++i) {
+                    if (i > 0) hex_ss << " ";
+                    hex_ss << Strings::hex(line.bytes[i]);
+                }
+            }
+            std::string hex_str = hex_ss.str();
+            ss << hex_str;
+            int hex_pad = 9 - (int)hex_str.length();
+            if (hex_pad > 0) ss << std::string(hex_pad, ' ');
+            ss << "  ";
+            ss << line.mnemonic;
+            if (!line.operands.empty()) {
+                ss << " ";
+                format_operands(line, ss, "", "");
+            }
             ss << Terminal::RESET;
             lines_out.push_back(ss.str());
         }
@@ -347,10 +350,13 @@ std::vector<std::string> CodeView::render() {
     bool first_line = true;
     int lines_count = 0;
     int lines_to_skip = m_skip_lines;
+    bool pc_visible = false;
     while (lines_count < m_rows) {
         bool conflict = false, shadow = false, is_orphan = false;
         auto line = resolve_line(temp_pc_iter, conflict, shadow, is_orphan);
         bool is_pc = (temp_pc_iter == m_pc);
+        bool is_cursor = (temp_pc_iter == m_cursor_addr);
+        if (is_pc) pc_visible = true;
 
         bool is_smc = false;
         auto* code_map = &m_core.get_code_map();
@@ -414,8 +420,8 @@ std::vector<std::string> CodeView::render() {
         }
         std::stringstream ss;
         bool is_traced = (m_debugger && m_debugger->is_traced((uint16_t)line.address));
-        std::string bg = is_pc ? m_theme.pc_bg : "";
-        std::string rst = is_pc ? (Terminal::RESET + bg) : Terminal::RESET;
+        std::string bg = is_cursor ? m_theme.pc_bg : "";
+        std::string rst = is_cursor ? (Terminal::RESET + bg) : Terminal::RESET;
         if (is_pc) 
             ss << bg << m_theme.header_blur << Terminal::BOLD << (is_smc ? ">M " : ">  ") << rst;
         else if (is_smc) {
@@ -423,7 +429,7 @@ std::vector<std::string> CodeView::render() {
             else ss << m_theme.error << "M  " << rst;
         }
         else
-            ss << "   ";
+            ss << bg << "   " << rst;
         
         std::string addr_color = m_theme.address;
         if (is_pc) addr_color = m_theme.pc_fg + Terminal::BOLD;
@@ -451,7 +457,7 @@ std::vector<std::string> CodeView::render() {
             ss << std::string(hex_pad, ' ');
         ss << "  ";
         
-        auto disasm_info = format_disasm(line, is_pc, conflict, shadow, is_orphan, is_traced, is_smc);
+        auto disasm_info = format_disasm(line, is_pc, is_cursor, conflict, shadow, is_orphan, is_traced, is_smc);
         ss << disasm_info.text;
         int comment_col = 30;
         int padding = comment_col - disasm_info.visible_len;
@@ -491,7 +497,7 @@ std::vector<std::string> CodeView::render() {
         }
         if (m_width > 0) {
             std::string s = ss.str();
-            if (is_pc)
+            if (is_cursor)
                 s += m_theme.pc_bg;
             s = Strings::padding(s, m_width);
             s += Terminal::RESET; 
@@ -537,6 +543,28 @@ std::vector<std::string> CodeView::render() {
         first_line = false;
         temp_pc_iter += line.bytes.size();
     }
+
+    long long delta = (long long)m_tstates - m_prev_tstates;
+    std::stringstream ss_len;
+    ss_len << "T: " << m_tstates;
+    if (delta > 0) ss_len << " (+" << delta << ")";
+    
+    std::string arrow_str;
+    if (!pc_visible) {
+        int16_t dist = (int16_t)(m_pc - m_start_addr);
+        std::string arrow = (dist < 0) ? Terminal::ARROW_UP : Terminal::ARROW_DOWN;
+        arrow_str = " " + m_theme.separator + "|" + Terminal::RESET + " " + m_theme.highlight + "PC " + arrow + Terminal::RESET;
+    }
+
+    int arrow_len = (int)Strings::length(arrow_str);
+    if (!arrow_str.empty()) arrow_len -= 2;
+    int padding = std::max(1, m_width - 6 - (int)ss_len.str().length() - arrow_len);
+    std::stringstream extra;
+    extra << std::string(padding, ' ') << m_theme.value_dim << "T: " << m_tstates << Terminal::RESET;
+    if (delta > 0)
+        extra << m_theme.highlight << " (+" << delta << ")" << Terminal::RESET;
+    extra << arrow_str;
+    lines_out[0] = format_header("CODE", extra.str());
     return lines_out;
 }
 
@@ -547,6 +575,33 @@ void CodeView::scroll(int delta) {
         uint16_t temp = m_start_addr;
         auto line = m_core.get_analyzer().parse_instruction(temp);
         m_start_addr += line.bytes.size();
+    }
+}
+
+void CodeView::move_cursor(int delta) {
+    if (delta < 0) {
+        uint16_t prev = m_core.get_analyzer().parse_instruction_backwards(m_cursor_addr, &m_core.get_code_map());
+        m_cursor_addr = prev;
+        int diff = (int)m_start_addr - (int)m_cursor_addr;
+        if (diff > 0 && diff < 100) {
+            m_start_addr = m_cursor_addr;
+        } else if (diff < -60000) {
+            m_start_addr = m_cursor_addr;
+        }
+    } else {
+        auto line = m_core.get_analyzer().parse_instruction(m_cursor_addr);
+        m_cursor_addr += line.bytes.size();
+        uint16_t p = m_start_addr;
+        bool visible = false;
+        for(int i=0; i<m_rows; ++i) {
+            if (p == m_cursor_addr) { visible = true; break; }
+            auto l = m_core.get_analyzer().parse_instruction(p);
+            p += l.bytes.size();
+        }
+        if (!visible) {
+            auto l = m_core.get_analyzer().parse_instruction(m_start_addr);
+            m_start_addr += l.bytes.size();
+        }
     }
 }
 
@@ -563,7 +618,7 @@ bool Dashboard::scroll_up() {
     }
     else if (m_focus == FOCUS_CODE) {
         m_auto_follow = false;
-        m_code_view.scroll(-1);
+        m_code_view.move_cursor(-1);
         return true;
     }
     else if (m_focus == FOCUS_STACK) {
@@ -580,7 +635,7 @@ bool Dashboard::scroll_down() {
     }
     else if (m_focus == FOCUS_CODE) {
         m_auto_follow = false;
-        m_code_view.scroll(1);
+        m_code_view.move_cursor(1);
         return true;
     }
     else if (m_focus == FOCUS_STACK) {
@@ -1203,6 +1258,7 @@ void Dashboard::update_code_view() {
     }
     m_code_view.set_address(scan_pc);
     m_code_view.set_skip_lines(skip);
+    m_code_view.set_cursor(pc);
 }
 
 void Dashboard::update_stack_view() {

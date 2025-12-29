@@ -13,6 +13,10 @@ std::string Terminal::RESET = "\033[0m";
 std::string Terminal::BOLD  = "\033[1m";
 std::string Terminal::DIM   = "\033[2m";
 std::string Terminal::CLEAR = "\033[H\033[2J\033[3J";
+std::string Terminal::ARROW_UP    = "\xE2\x86\x91";
+std::string Terminal::ARROW_DOWN  = "\xE2\x86\x93";
+std::string Terminal::ARROW_LEFT  = "\xE2\x86\x90";
+std::string Terminal::ARROW_RIGHT = "\xE2\x86\x92";
 
 std::string Terminal::rgb_fg(uint8_t r, uint8_t g, uint8_t b) {
     return "\033[38;2;" + std::to_string(r) + ";" + std::to_string(g) + ";" + std::to_string(b) + "m";
@@ -74,15 +78,19 @@ Terminal::Input Terminal::read_key() {
             int sc = _getch();
             switch (sc) {
                 case 72:
+                case 141:
                     input.key = Key::UP;
                     break;
                 case 80:
+                case 145:
                     input.key = Key::DOWN;
                     break;
                 case 77:
+                case 116:
                     input.key = Key::RIGHT;
                     break;
                 case 75:
+                case 115:
                     input.key = Key::LEFT;
                     break;
                 case 71:
@@ -148,9 +156,17 @@ Terminal::Input Terminal::read_key() {
                     case 'F':
                         input.key = Key::END;
                         break;
+                    case '1':
+                        if (read(STDIN_FILENO, &c, 1) == 1 && c == '~')
+                            input.key = Key::HOME;
+                        break;
                     case '3': 
                         if (read(STDIN_FILENO, &c, 1) == 1 && c == '~')
                             input.key = Key::DEL; 
+                        break;
+                    case '4':
+                        if (read(STDIN_FILENO, &c, 1) == 1 && c == '~')
+                            input.key = Key::END;
                         break;
                     case 'Z':
                         input.key = Key::SHIFT_TAB;
@@ -163,6 +179,18 @@ Terminal::Input Terminal::read_key() {
                         break;
                     case 'F':
                         input.key = Key::END;
+                        break;
+                    case 'A':
+                        input.key = Key::UP;
+                        break;
+                    case 'B':
+                        input.key = Key::DOWN;
+                        break;
+                    case 'C':
+                        input.key = Key::RIGHT;
+                        break;
+                    case 'D':
+                        input.key = Key::LEFT;
                         break;
                 }
             }
