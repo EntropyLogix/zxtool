@@ -705,13 +705,25 @@ void Dashboard::run() {
         if (!handled) {
             if (m_focus == FOCUS_CMD) {
                 if (in.key == Terminal::Key::ESC) {
-                    m_editor.clear();
+                    if (!m_editor.get_line().empty()) {
+                        m_editor.clear();
+                    } else {
+                        m_auto_follow = true;
+                        update_code_view();
+                        update_stack_view();
+                    }
                     needs_repaint = true;
                 } else
                     pass_to_editor = true;
             } else if (in.key == Terminal::Key::ESC) {
-                m_last_focus = m_focus;
-                m_focus = FOCUS_CMD;
+                if (!m_auto_follow) {
+                    m_auto_follow = true;
+                    update_code_view();
+                    update_stack_view();
+                } else {
+                    m_last_focus = m_focus;
+                    m_focus = FOCUS_CMD;
+                }
                 needs_repaint = true;
                 handled = true;
             } else if (!iscntrl(static_cast<unsigned char>(in.c)) || in.key == Terminal::Key::BACKSPACE || in.key == Terminal::Key::ENTER) {
@@ -835,6 +847,7 @@ void Dashboard::cmd_step(const std::string& args) {
         }
     }
     m_debugger.step(count);
+    m_auto_follow = true;
     update_code_view();
     update_stack_view();
 }

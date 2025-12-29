@@ -170,7 +170,7 @@ public:
 
 private:    
     enum Focus { FOCUS_MEMORY, FOCUS_REGS, FOCUS_STACK, FOCUS_CODE, FOCUS_WATCH, FOCUS_BREAKPOINTS, FOCUS_CMD, FOCUS_COUNT };
-    Focus m_focus = FOCUS_CMD;
+    Focus m_focus = FOCUS_CODE;
     Focus m_last_focus = FOCUS_CMD;
 
     Debugger& m_debugger;
