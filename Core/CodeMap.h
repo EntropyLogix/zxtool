@@ -5,7 +5,7 @@
 
 #include <vector>
 #include <cstdint>
-#include "../Z80Analyze.h"
+#include "Z80Analyze.h"
 #include "Memory.h"
 
 class CodeMap : public Z80Analyzer<Memory>::CodeMap {

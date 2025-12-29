@@ -237,10 +237,73 @@ std::vector<std::string> CodeView::render() {
     int lines_count = 0;
     int lines_to_skip = m_skip_lines;
     while (lines_count < m_rows) {
-        auto lines = m_core.get_analyzer().parse_code(temp_pc_iter, 1, code_map);
-        if (lines.empty())
-            break;
-        const auto& line = lines[0];
+        Z80Analyzer<Memory>::CodeLine line;
+        bool is_pc_line = (temp_pc_iter == m_pc);
+        bool conflict = false;
+        bool shadow = false;
+        bool is_orphan = false;
+
+        if (temp_pc_iter < m_pc) {
+            // Lookahead logic: Check for collision with PC ("Kill the Parent")
+            bool handled = false;
+            uint8_t flags = (*code_map)[temp_pc_iter];
+            
+            if (flags & CodeMap::FLAG_CODE_START) {
+                auto p = m_core.get_analyzer().parse_instruction(temp_pc_iter);
+                if (temp_pc_iter + p.bytes.size() > m_pc) {
+                    // Collision detected! Parent swallows PC. Kill the parent.
+                    line = m_core.get_analyzer().parse_db(temp_pc_iter, 1);
+                    is_orphan = true;
+                    handled = true;
+                } else {
+                    line = p;
+                    handled = true;
+                }
+            } else if (flags & CodeMap::FLAG_CODE_INTERIOR) {
+                // Orphaned byte from previous instruction (which was killed or scrolled out)
+                line = m_core.get_analyzer().parse_db(temp_pc_iter, 1);
+                shadow = true;
+                handled = true;
+            }
+            
+            if (!handled) {
+                // Heuristic check: if it looks like code that overlaps PC, kill it.
+                auto p = m_core.get_analyzer().parse_instruction(temp_pc_iter);
+                if (p.bytes.size() > 0 && temp_pc_iter + p.bytes.size() > m_pc) {
+                     line = m_core.get_analyzer().parse_db(temp_pc_iter, 1);
+                     is_orphan = true;
+                } else {
+                     // Use standard parsing respecting map (but avoid skipping)
+                     uint16_t next = temp_pc_iter;
+                     auto lines = m_core.get_analyzer().parse_code(next, 1, code_map);
+                     if (!lines.empty()) {
+                         line = lines[0];
+                         // Double check collision
+                         if (temp_pc_iter + line.bytes.size() > m_pc) {
+                             line = m_core.get_analyzer().parse_db(temp_pc_iter, 1);
+                             is_orphan = true;
+                         }
+                     } else {
+                         line = m_core.get_analyzer().parse_db(temp_pc_iter, 1);
+                     }
+                }
+            }
+        } else {
+            // At PC or after: CPU is always right
+            line = m_core.get_analyzer().parse_instruction(temp_pc_iter);
+            uint8_t flags = (*code_map)[(uint16_t)line.address];
+            
+            if (is_pc_line) {
+                if (flags & CodeMap::FLAG_CODE_INTERIOR) {
+                    // Logic Layer: PC is inside another instruction. Enforce new instruction.
+                    conflict = true;
+                    m_core.get_code_map().mark_code(temp_pc_iter, line.bytes.size(), true);
+                }
+            } else {
+                if (flags & CodeMap::FLAG_CODE_INTERIOR) shadow = true;
+            }
+        }
+
         auto& ctx = m_core.get_analyzer().context;
         const Comment* block_cmt = ctx.getComments().find((uint16_t)line.address, Comment::Type::Block);
         bool has_block_desc = block_cmt && !block_cmt->getText().empty();
@@ -293,7 +356,7 @@ std::vector<std::string> CodeView::render() {
             }
         }
         std::stringstream ss;
-        bool is_pc = ((uint16_t)line.address == m_pc);
+        bool is_pc = is_pc_line;
         bool is_traced = (m_debugger && m_debugger->is_traced((uint16_t)line.address));
         std::string bg = is_pc ? m_theme.pc_bg : "";
         std::string rst = is_pc ? (Terminal::RESET + bg) : Terminal::RESET;
@@ -301,12 +364,15 @@ std::vector<std::string> CodeView::render() {
             ss << bg << m_theme.header_blur << Terminal::BOLD << ">  " << rst;
         else
             ss << "   ";
-        if (is_pc)
-            ss << m_theme.pc_fg << Terminal::BOLD << Strings::hex((uint16_t)line.address) << rst << ": ";
-        else if (is_traced)
-            ss << m_theme.value_dim << Strings::hex((uint16_t)line.address) << rst << ": ";
-        else
-            ss << m_theme.address << Strings::hex((uint16_t)line.address) << rst << ": ";
+        
+        std::string addr_color = m_theme.address;
+        if (is_pc) addr_color = m_theme.pc_fg + Terminal::BOLD;
+        else if (conflict || is_orphan) addr_color = m_theme.error;
+        else if (shadow) addr_color = m_theme.value_dim;
+        else if (is_traced) addr_color = m_theme.value_dim;
+
+        ss << addr_color << Strings::hex((uint16_t)line.address) << rst << ": ";
+
         std::stringstream hex_ss;
         if (line.bytes.size() > 3)
             hex_ss << Strings::hex(line.bytes[0]) << " " << Strings::hex(line.bytes[1]) << " ..";
@@ -325,21 +391,27 @@ std::vector<std::string> CodeView::render() {
             ss << std::string(hex_pad, ' ');
         ss << "  ";
         std::stringstream mn_ss;
-        if (is_pc)
-            mn_ss << Terminal::BOLD << m_theme.pc_fg;
-        else if (is_traced)
-            mn_ss << m_theme.value_dim;
-        else
-            mn_ss << m_theme.mnemonic;
+        if (is_pc) mn_ss << Terminal::BOLD << m_theme.pc_fg;
+        else if (conflict || is_orphan) mn_ss << m_theme.error;
+        else if (shadow) mn_ss << m_theme.value_dim;
+        else if (is_traced) mn_ss << m_theme.value_dim;
+        else mn_ss << m_theme.mnemonic;
+        
         mn_ss << line.mnemonic << rst;
         if (!line.operands.empty()) {
             mn_ss << " ";
-            if (is_traced && !is_pc) {
+            if ((is_traced && !is_pc) || shadow) {
                 mn_ss << m_theme.value_dim;
                 format_operands(line, mn_ss, "", "");
-            } else
+            } else if (conflict || is_orphan) {
+                format_operands(line, mn_ss, m_theme.error, rst);
+            } else {
                 format_operands(line, mn_ss, m_theme.operand_num, rst);
+            }
         }
+        if (conflict) mn_ss << " (!)";
+        if (shadow) mn_ss << " (?)";
+        if (is_orphan) mn_ss << " (!)";
         std::string mn_str = mn_ss.str();
 
         int comment_col = 30;
@@ -432,6 +504,7 @@ std::vector<std::string> CodeView::render() {
             }
         }
         first_line = false;
+        temp_pc_iter += line.bytes.size();
     }
     return lines_out;
 }
