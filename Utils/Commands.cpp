@@ -50,8 +50,14 @@ Commands::ParamInfo Commands::analyze_params(const std::string& input, size_t op
     ParamInfo info;
     info.last_comma_pos = opener_pos;
     int depth = 0;
+    bool in_quote = false;
     for (size_t i = opener_pos + 1; i < input.length(); ++i) {
         char c = input[i];
+        if (c == '"') {
+            in_quote = !in_quote;
+            continue;
+        }
+        if (in_quote) continue;
         if (c == '(' || c == '[' || c == '{')
             depth++;
         else if (c == ')' || c == ']' || c == '}')

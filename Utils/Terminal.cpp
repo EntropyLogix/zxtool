@@ -281,7 +281,9 @@ Terminal::LineEditor::Result Terminal::LineEditor::on_key(const Input& in) {
         return Result::CONTINUE;
     } else if (in.key == Key::RIGHT) {
         if (m_cursor_pos < (int)m_buffer.length()) {
-            m_cursor_pos++;
+            do {
+                m_cursor_pos++;
+            } while (m_cursor_pos < (int)m_buffer.length() && (static_cast<unsigned char>(m_buffer[m_cursor_pos]) & 0xC0) == 0x80);
             update_hint();
         } else if (!m_current_hint.empty()) {
             m_buffer += m_current_hint;
@@ -291,7 +293,9 @@ Terminal::LineEditor::Result Terminal::LineEditor::on_key(const Input& in) {
         return Result::CONTINUE;
     } else if (in.key == Key::LEFT) {
         if (m_cursor_pos > 0) {
-            m_cursor_pos--;
+            do {
+                m_cursor_pos--;
+            } while (m_cursor_pos > 0 && (static_cast<unsigned char>(m_buffer[m_cursor_pos]) & 0xC0) == 0x80);
             update_hint();
         }
         return Result::CONTINUE;
@@ -326,8 +330,10 @@ Terminal::LineEditor::Result Terminal::LineEditor::on_key(const Input& in) {
         return Result::CONTINUE;
     } else if (in.key == Key::BACKSPACE) {
         if (m_cursor_pos > 0) {
-            m_buffer.erase(m_cursor_pos - 1, 1);
-            m_cursor_pos--;
+            do {
+                m_buffer.erase(m_cursor_pos - 1, 1);
+                m_cursor_pos--;
+            } while (m_cursor_pos > 0 && (static_cast<unsigned char>(m_buffer[m_cursor_pos]) & 0xC0) == 0x80);
             update_hint();
         }
         return Result::CONTINUE;

@@ -201,6 +201,108 @@ void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::o
     }
 }
 
+Z80Analyzer<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& conflict, bool& shadow, bool& is_orphan) {
+    Z80Analyzer<Memory>::CodeLine line;
+    auto* code_map = &m_core.get_code_map();
+    bool is_pc_line = (addr == m_pc);
+    conflict = false;
+    shadow = false;
+    is_orphan = false;
+
+    if (addr < m_pc) {
+        // Lookahead logic: Check for collision with PC ("Kill the Parent")
+        bool handled = false;
+        uint8_t flags = (*code_map)[addr];
+        
+        if (flags & CodeMap::FLAG_CODE_START) {
+            auto p = m_core.get_analyzer().parse_instruction(addr);
+            if (addr + p.bytes.size() > m_pc) {
+                // Collision detected! Parent swallows PC. Kill the parent.
+                line = m_core.get_analyzer().parse_db(addr, 1);
+                is_orphan = true;
+                handled = true;
+            } else {
+                line = p;
+                handled = true;
+            }
+        } else if (flags & CodeMap::FLAG_CODE_INTERIOR) {
+            // Orphaned byte from previous instruction (which was killed or scrolled out)
+            line = m_core.get_analyzer().parse_db(addr, 1);
+            shadow = true;
+            handled = true;
+        }
+        
+        if (!handled) {
+            // Heuristic check: if it looks like code that overlaps PC, kill it.
+            auto p = m_core.get_analyzer().parse_instruction(addr);
+            if (p.bytes.size() > 0 && addr + p.bytes.size() > m_pc) {
+                    line = m_core.get_analyzer().parse_db(addr, 1);
+                    is_orphan = true;
+            } else {
+                    // Use standard parsing respecting map (but avoid skipping)
+                    uint16_t next = addr;
+                    auto lines = m_core.get_analyzer().parse_code(next, 1, code_map);
+                    if (!lines.empty()) {
+                        line = lines[0];
+                        // Double check collision
+                        if (addr + line.bytes.size() > m_pc) {
+                            line = m_core.get_analyzer().parse_db(addr, 1);
+                            is_orphan = true;
+                        }
+                    } else {
+                        line = m_core.get_analyzer().parse_db(addr, 1);
+                    }
+            }
+        }
+    } else {
+        // At PC or after: CPU is always right
+        line = m_core.get_analyzer().parse_instruction(addr);
+        uint8_t flags = (*code_map)[(uint16_t)line.address];
+        
+        if (is_pc_line) {
+            if (flags & CodeMap::FLAG_CODE_INTERIOR) {
+                // Logic Layer: PC is inside another instruction. Enforce new instruction.
+                conflict = true;
+                m_core.get_code_map().mark_code(addr, line.bytes.size(), true);
+            }
+        } else {
+            if (flags & CodeMap::FLAG_CODE_INTERIOR) shadow = true;
+        }
+    }
+    return line;
+}
+
+CodeView::DisasmInfo CodeView::format_disasm(const Z80Analyzer<Memory>::CodeLine& line, bool is_pc, bool conflict, bool shadow, bool is_orphan, bool is_traced, bool is_smc) {
+    std::stringstream mn_ss;
+    std::string rst = is_pc ? (Terminal::RESET + m_theme.pc_bg) : Terminal::RESET;
+
+    if (is_pc) mn_ss << Terminal::BOLD << m_theme.pc_fg;
+    else if (conflict || is_orphan) mn_ss << m_theme.error;
+    else if (shadow) mn_ss << m_theme.value_dim;
+    else if (is_traced) mn_ss << m_theme.value_dim;
+    else mn_ss << m_theme.mnemonic;
+    
+    mn_ss << line.mnemonic << rst;
+    if (!line.operands.empty()) {
+        mn_ss << " ";
+        if ((is_traced && !is_pc) || shadow) {
+            mn_ss << m_theme.value_dim;
+            format_operands(line, mn_ss, "", "");
+        } else if (conflict || is_orphan) {
+            format_operands(line, mn_ss, m_theme.error, rst);
+        } else {
+            format_operands(line, mn_ss, m_theme.operand_num, rst);
+        }
+    }
+    if (conflict) mn_ss << " (!)";
+    if (shadow) mn_ss << " (?)";
+    if (is_orphan) mn_ss << " (!)";
+
+    std::string mn_str = mn_ss.str();
+    int visible_len = (int)Strings::length(mn_str);
+    return {mn_str, visible_len};
+}
+
 std::vector<std::string> CodeView::render() {
     std::vector<std::string> lines_out;
     long long delta = (long long)m_tstates - m_prev_tstates;
@@ -218,8 +320,18 @@ std::vector<std::string> CodeView::render() {
         uint16_t temp_hist = hist_addr;
         auto line = m_core.get_analyzer().parse_instruction(temp_hist);
         if (!line.mnemonic.empty()) {
+            bool is_smc = false;
+            auto* code_map = &m_core.get_code_map();
+            for (size_t i = 0; i < line.bytes.size(); ++i) {
+                if ((*code_map)[(uint16_t)(line.address + i)] & CodeMap::FLAG_DATA_WRITE) {
+                    is_smc = true;
+                    break;
+                }
+            }
             std::stringstream ss;
-            ss << "  " << m_theme.value_dim << Strings::hex((uint16_t)line.address) << ": ";
+            if (is_smc) ss << m_theme.value_dim << "M " << Terminal::RESET;
+            else ss << "  ";
+            ss << m_theme.value_dim << Strings::hex((uint16_t)line.address) << ": ";
             for (size_t i = 0; i < std::min((size_t)4, line.bytes.size()); ++i)
                 ss << Strings::hex(line.bytes[i]) << " ";
             for (size_t i = line.bytes.size(); i<4; ++i)
@@ -232,75 +344,20 @@ std::vector<std::string> CodeView::render() {
         }
     }
     uint16_t temp_pc_iter = m_start_addr;
-    auto* code_map = &m_core.get_code_map();
     bool first_line = true;
     int lines_count = 0;
     int lines_to_skip = m_skip_lines;
     while (lines_count < m_rows) {
-        Z80Analyzer<Memory>::CodeLine line;
-        bool is_pc_line = (temp_pc_iter == m_pc);
-        bool conflict = false;
-        bool shadow = false;
-        bool is_orphan = false;
+        bool conflict = false, shadow = false, is_orphan = false;
+        auto line = resolve_line(temp_pc_iter, conflict, shadow, is_orphan);
+        bool is_pc = (temp_pc_iter == m_pc);
 
-        if (temp_pc_iter < m_pc) {
-            // Lookahead logic: Check for collision with PC ("Kill the Parent")
-            bool handled = false;
-            uint8_t flags = (*code_map)[temp_pc_iter];
-            
-            if (flags & CodeMap::FLAG_CODE_START) {
-                auto p = m_core.get_analyzer().parse_instruction(temp_pc_iter);
-                if (temp_pc_iter + p.bytes.size() > m_pc) {
-                    // Collision detected! Parent swallows PC. Kill the parent.
-                    line = m_core.get_analyzer().parse_db(temp_pc_iter, 1);
-                    is_orphan = true;
-                    handled = true;
-                } else {
-                    line = p;
-                    handled = true;
-                }
-            } else if (flags & CodeMap::FLAG_CODE_INTERIOR) {
-                // Orphaned byte from previous instruction (which was killed or scrolled out)
-                line = m_core.get_analyzer().parse_db(temp_pc_iter, 1);
-                shadow = true;
-                handled = true;
-            }
-            
-            if (!handled) {
-                // Heuristic check: if it looks like code that overlaps PC, kill it.
-                auto p = m_core.get_analyzer().parse_instruction(temp_pc_iter);
-                if (p.bytes.size() > 0 && temp_pc_iter + p.bytes.size() > m_pc) {
-                     line = m_core.get_analyzer().parse_db(temp_pc_iter, 1);
-                     is_orphan = true;
-                } else {
-                     // Use standard parsing respecting map (but avoid skipping)
-                     uint16_t next = temp_pc_iter;
-                     auto lines = m_core.get_analyzer().parse_code(next, 1, code_map);
-                     if (!lines.empty()) {
-                         line = lines[0];
-                         // Double check collision
-                         if (temp_pc_iter + line.bytes.size() > m_pc) {
-                             line = m_core.get_analyzer().parse_db(temp_pc_iter, 1);
-                             is_orphan = true;
-                         }
-                     } else {
-                         line = m_core.get_analyzer().parse_db(temp_pc_iter, 1);
-                     }
-                }
-            }
-        } else {
-            // At PC or after: CPU is always right
-            line = m_core.get_analyzer().parse_instruction(temp_pc_iter);
-            uint8_t flags = (*code_map)[(uint16_t)line.address];
-            
-            if (is_pc_line) {
-                if (flags & CodeMap::FLAG_CODE_INTERIOR) {
-                    // Logic Layer: PC is inside another instruction. Enforce new instruction.
-                    conflict = true;
-                    m_core.get_code_map().mark_code(temp_pc_iter, line.bytes.size(), true);
-                }
-            } else {
-                if (flags & CodeMap::FLAG_CODE_INTERIOR) shadow = true;
+        bool is_smc = false;
+        auto* code_map = &m_core.get_code_map();
+        for (size_t i = 0; i < line.bytes.size(); ++i) {
+            if ((*code_map)[(uint16_t)(line.address + i)] & CodeMap::FLAG_DATA_WRITE) {
+                is_smc = true;
+                break;
             }
         }
 
@@ -356,12 +413,15 @@ std::vector<std::string> CodeView::render() {
             }
         }
         std::stringstream ss;
-        bool is_pc = is_pc_line;
         bool is_traced = (m_debugger && m_debugger->is_traced((uint16_t)line.address));
         std::string bg = is_pc ? m_theme.pc_bg : "";
         std::string rst = is_pc ? (Terminal::RESET + bg) : Terminal::RESET;
         if (is_pc) 
-            ss << bg << m_theme.header_blur << Terminal::BOLD << ">  " << rst;
+            ss << bg << m_theme.header_blur << Terminal::BOLD << (is_smc ? ">M " : ">  ") << rst;
+        else if (is_smc) {
+            if (shadow || is_traced) ss << m_theme.value_dim << "M  " << rst;
+            else ss << m_theme.error << "M  " << rst;
+        }
         else
             ss << "   ";
         
@@ -390,40 +450,11 @@ std::vector<std::string> CodeView::render() {
         if (hex_pad > 0)
             ss << std::string(hex_pad, ' ');
         ss << "  ";
-        std::stringstream mn_ss;
-        if (is_pc) mn_ss << Terminal::BOLD << m_theme.pc_fg;
-        else if (conflict || is_orphan) mn_ss << m_theme.error;
-        else if (shadow) mn_ss << m_theme.value_dim;
-        else if (is_traced) mn_ss << m_theme.value_dim;
-        else mn_ss << m_theme.mnemonic;
         
-        mn_ss << line.mnemonic << rst;
-        if (!line.operands.empty()) {
-            mn_ss << " ";
-            if ((is_traced && !is_pc) || shadow) {
-                mn_ss << m_theme.value_dim;
-                format_operands(line, mn_ss, "", "");
-            } else if (conflict || is_orphan) {
-                format_operands(line, mn_ss, m_theme.error, rst);
-            } else {
-                format_operands(line, mn_ss, m_theme.operand_num, rst);
-            }
-        }
-        if (conflict) mn_ss << " (!)";
-        if (shadow) mn_ss << " (?)";
-        if (is_orphan) mn_ss << " (!)";
-        std::string mn_str = mn_ss.str();
-
+        auto disasm_info = format_disasm(line, is_pc, conflict, shadow, is_orphan, is_traced, is_smc);
+        ss << disasm_info.text;
         int comment_col = 30;
-        int visible_len = 0;
-        bool in_esc = false;
-        for (char c : mn_str) {
-            if (c == '\033') in_esc = true;
-            else if (in_esc) { if (c == 'm') in_esc = false; }
-            else visible_len++;
-        }
-        ss << mn_str;
-        int padding = comment_col - visible_len;
+        int padding = comment_col - disasm_info.visible_len;
         if (padding < 1) padding = 1;
         ss << std::string(padding, ' ');
 
@@ -434,7 +465,7 @@ std::vector<std::string> CodeView::render() {
              if (!comment.empty()) {
                  std::string cmt_full = "; " + comment;
                  int max_width = (m_width > 0) ? m_width : 80;
-                 int current_len = visible_len + padding;
+                 int current_len = disasm_info.visible_len + padding;
                  int available = max_width - current_len;
                  if (available < 10) available = 10;
 
@@ -893,7 +924,26 @@ void Dashboard::cmd_break(const std::string& args) {
 }
 
 void Dashboard::handle_command(const std::string& input) {
-    std::string clean_input = Strings::trim(input);
+    std::string sanitized_input;
+    for (size_t i = 0; i < input.length(); ++i) {
+        unsigned char c = static_cast<unsigned char>(input[i]);
+        if (c < 128) {
+            sanitized_input += (char)c;
+        } else if (i + 2 < input.length()) {
+            unsigned char c2 = static_cast<unsigned char>(input[i+1]);
+            unsigned char c3 = static_cast<unsigned char>(input[i+2]);
+            if (c == 0xE2 && c2 == 0x80) {
+                if (c3 == 0x9C || c3 == 0x9D) { // “ ”
+                    sanitized_input += '"';
+                    i += 2;
+                } else if (c3 == 0x98 || c3 == 0x99) { // ‘ ’
+                    sanitized_input += '\'';
+                    i += 2;
+                } else sanitized_input += input[i];
+            } else sanitized_input += input[i];
+        } else sanitized_input += input[i];
+    }
+    std::string clean_input = Strings::trim(sanitized_input);
     if (clean_input.empty())
         return;
     const CommandEntry* best_entry = nullptr;
@@ -1036,10 +1086,24 @@ void Dashboard::print_dashboard() {
         std::cout << ss.str() << "\n";
         print_separator();
     }
+    bool is_smc = false;
+    auto line = core.get_analyzer().parse_instruction(pc);
+    for (size_t i = 0; i < line.bytes.size(); ++i) {
+        if (core.get_code_map()[(uint16_t)(pc + i)] & CodeMap::FLAG_DATA_WRITE) {
+            is_smc = true;
+            break;
+        }
+    }
+    if (is_smc) {
+         std::stringstream ss;
+         ss << m_theme.error << "[STATUS] SMC Detected at $" << Strings::hex(pc) << "!";
+         log(ss.str());
+    }
     bool has_output = (m_output_buffer.tellp() > 0);
     print_output_buffer();
     if (has_output || !m_show_watch)
         print_separator();
+
     print_footer();
     std::cout << std::flush;
 }
