@@ -27,25 +27,54 @@ std::string DebugView::format_header(const std::string& title, const std::string
     return ss.str();
 }
 
+void MemoryView::set_address(uint16_t addr) {
+    m_cursor_addr = addr;
+    m_view_addr = addr & 0xFFF0;
+}
+
+void MemoryView::scroll(int delta) {
+    m_cursor_addr += delta;
+    ensure_visible();
+}
+
+void MemoryView::ensure_visible() {
+    int16_t dist = (int16_t)(m_cursor_addr - m_view_addr);
+    int view_size = m_rows * 16;
+    if (dist < 0) {
+        m_view_addr = m_cursor_addr & 0xFFF0;
+    } else if (dist >= view_size) {
+        m_view_addr = (m_cursor_addr & 0xFFF0) - (m_rows - 1) * 16;
+    }
+}
+
 std::vector<std::string> MemoryView::render() {
     std::vector<std::string> lines;
     std::string sep = m_theme.separator + std::string(80, '-') + Terminal::RESET;
     lines.push_back(sep);
+
+    uint16_t cursor_addr = m_cursor_addr;
+    uint16_t view_start = m_view_addr;
+
     std::stringstream extra;
-    extra << m_theme.value_dim << " View: " << m_theme.value_dim << Strings::hex(m_start_addr) << Terminal::RESET;
+    extra << m_theme.value_dim << " View: " << m_theme.value_dim << Strings::hex(cursor_addr) << Terminal::RESET;
     lines.push_back(format_header("MEMORY", extra.str()));
     lines.push_back(sep);
     auto& mem = m_core.get_memory();
     for (int row = 0; row < m_rows; ++row) {
         std::stringstream ss;
-        uint16_t addr = m_start_addr + (row * 16);
-        ss << m_theme.address << Strings::hex(addr) << Terminal::RESET << ": ";
+        uint16_t base_addr = view_start + (uint16_t)(row * 16);
+        ss << m_theme.address << Strings::hex(base_addr) << Terminal::RESET << ": ";
         for (size_t j = 0; j < 16; ++j) {
-            uint8_t b = mem.peek(addr + j);
+            uint16_t real_addr = base_addr + (uint16_t)j;
+            uint8_t b = mem.peek(real_addr);
+            bool is_cursor = (real_addr == cursor_addr);
+            
+            if (is_cursor) ss << m_theme.pc_bg;
             if (b == 0)
                 ss << m_theme.value_dim << "00" << Terminal::RESET;
             else
-                ss << Strings::hex(b);
+                ss << Strings::hex(b) << (is_cursor ? Terminal::RESET : "");
+            
             if (j == 7)
                 ss << "  ";
             else if (j == 15)
@@ -55,7 +84,10 @@ std::vector<std::string> MemoryView::render() {
         }
         ss << m_theme.separator << "|" << Terminal::RESET << " ";
         for (size_t j = 0; j < 16; ++j) {
-            uint8_t val = mem.peek(addr + j);
+            uint16_t real_addr = base_addr + (uint16_t)j;
+            uint8_t val = mem.peek(real_addr);
+            bool is_cursor = (real_addr == cursor_addr);
+            if (is_cursor) ss << m_theme.pc_bg;
             if (std::isprint(val))
                 ss << m_theme.highlight << (char)val << Terminal::RESET;
             else
@@ -819,71 +851,102 @@ void Dashboard::run() {
         Terminal::Input in = Terminal::read_key();
         if (in.key == Terminal::Key::NONE)
             continue;
-        if (in.key == Terminal::Key::SHIFT_TAB || (in.key == Terminal::Key::TAB && (m_focus != FOCUS_CMD || Strings::trim(m_editor.get_line()).empty()))) {
+
+        bool handled = false;
+        bool pass_to_editor = false;
+        bool cmd_empty = m_editor.get_line().empty();
+
+        // 1. Global Navigation (Tab / Shift-Tab)
+        if (in.key == Terminal::Key::SHIFT_TAB) {
             m_last_focus = FOCUS_CMD; // Reset toggle history on manual navigation
             m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT); 
             validate_focus();
             needs_repaint = true;
-            continue;
-        }
-
-        bool handled = false;
-
-        if (m_focus != FOCUS_CMD) {
-            if ((in.key == Terminal::Key::UP && scroll_up()) || (in.key == Terminal::Key::DOWN && scroll_down())) {
-                needs_repaint = true;
-                handled = true;
-            } else if (in.c == ' ') {
-                m_last_focus = m_focus;
-                m_focus = FOCUS_CMD;
-                needs_repaint = true;
-                handled = true;
-            }
-        } else {
-            if (in.c == ' ' && Strings::trim(m_editor.get_line()).empty()) {
-                if (m_last_focus != FOCUS_CMD)
-                    m_focus = m_last_focus;
-                else
-                    m_focus = FOCUS_CODE;
+            handled = true;
+        } else if (in.key == Terminal::Key::TAB) {
+            if (cmd_empty) {
+                m_last_focus = FOCUS_CMD; 
+                m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT); 
                 validate_focus();
                 needs_repaint = true;
                 handled = true;
-                m_editor.clear();
             }
         }
 
-        bool pass_to_editor = false;
+        // 2. View Specific Navigation (Precedence if focused)
+        if (!handled && m_focus != FOCUS_CMD) {
+            if ((in.key == Terminal::Key::UP && scroll_up()) || (in.key == Terminal::Key::DOWN && scroll_down())) {
+                needs_repaint = true;
+                handled = true;
+            } else if (m_focus == FOCUS_MEMORY && (in.key == Terminal::Key::LEFT || in.key == Terminal::Key::RIGHT)) {
+                m_memory_view.scroll(in.key == Terminal::Key::LEFT ? -1 : 1);
+                needs_repaint = true;
+                handled = true;
+            }
+        }
 
-        if (!handled) {
-            if (m_focus == FOCUS_CMD) {
-                if (in.key == Terminal::Key::ESC) {
-                    if (!m_editor.get_line().empty()) {
-                        m_editor.clear();
-                    } else {
-                        m_auto_follow = true;
-                        update_code_view();
-                        update_stack_view();
-                    }
+        // 3. Space Toggle
+        if (!handled && in.c == ' ') {
+            if (m_focus != FOCUS_CMD) {
+                if (cmd_empty) {
+                    m_last_focus = m_focus;
+                    m_focus = FOCUS_CMD;
                     needs_repaint = true;
-                } else
-                    pass_to_editor = true;
-            } else if (in.key == Terminal::Key::ESC) {
+                    handled = true;
+                }
+            } else {
+                if (cmd_empty) {
+                    if (m_last_focus != FOCUS_CMD) m_focus = m_last_focus;
+                    else m_focus = FOCUS_CODE;
+                    validate_focus();
+                    needs_repaint = true;
+                    handled = true;
+                }
+            }
+        }
+
+        // 4. ESC Handling
+        if (!handled && in.key == Terminal::Key::ESC) {
+            if (m_focus == FOCUS_CMD) {
+                if (!cmd_empty) {
+                    m_editor.clear();
+                    needs_repaint = true;
+                    handled = true;
+                } else {
+                    m_auto_follow = true;
+                    update_code_view();
+                    update_stack_view();
+                    needs_repaint = true;
+                    handled = true;
+                }
+            } else {
                 if (!m_auto_follow) {
                     m_auto_follow = true;
                     update_code_view();
                     update_stack_view();
-                } else if (m_focus != FOCUS_CODE) {
+                    needs_repaint = true;
+                    handled = true;
+                } else {
                     m_last_focus = m_focus;
                     m_focus = FOCUS_CMD;
+                    needs_repaint = true;
+                    handled = true;
                 }
-                needs_repaint = true;
-                handled = true;
-            } else if (!iscntrl(static_cast<unsigned char>(in.c)) || in.key == Terminal::Key::BACKSPACE || in.key == Terminal::Key::ENTER) {
-                pass_to_editor = true;
             }
         }
 
-        if (!handled && pass_to_editor) {
+        // 5. Pass to Editor
+        if (!handled) {
+            if (m_focus == FOCUS_CMD) {
+                pass_to_editor = true;
+            } else {
+                if (!iscntrl(static_cast<unsigned char>(in.c)) || in.key == Terminal::Key::BACKSPACE || in.key == Terminal::Key::ENTER || in.key == Terminal::Key::TAB) {
+                    pass_to_editor = true;
+                }
+            }
+        }
+
+        if (pass_to_editor) {
             auto res = m_editor.on_key(in);
             if (res == Terminal::LineEditor::Result::SUBMIT) {
                 std::string cmd = m_editor.get_line();
@@ -1175,6 +1238,39 @@ void Dashboard::handle_command(const std::string& input) {
         m_auto_follow = true;
         update_code_view();
         update_stack_view();
+        return;
+    }
+
+    if (clean_input == "m" || clean_input == "memory" || clean_input.find("m ") == 0 || clean_input.find("memory ") == 0) {
+        std::string args;
+        if (clean_input.find("memory") == 0) {
+             if (clean_input.length() > 6) args = Strings::trim(clean_input.substr(6));
+        } else {
+             if (clean_input.length() > 1) args = Strings::trim(clean_input.substr(1));
+        }
+        
+        if (args.empty()) {
+            m_focus = FOCUS_MEMORY;
+            m_show_mem = true;
+            return;
+        }
+        try {
+            Expression eval(m_debugger.get_core());
+            auto val = eval.evaluate(args);
+            uint16_t addr = 0;
+            if (val.is_address() && !val.address().empty()) addr = val.address()[0];
+            else if (val.is_number()) addr = (uint16_t)val.number();
+            else if (val.is_symbol()) addr = val.symbol().read();
+            else if (val.is_register()) addr = val.reg().read(m_debugger.get_core().get_cpu());
+            else { m_output_buffer << "Invalid address.\n"; return; }
+            
+            m_memory_view.set_address(addr);
+            m_focus = FOCUS_MEMORY;
+            m_show_mem = true;
+            m_output_buffer << "Memory cursor set to $" << Strings::hex(addr) << "\n";
+        } catch (const std::exception& e) {
+            m_output_buffer << "Error: " << e.what() << "\n";
+        }
         return;
     }
 

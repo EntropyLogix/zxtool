@@ -64,11 +64,13 @@ class MemoryView : public DebugView {
 public:
     MemoryView(Core& core, int rows, const Theme& theme) : DebugView(core, theme) { m_rows = rows; }
     std::vector<std::string> render() override;
-    void set_address(uint16_t addr) { m_start_addr = addr; }
-    uint16_t get_address() const { return m_start_addr; }
-    void scroll(int delta) { m_start_addr += delta; }
+    void set_address(uint16_t addr);
+    uint16_t get_address() const { return m_cursor_addr; }
+    void scroll(int delta);
 private:
-    uint16_t m_start_addr = 0;
+    void ensure_visible();
+    uint16_t m_cursor_addr = 0;
+    uint16_t m_view_addr = 0;
 };
 
 class RegisterView : public DebugView {

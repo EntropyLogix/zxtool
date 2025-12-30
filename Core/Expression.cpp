@@ -1887,9 +1887,13 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
         throw;
     }
     if (target.is_register()) {
+        if (!rhs.is_scalar())
+            syntax_error(ErrorCode::EVAL_TYPE_MISMATCH, "Cannot assign non-scalar value to a register");
         uint16_t num = (uint16_t)rhs.get_scalar(m_core);
         target.reg().write(m_core.get_cpu(), num);
     } else if (target.is_symbol()) {
+        if (!rhs.is_scalar())
+            syntax_error(ErrorCode::EVAL_TYPE_MISMATCH, "Cannot assign non-scalar value to a symbol");
         uint16_t num = (uint16_t)rhs.get_scalar(m_core);
         std::string name = target.symbol().getName();
         auto& ctx = m_core.get_context();
