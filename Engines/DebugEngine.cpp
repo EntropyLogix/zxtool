@@ -591,16 +591,62 @@ void CodeView::move_cursor(int delta) {
     } else {
         auto line = m_core.get_analyzer().parse_instruction(m_cursor_addr);
         m_cursor_addr += line.bytes.size();
-        uint16_t p = m_start_addr;
-        bool visible = false;
-        for(int i=0; i<m_rows; ++i) {
-            if (p == m_cursor_addr) { visible = true; break; }
-            auto l = m_core.get_analyzer().parse_instruction(p);
-            p += l.bytes.size();
-        }
-        if (!visible) {
+        
+        while (true) {
+            int lines_generated = 0;
+            uint16_t p = m_start_addr;
+            bool visible = false;
+            int limit = m_rows + m_skip_lines;
+
+            while (lines_generated < limit + 50) {
+                if (p == m_cursor_addr) {
+                    int meta_lines = 0;
+                    if (!m_core.get_context().getSymbols().get_label(p).empty()) meta_lines++;
+                    const Comment* block_cmt = m_core.get_context().getComments().find(p, Comment::Type::Block);
+                    if (block_cmt && !block_cmt->getText().empty()) {
+                        std::string text = block_cmt->getText();
+                        meta_lines += std::count(text.begin(), text.end(), '\n') + 1;
+                    }
+                    int instr_line_index = lines_generated + meta_lines;
+                    if (instr_line_index >= m_skip_lines && instr_line_index < limit)
+                        visible = true;
+                    break;
+                }
+
+                int instr_lines = 1;
+                if (!m_core.get_context().getSymbols().get_label(p).empty()) instr_lines++;
+                const Comment* block_cmt = m_core.get_context().getComments().find(p, Comment::Type::Block);
+                if (block_cmt && !block_cmt->getText().empty()) {
+                    std::string text = block_cmt->getText();
+                    instr_lines += std::count(text.begin(), text.end(), '\n') + 1;
+                }
+                lines_generated += instr_lines;
+
+                auto l = m_core.get_analyzer().parse_instruction(p);
+                if (l.bytes.empty()) p++; else p += l.bytes.size();
+                
+                if (lines_generated > limit + 50) break;
+            }
+
+            if (visible) break;
+
+            if (m_start_addr == m_cursor_addr) {
+                int meta_lines = 0;
+                if (!m_core.get_context().getSymbols().get_label(m_start_addr).empty()) meta_lines++;
+                const Comment* block_cmt = m_core.get_context().getComments().find(m_start_addr, Comment::Type::Block);
+                if (block_cmt && !block_cmt->getText().empty()) {
+                    std::string text = block_cmt->getText();
+                    meta_lines += std::count(text.begin(), text.end(), '\n') + 1;
+                }
+                if (meta_lines - m_skip_lines >= m_rows) {
+                    m_skip_lines = meta_lines - m_rows + 1;
+                }
+                break;
+            }
+            
             auto l = m_core.get_analyzer().parse_instruction(m_start_addr);
             m_start_addr += l.bytes.size();
+            m_skip_lines = 0;
         }
     }
 }
@@ -671,7 +717,7 @@ void Dashboard::run() {
         Terminal::Input in = Terminal::read_key();
         if (in.key == Terminal::Key::NONE)
             continue;
-        if (in.key == Terminal::Key::SHIFT_TAB || (in.key == Terminal::Key::TAB && (m_focus != FOCUS_CMD || m_editor.get_line().empty()))) {
+        if (in.key == Terminal::Key::SHIFT_TAB || (in.key == Terminal::Key::TAB && m_focus != FOCUS_CMD)) {
             m_last_focus = FOCUS_CMD; // Reset toggle history on manual navigation
             m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT); 
             validate_focus();
@@ -692,11 +738,15 @@ void Dashboard::run() {
                 handled = true;
             }
         } else {
-            if (in.c == ' ' && m_editor.get_line().empty() && m_last_focus != FOCUS_CMD) {
-                m_focus = m_last_focus;
+            if (in.c == ' ' && Strings::trim(m_editor.get_line()).empty()) {
+                if (m_last_focus != FOCUS_CMD)
+                    m_focus = m_last_focus;
+                else
+                    m_focus = FOCUS_CODE;
                 validate_focus();
                 needs_repaint = true;
                 handled = true;
+                m_editor.clear();
             }
         }
 
@@ -720,7 +770,7 @@ void Dashboard::run() {
                     m_auto_follow = true;
                     update_code_view();
                     update_stack_view();
-                } else {
+                } else if (m_focus != FOCUS_CODE) {
                     m_last_focus = m_focus;
                     m_focus = FOCUS_CMD;
                 }
@@ -797,6 +847,9 @@ void Dashboard::perform_set(const std::string& args_str, bool detailed) {
 
         eval.assign(lhs_str, val);
         m_output_buffer << lhs_str << " = " << format(val, detailed) << "\n";
+        if (Strings::upper(lhs_str) == "PC") {
+            m_auto_follow = true;
+        }
         update_code_view();
         update_stack_view();
     } catch (const std::exception& e) {
@@ -1014,6 +1067,15 @@ void Dashboard::handle_command(const std::string& input) {
     std::string clean_input = Strings::trim(sanitized_input);
     if (clean_input.empty())
         return;
+
+    if (clean_input == "n" || clean_input == "next" || clean_input.find("next ") == 0) {
+        m_debugger.next();
+        m_auto_follow = true;
+        update_code_view();
+        update_stack_view();
+        return;
+    }
+
     const CommandEntry* best_entry = nullptr;
     std::string best_cmd;
     for (const auto& pair : m_commands) {
@@ -1231,7 +1293,6 @@ void Dashboard::update_code_view() {
     int accumulated_lines_above = pc_meta_lines;
     uint16_t scan_pc = pc;
     int skip = 0;
-    int data_bytes_accumulator = 0;
 
     if (accumulated_lines_above >= target_row) {
         // PC metadata alone fills the space above
@@ -1249,10 +1310,8 @@ void Dashboard::update_code_view() {
 
             if (is_code || meta > 0) {
                 lines_added = 1 + meta;
-                data_bytes_accumulator = 0;
             } else {
-                if (data_bytes_accumulator == 0) lines_added = 1;
-                data_bytes_accumulator = (data_bytes_accumulator + 1) % 8;
+                lines_added = 1;
             }
             
             if (accumulated_lines_above + lines_added > target_row) {

@@ -45,7 +45,7 @@ public:
 protected:
     // --- Override głównej pętli generowania ---
     // Tu integrujemy wiedzę z CTL z logiką disassemblera
-    std::vector<CodeLine> generate_listing(CodeMap& map, uint16_t& start_address, size_t instruction_limit, bool use_map) override;
+    std::vector<CodeLine> generate_listing(CodeMap& map, uint16_t& start_address, size_t instruction_limit, bool use_map, size_t max_data_group) override;
 };
 
 #endif

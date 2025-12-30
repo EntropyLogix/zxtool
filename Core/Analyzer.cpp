@@ -14,7 +14,7 @@ Analyzer::ExtendedFlags Analyzer::get_map_type(const CodeMap& map, uint16_t addr
     return static_cast<ExtendedFlags>((map[addr] & TYPE_MASK) >> TYPE_SHIFT);
 }
 
-std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_t& start_address, size_t instruction_limit, bool use_map) {
+std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_t& start_address, size_t instruction_limit, bool use_map, size_t max_data_group) {
     std::vector<CodeLine> result;
     uint32_t pc = start_address;
 
@@ -77,16 +77,9 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
             }
         } 
         else if (forcedType == TYPE_BYTE) {
-            size_t count = 1;
-            while (pc + count < 0x10000 && get_map_type(map, pc+count) == TYPE_BYTE) {
-                if (context.getSymbols().find((uint16_t)(pc + count))) break;
-                count++;
-            }
-            if (count > 8)
-                count = 8; 
             uint16_t tmp = current_pc;
-            result.push_back(this->parse_db(tmp, count));
-            pc += count;
+            result.push_back(this->parse_db(tmp, 1));
+            pc++;
             pc &= 0xFFFF;
         }
         else if (forcedType == TYPE_WORD) {
@@ -124,14 +117,10 @@ std::vector<Analyzer::CodeLine> Analyzer::generate_listing(CodeMap& map, uint16_
         }
         else {
             // Unknown Data (from Profiler or Heuristic finding hole)
-            // Use base class grouping logic
-            this->group_data_blocks(pc, result, instruction_limit, [&](uint32_t addr) {
-                    if (addr >= 0x10000) return false;
-                    // Stop if we hit a known block type or code flag
-                    if (addr != pc && context.getSymbols().find((uint16_t)addr)) return false;
-                    if (get_map_type(map, addr) != TYPE_UNKNOWN) return false;
-                    return !(map[addr] & (CodeMap::FLAG_CODE_START | CodeMap::FLAG_CODE_INTERIOR));
-            });
+            // Default Strategy: "Vertical Stream" (1 byte = 1 line)
+            uint16_t tmp = current_pc;
+            result.push_back(this->parse_db(tmp, 1));
+            pc++;
             pc &= 0xFFFF;
         }
     }
