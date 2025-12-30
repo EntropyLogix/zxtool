@@ -108,9 +108,7 @@ std::string RegisterView::format_flags(uint8_t f, uint8_t prev_f) {
         bool prev_bit = (prev_f >> i) & 1;
         char c = bit ? syms[7-i] : '.';
         if (bit != prev_bit)
-            ss << m_theme.highlight << Terminal::BOLD << c << Terminal::RESET;
-        else if (bit)
-            ss << m_theme.value << c << Terminal::RESET;
+            ss << m_theme.highlight << c << Terminal::RESET;
         else
             ss << m_theme.value_dim << c << Terminal::RESET;
     }
@@ -119,20 +117,118 @@ std::string RegisterView::format_flags(uint8_t f, uint8_t prev_f) {
 
 std::vector<std::string> StackView::render() {
     std::vector<std::string> lines;
-    std::stringstream extra;
-    extra << m_theme.reg << " (SP=" << m_theme.value_dim << Strings::hex(m_core.get_cpu().get_SP()) << m_theme.reg << ")" << Terminal::RESET;
-    lines.push_back(format_header("STACK", extra.str()));
-    for (int row=0; row<m_rows; ++row) {
-        uint16_t addr = m_view_addr + row*2;
-        uint8_t l = m_core.get_memory().peek(addr);
-        uint8_t h = m_core.get_memory().peek(addr + 1);
+    uint16_t sp = m_core.get_cpu().get_SP();
+    
+    // Blueprint Light Theme Colors
+    std::string c_label  = Terminal::rgb_fg(0, 139, 139);   // Dark Cyan / Teal
+    std::string c_addr   = m_theme.value_dim;               // Gray (Address)
+    std::string c_val    = Terminal::rgb_fg(70, 130, 180);  // Steel Blue (Data)
+    std::string c_info   = Terminal::rgb_fg(105, 105, 105); // Dark Gray
+    std::string c_ghost  = Terminal::rgb_fg(192, 192, 192); // Light Gray
+    std::string c_delta  = Terminal::rgb_fg(0, 255, 255) + Terminal::BOLD; // Bright Cyan
+    std::string bg_active = Terminal::rgb_bg(255, 250, 205); // Pale Yellow
+    std::string rst      = Terminal::RESET;
+
+    lines.push_back(format_header("STACK"));
+
+    auto& mem = m_core.get_memory();
+    auto& symbols = m_core.get_context().getSymbols();
+
+    auto smart_decode = [&](uint16_t val) -> std::string {
+        // 1. Return Address (Priority #1)
+        uint8_t op_call = mem.peek(val - 3);
+        bool is_call = (op_call == 0xCD || (op_call & 0xC7) == 0xC4);
+        uint8_t op_rst = mem.peek(val - 1);
+        bool is_rst = ((op_rst & 0xC7) == 0xC7);
+
+        if (is_call || is_rst) {
+            auto pair = symbols.find_nearest(val);
+            if (!pair.first.empty()) {
+                std::stringstream ss;
+                ss << "ret: " << pair.first;
+                if (pair.second != val) ss << "+" << (int)(val - pair.second);
+                return ss.str();
+            }
+            return "ret";
+        }
+
+        // 2. Data Label (Priority #2)
+        const Symbol* sym = symbols.find(val);
+        if (sym) return "&" + sym->getName();
+
+        // 3. ASCII (Priority #3)
+        uint8_t l = val & 0xFF;
+        uint8_t h = val >> 8;
+        if (l >= 32 && l <= 126 && h >= 32 && h <= 126) {
+            std::stringstream ss;
+            ss << "'" << (char)l << (char)h << "'";
+            return ss.str();
+        }
+
+        // 4. Fallback (Empty)
+        return "";
+    };
+
+    if (m_view_addr == sp) {
+        uint16_t ghost_addr = sp - 2;
+        uint8_t l = mem.peek(ghost_addr);
+        uint8_t h = mem.peek(ghost_addr + 1);
         uint16_t val = l | (h << 8);
         std::stringstream ss;
-        ss << "  " << m_theme.value_dim << Strings::hex(addr) << Terminal::RESET << ": " << m_theme.value_dim << Strings::hex(val) << Terminal::RESET;
-        uint16_t temp_val = val;
-        auto line = m_core.get_analyzer().parse_instruction(temp_val);
-        if (!line.label.empty())
-            ss << m_theme.highlight << " (" << line.label << ")" << Terminal::RESET;
+        ss << c_ghost << " SP-02  " << Strings::hex(ghost_addr) << "  " << Strings::hex(val);
+        std::string decoded = smart_decode(val);
+        if (!decoded.empty()) {
+            if (decoded.length() > 25) decoded = decoded.substr(0, 22) + "...";
+            ss << "  .pop: " << decoded;
+        }
+        ss << rst;
+        lines.push_back(ss.str());
+    }
+
+    for (int row = 0; row < m_rows; ++row) {
+        uint16_t addr = m_view_addr + row * 2;
+        uint8_t l = mem.peek(addr);
+        uint8_t h = mem.peek(addr + 1);
+        uint16_t val = l | (h << 8);
+        std::stringstream ss;
+        
+        bool is_sp = (addr == sp);
+        bool is_pushed = (sp < m_prev_sp && addr >= sp && addr < m_prev_sp);
+
+        if (is_sp) ss << bg_active;
+
+        std::string prefix = (addr == sp) ? ">" : " ";
+        int offset = (int)addr - (int)sp;
+        std::stringstream off_ss;
+        
+        if (offset >= 0 && offset < 128)
+             off_ss << "SP+" << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << offset;
+        else if (offset < 0 && offset > -128)
+             off_ss << "SP-" << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << -offset;
+        else
+             off_ss << "     ";
+
+        ss << c_label << prefix << off_ss.str() << rst;
+        if (is_sp) ss << bg_active;
+
+        ss << "  " << c_addr << Strings::hex(addr) << rst;
+        if (is_sp) ss << bg_active;
+        
+        ss << "  ";
+        if (is_pushed) ss << c_delta;
+        else ss << c_val;
+        
+        ss << Strings::hex(val) << rst;
+        if (is_sp) ss << bg_active;
+        
+        std::string decoded = smart_decode(val);
+        if (!decoded.empty()) {
+            if (decoded.length() > 25) decoded = decoded.substr(0, 22) + "...";
+            ss << "  " << c_info << decoded << rst;
+            if (is_sp) ss << bg_active;
+        }
+        
+        if (is_sp) ss << rst;
         lines.push_back(ss.str());
     }
     return lines;
@@ -717,7 +813,7 @@ void Dashboard::run() {
         Terminal::Input in = Terminal::read_key();
         if (in.key == Terminal::Key::NONE)
             continue;
-        if (in.key == Terminal::Key::SHIFT_TAB || (in.key == Terminal::Key::TAB && m_focus != FOCUS_CMD)) {
+        if (in.key == Terminal::Key::SHIFT_TAB || (in.key == Terminal::Key::TAB && (m_focus != FOCUS_CMD || Strings::trim(m_editor.get_line()).empty()))) {
             m_last_focus = FOCUS_CMD; // Reset toggle history on manual navigation
             m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT); 
             validate_focus();
@@ -1128,6 +1224,7 @@ void Dashboard::print_dashboard() {
     }
     if (m_show_stack) {
         m_stack_view.set_focus(m_focus == FOCUS_STACK);
+        m_stack_view.set_prev_sp(m_debugger.get_prev_state().m_SP.w);
         auto stack_lines = m_stack_view.render();
         right_lines.insert(right_lines.end(), stack_lines.begin(), stack_lines.end());
     }

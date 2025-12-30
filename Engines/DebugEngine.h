@@ -88,8 +88,10 @@ public:
     void set_address(uint16_t addr) { m_view_addr = addr; }
     uint16_t get_address() const { return m_view_addr; }
     void scroll(int delta) { m_view_addr += delta; }
+    void set_prev_sp(uint16_t sp) { m_prev_sp = sp; }
 private:
     uint16_t m_view_addr = 0;
+    uint16_t m_prev_sp = 0;
 };
 
 class CodeView : public DebugView {
