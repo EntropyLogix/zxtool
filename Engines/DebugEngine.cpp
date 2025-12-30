@@ -125,8 +125,8 @@ std::vector<std::string> StackView::render() {
     std::string c_val    = Terminal::rgb_fg(70, 130, 180);  // Steel Blue (Data)
     std::string c_info   = Terminal::rgb_fg(105, 105, 105); // Dark Gray
     std::string c_ghost  = Terminal::rgb_fg(192, 192, 192); // Light Gray
-    std::string c_delta  = Terminal::rgb_fg(0, 255, 255) + Terminal::BOLD; // Bright Cyan
-    std::string bg_active = Terminal::rgb_bg(255, 250, 205); // Pale Yellow
+    std::string c_delta  = Terminal::rgb_fg(255, 241, 107);
+    std::string bg_active = Terminal::rgb_bg(220, 220, 220); // Light Gray
     std::string rst      = Terminal::RESET;
 
     lines.push_back(format_header("STACK"));
@@ -175,10 +175,10 @@ std::vector<std::string> StackView::render() {
         uint8_t h = mem.peek(ghost_addr + 1);
         uint16_t val = l | (h << 8);
         std::stringstream ss;
-        ss << c_ghost << " SP-02  " << Strings::hex(ghost_addr) << "  " << Strings::hex(val);
+        ss << c_ghost << "  SP-02  " << Strings::hex(ghost_addr) << "  " << Strings::hex(val);
         std::string decoded = smart_decode(val);
         if (!decoded.empty()) {
-            if (decoded.length() > 25) decoded = decoded.substr(0, 22) + "...";
+            if (decoded.length() > 10) decoded = decoded.substr(0, 7) + "...";
             ss << "  .pop: " << decoded;
         }
         ss << rst;
@@ -197,7 +197,7 @@ std::vector<std::string> StackView::render() {
 
         if (is_sp) ss << bg_active;
 
-        std::string prefix = (addr == sp) ? ">" : " ";
+        std::string prefix = "  ";
         int offset = (int)addr - (int)sp;
         std::stringstream off_ss;
         
@@ -223,12 +223,18 @@ std::vector<std::string> StackView::render() {
         
         std::string decoded = smart_decode(val);
         if (!decoded.empty()) {
-            if (decoded.length() > 25) decoded = decoded.substr(0, 22) + "...";
+            if (decoded.length() > 15) decoded = decoded.substr(0, 12) + "...";
             ss << "  " << c_info << decoded << rst;
             if (is_sp) ss << bg_active;
         }
         
-        if (is_sp) ss << rst;
+        if (is_sp) {
+            int current_len = 19;
+            if (!decoded.empty()) current_len += 2 + (int)decoded.length();
+            int pad = 38 - current_len;
+            if (pad > 0) ss << std::string(pad, ' ');
+            ss << rst;
+        }
         lines.push_back(ss.str());
     }
     return lines;
@@ -1448,9 +1454,9 @@ void Dashboard::print_columns(const std::vector<std::string>& left, const std::v
             std::cout << Strings::padding(l_padded, left_width);
             if (has_bg)
                 std::cout << Terminal::RESET;
-            std::cout << m_theme.separator << " | " << Terminal::RESET;
+            std::cout << m_theme.separator << " |" << Terminal::RESET;
             if (row < right.size())
-                std::cout << " " << right[row];
+                std::cout << right[row];
         } else {
             std::cout << l;
             if (has_bg)
