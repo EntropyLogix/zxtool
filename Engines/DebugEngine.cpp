@@ -57,23 +57,42 @@ void MemoryView::ensure_visible() {
 }
 
 bool MemoryView::on_key(const Terminal::Input& in) {
+    if (in.key == Terminal::Key::TAB || in.c == '\t') {
+        m_focus_ascii = !m_focus_ascii;
+        return true;
+    }
+
     if (in.key == Terminal::Key::UP) { scroll(-16); return true; }
     if (in.key == Terminal::Key::DOWN) { scroll(16); return true; }
     if (in.key == Terminal::Key::LEFT) { scroll(-1); return true; }
     if (in.key == Terminal::Key::RIGHT) { scroll(1); return true; }
     
-    if (std::isxdigit(static_cast<unsigned char>(in.c))) {
-        uint8_t nibble = 0;
-        char c = std::toupper(in.c);
-        if (c >= '0' && c <= '9') nibble = c - '0';
-        else if (c >= 'A' && c <= 'F') nibble = c - 'A' + 10;
-        
-        uint16_t addr = get_address();
-        uint8_t val = m_core.get_memory().peek(addr);
-        val = (val << 4) | nibble;
-        m_core.get_memory().write(addr, val);
-        m_core.get_code_map().invalidate_region(addr, 1);
-        return true;
+    if (m_focus_ascii) {
+        if (in.c >= 32 && in.c <= 126) {
+            uint16_t addr = get_address();
+            m_core.get_memory().write(addr, (uint8_t)in.c);
+            m_core.get_code_map().invalidate_region(addr, 1);
+            scroll(1);
+            return true;
+        }
+        if (in.key == Terminal::Key::BACKSPACE || in.c == 127 || in.c == 8) {
+            scroll(-1);
+            return true;
+        }
+    } else {
+        if (std::isxdigit(static_cast<unsigned char>(in.c))) {
+            uint8_t nibble = 0;
+            char c = std::toupper(in.c);
+            if (c >= '0' && c <= '9') nibble = c - '0';
+            else if (c >= 'A' && c <= 'F') nibble = c - 'A' + 10;
+            
+            uint16_t addr = get_address();
+            uint8_t val = m_core.get_memory().peek(addr);
+            val = (val << 4) | nibble;
+            m_core.get_memory().write(addr, val);
+            m_core.get_code_map().invalidate_region(addr, 1);
+            return true;
+        }
     }
     return false;
 }
@@ -91,6 +110,7 @@ std::vector<std::string> MemoryView::render() {
     lines.push_back(format_header("MEMORY", extra.str()));
     lines.push_back(sep);
     auto& mem = m_core.get_memory();
+    std::string inactive_bg = Terminal::rgb_bg(220, 220, 220);
     for (int row = 0; row < m_rows; ++row) {
         std::stringstream ss;
         uint16_t base_addr = view_start + (uint16_t)(row * 16);
@@ -100,7 +120,7 @@ std::vector<std::string> MemoryView::render() {
             uint8_t b = mem.peek(real_addr);
             bool is_cursor = (real_addr == cursor_addr);
             
-            if (is_cursor) ss << m_theme.pc_bg;
+            if (is_cursor) ss << (m_focus_ascii ? inactive_bg : m_theme.pc_bg);
             if (b == 0)
                 ss << m_theme.value_dim << "00" << Terminal::RESET;
             else
@@ -118,7 +138,7 @@ std::vector<std::string> MemoryView::render() {
             uint16_t real_addr = base_addr + (uint16_t)j;
             uint8_t val = mem.peek(real_addr);
             bool is_cursor = (real_addr == cursor_addr);
-            if (is_cursor) ss << m_theme.pc_bg;
+            if (is_cursor) ss << (m_focus_ascii ? m_theme.pc_bg : inactive_bg);
             if (std::isprint(val))
                 ss << m_theme.highlight << (char)val << Terminal::RESET;
             else
@@ -1143,6 +1163,38 @@ void Dashboard::cmd_step(const std::string& args) {
     update_stack_view();
 }
 
+void Dashboard::cmd_next(const std::string&) {
+    m_debugger.next();
+    m_auto_follow = true;
+    update_code_view();
+    update_stack_view();
+}
+
+void Dashboard::cmd_memory(const std::string& args) {
+    if (args.empty()) {
+        m_focus = FOCUS_MEMORY;
+        m_show_mem = true;
+        return;
+    }
+    try {
+        Expression eval(m_debugger.get_core());
+        auto val = eval.evaluate(args);
+        uint16_t addr = 0;
+        if (val.is_address() && !val.address().empty()) addr = val.address()[0];
+        else if (val.is_number()) addr = (uint16_t)val.number();
+        else if (val.is_symbol()) addr = val.symbol().read();
+        else if (val.is_register()) addr = val.reg().read(m_debugger.get_core().get_cpu());
+        else { m_output_buffer << "Invalid address.\n"; return; }
+        
+        m_memory_view.set_address(addr);
+        m_focus = FOCUS_MEMORY;
+        m_show_mem = true;
+        m_output_buffer << "Memory cursor set to $" << Strings::hex(addr) << "\n";
+    } catch (const std::exception& e) {
+        m_output_buffer << "Error: " << e.what() << "\n";
+    }
+}
+
 void Dashboard::cmd_code(const std::string& args) {
     if (args.empty()) {
         m_focus = FOCUS_CODE;
@@ -1382,47 +1434,6 @@ void Dashboard::handle_command(const std::string& input) {
     std::string clean_input = Strings::trim(sanitized_input);
     if (clean_input.empty())
         return;
-
-    if (clean_input == "n" || clean_input == "next" || clean_input.find("next ") == 0) {
-        m_debugger.next();
-        m_auto_follow = true;
-        update_code_view();
-        update_stack_view();
-        return;
-    }
-
-    if (clean_input == "m" || clean_input == "memory" || clean_input.find("m ") == 0 || clean_input.find("memory ") == 0) {
-        std::string args;
-        if (clean_input.find("memory") == 0) {
-             if (clean_input.length() > 6) args = Strings::trim(clean_input.substr(6));
-        } else {
-             if (clean_input.length() > 1) args = Strings::trim(clean_input.substr(1));
-        }
-        
-        if (args.empty()) {
-            m_focus = FOCUS_MEMORY;
-            m_show_mem = true;
-            return;
-        }
-        try {
-            Expression eval(m_debugger.get_core());
-            auto val = eval.evaluate(args);
-            uint16_t addr = 0;
-            if (val.is_address() && !val.address().empty()) addr = val.address()[0];
-            else if (val.is_number()) addr = (uint16_t)val.number();
-            else if (val.is_symbol()) addr = val.symbol().read();
-            else if (val.is_register()) addr = val.reg().read(m_debugger.get_core().get_cpu());
-            else { m_output_buffer << "Invalid address.\n"; return; }
-            
-            m_memory_view.set_address(addr);
-            m_focus = FOCUS_MEMORY;
-            m_show_mem = true;
-            m_output_buffer << "Memory cursor set to $" << Strings::hex(addr) << "\n";
-        } catch (const std::exception& e) {
-            m_output_buffer << "Error: " << e.what() << "\n";
-        }
-        return;
-    }
 
     const CommandRegistry::CommandEntry* best_entry = nullptr;
     const auto& cmds = m_command_registry.get_commands();

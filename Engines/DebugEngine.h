@@ -73,6 +73,7 @@ private:
     void ensure_visible();
     uint16_t m_cursor_addr = 0;
     uint16_t m_view_addr = 0;
+    bool m_focus_ascii = false;
 };
 
 class RegisterView : public DebugView {
@@ -222,6 +223,7 @@ public:
         m_command_registry.add({"watch", "w"}, {[this](const std::string& s){ cmd_watch(s); }, true, "address", {CommandRegistry::CTX_EXPRESSION}});
         m_command_registry.add({"break", "b"}, {[this](const std::string& s){ cmd_break(s); }, true, "address", {CommandRegistry::CTX_EXPRESSION}});
         m_command_registry.add({"step", "s"}, {[this](const std::string& s){ cmd_step(s); }, true, "[count]", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"memory", "m"}, {[this](const std::string& s){ cmd_memory(s); }, true, "[address]", {CommandRegistry::CTX_EXPRESSION}});
         m_command_registry.add({"code", "c"}, {[this](const std::string& s){ cmd_code(s); }, true, "address", {CommandRegistry::CTX_EXPRESSION}});
         auto view_completer = [](const std::string&, int, const std::string& a, Terminal::Completion& r){ std::vector<std::string> opts = {"memory", "registers", "stack", "code", "watch", "breakpoints"}; for (const auto& o : opts) if (o.find(a) == 0) r.candidates.push_back(o); };
         m_command_registry.add({"view", "v"}, {[this](const std::string& s){ cmd_view(s); }, true, "memory|registers|stack|code|watch|breakpoints", {CommandRegistry::CTX_CUSTOM}, view_completer});
@@ -287,6 +289,8 @@ private:
     void cmd_break(const std::string& args);
     void cmd_help(const std::string& args);
     void cmd_step(const std::string& args);
+    void cmd_next(const std::string& args);
+    void cmd_memory(const std::string& args);
     void cmd_code(const std::string& args);
     void cmd_view(const std::string& args);
     
