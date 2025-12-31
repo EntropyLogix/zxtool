@@ -882,6 +882,19 @@ void Dashboard::run() {
                 m_memory_view.scroll(in.key == Terminal::Key::LEFT ? -1 : 1);
                 needs_repaint = true;
                 handled = true;
+            } else if (m_focus == FOCUS_MEMORY && std::isxdigit(static_cast<unsigned char>(in.c))) {
+                uint8_t nibble = 0;
+                char c = std::toupper(in.c);
+                if (c >= '0' && c <= '9') nibble = c - '0';
+                else if (c >= 'A' && c <= 'F') nibble = c - 'A' + 10;
+                
+                uint16_t addr = m_memory_view.get_address();
+                uint8_t val = m_debugger.get_core().get_memory().peek(addr);
+                val = (val << 4) | nibble;
+                m_debugger.get_core().get_memory().write(addr, val);
+                m_debugger.get_core().get_code_map().invalidate_region(addr, 1);
+                needs_repaint = true;
+                handled = true;
             }
         }
 
