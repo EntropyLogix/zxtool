@@ -1336,7 +1336,15 @@ bool Expression::parse_symbol(const std::string& word, std::vector<Token>& token
 
 bool Expression::parse_variable(const std::string& expr, size_t& index, std::vector<Token>& tokens) {
     if (expr[index] == '@') {
+        bool is_system_request = false;
         size_t j = index + 1;
+
+        // Sprawdzamy czy to '@@' (zmienna systemowa)
+        if (j < expr.length() && expr[j] == '@') {
+            is_system_request = true;
+            j++; 
+        }
+
         std::string name;
         while (j < expr.length()) {
             char c = expr[j];
@@ -1348,8 +1356,18 @@ bool Expression::parse_variable(const std::string& expr, size_t& index, std::vec
         }
         if (name.empty())
             return false;
+
         const Variable* var = m_core.get_context().getVariables().find(name);
+        
         if (var) {
+            // Walidacja typów zmiennych
+            if (is_system_request && !var->isSystem()) {
+                 syntax_error(ErrorCode::LOOKUP_UNKNOWN_VARIABLE, "@@" + name + " (Variable exists but is not system)");
+            }
+            if (!is_system_request && var->isSystem()) {
+                 syntax_error(ErrorCode::LOOKUP_UNKNOWN_VARIABLE, "@" + name + " (Use @@ for system variables)");
+            }
+
             const auto& val = var->getValue();
             TokenType type = TokenType::UNKNOWN;
             if (val.is_number())
@@ -1366,13 +1384,16 @@ bool Expression::parse_variable(const std::string& expr, size_t& index, std::vec
                 type = TokenType::BYTES;
             else if (val.is_words())
                 type = TokenType::WORDS;
+
             if (type != TokenType::UNKNOWN) {
                 tokens.push_back({type, val});
                 index = j;
                 return true;
             }
         }
-        syntax_error(ErrorCode::LOOKUP_UNKNOWN_VARIABLE, name);
+        
+        // Jeśli nie znaleziono
+        syntax_error(ErrorCode::LOOKUP_UNKNOWN_VARIABLE, (is_system_request ? "@@" : "@") + name);
     }
     return false;
 }
@@ -1820,7 +1841,14 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
     if (i >= lhs.length())
         return;
     if (lhs[i] == '@') {
+        bool is_system_assignment = false;
         i++;
+        // Sprawdź czy to @@
+        if (i < lhs.length() && lhs[i] == '@') {
+            is_system_assignment = true;
+            i++;
+        }
+
         std::string name = parse_word(lhs, i);
         Variable* var = m_core.get_context().getVariables().find(name);
         while (i < lhs.length() && std::isspace(lhs[i]))
@@ -1864,9 +1892,17 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
                 }
             }
         } else {
-            if (var)
+            if (var) {
+                if (is_system_assignment && !var->isSystem()) {
+                     syntax_error(ErrorCode::GENERIC, "Cannot use @@ on regular variable");
+                }
+                // Tutaj setValue rzuci wyjątek, jeśli zmienna jest systemowa (Read Only)
                 var->setValue(rhs);
-            else {
+            } else {
+                if (is_system_assignment) {
+                    // Nie można tworzyć nowych zmiennych systemowych w locie
+                    syntax_error(ErrorCode::LOOKUP_UNKNOWN_VARIABLE, "@@" + name);
+                }
                 Variable v(name, rhs, "");
                 m_core.get_context().getVariables().add(v);
             }

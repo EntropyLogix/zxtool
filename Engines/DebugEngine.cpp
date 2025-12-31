@@ -309,7 +309,7 @@ std::vector<std::string> StackView::render() {
     return lines;
 }
 
-void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst) {
+void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst, bool bold) {
     if (line.operands.empty()) return;
     using Operand = Z80Analyzer<Memory>::CodeLine::Operand;
     for (size_t i = 0; i < line.operands.size(); ++i) {
@@ -325,7 +325,7 @@ void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::o
 
         bool is_num = (op.type == Operand::IMM8 || op.type == Operand::IMM16 || op.type == Operand::MEM_IMM16);
         if (!label.empty() && !color_num.empty())
-            os << m_theme.label;
+            os << m_theme.label << (bold ? Terminal::BOLD : "");
         else if (is_num)
             os << color_num;
         switch (op.type) {
@@ -447,7 +447,7 @@ CodeView::DisasmInfo CodeView::format_disasm(const Z80Analyzer<Memory>::CodeLine
     std::stringstream mn_ss;
     std::string rst = is_cursor ? (Terminal::RESET + m_theme.pc_bg) : Terminal::RESET;
 
-    if (is_pc) mn_ss << Terminal::BOLD << m_theme.pc_fg;
+    if (is_pc) mn_ss << m_theme.mnemonic << Terminal::BOLD;
     else if (conflict || is_orphan) mn_ss << m_theme.error;
     else if (shadow) mn_ss << m_theme.value_dim;
     else if (is_traced) mn_ss << m_theme.value_dim;
@@ -461,6 +461,12 @@ CodeView::DisasmInfo CodeView::format_disasm(const Z80Analyzer<Memory>::CodeLine
             format_operands(line, mn_ss, "", "");
         } else if (conflict || is_orphan) {
             format_operands(line, mn_ss, m_theme.error, rst);
+        } else if (is_pc) {
+            std::string rst_bold = rst + Terminal::BOLD;
+            mn_ss << Terminal::BOLD;
+            format_operands(line, mn_ss, m_theme.operand_num + Terminal::BOLD, rst_bold, true);
+            // Restore non-bold reset for the end of line if needed, though render handles it
+            mn_ss << rst; 
         } else {
             format_operands(line, mn_ss, m_theme.operand_num, rst);
         }
@@ -603,7 +609,7 @@ std::vector<std::string> CodeView::render() {
             ss << bg << "   " << rst;
         
         std::string addr_color = m_theme.address;
-        if (is_pc) addr_color = m_theme.pc_fg + Terminal::BOLD;
+        if (is_pc) addr_color = m_theme.address + Terminal::BOLD;
         else if (conflict || is_orphan) addr_color = m_theme.error;
         else if (shadow) addr_color = m_theme.value_dim;
         else if (is_traced) addr_color = m_theme.value_dim;
@@ -621,7 +627,9 @@ std::vector<std::string> CodeView::render() {
             }
         }
         std::string hex_str = hex_ss.str();
-        ss << m_theme.value_dim << hex_str << rst;
+        ss << m_theme.value_dim;
+        if (is_pc) ss << Terminal::BOLD;
+        ss << hex_str << rst;
         int hex_len = (int)hex_str.length();
         int hex_pad = 9 - hex_len;
         if (hex_pad > 0)
@@ -648,7 +656,9 @@ std::vector<std::string> CodeView::render() {
 
                  if (m_wrap_comments) {
                      if ((int)cmt_full.length() > available) {
-                         ss << m_theme.comment << cmt_full.substr(0, available) << Terminal::RESET;
+                         ss << m_theme.comment;
+                         if (is_pc) ss << Terminal::BOLD;
+                         ss << cmt_full.substr(0, available) << Terminal::RESET;
                          int next_available = m_width - comment_col;
                          if (next_available < 10) next_available = 10;
                          size_t pos = available;
@@ -657,12 +667,16 @@ std::vector<std::string> CodeView::render() {
                              pos += next_available;
                          }
                      } else {
-                         ss << m_theme.comment << cmt_full << Terminal::RESET;
+                         ss << m_theme.comment;
+                         if (is_pc) ss << Terminal::BOLD;
+                         ss << cmt_full << Terminal::RESET;
                      }
                  } else {
                      if ((int)cmt_full.length() > available)
                          cmt_full = cmt_full.substr(0, available - 3) + "...";
-                     ss << m_theme.comment << cmt_full << Terminal::RESET;
+                     ss << m_theme.comment;
+                     if (is_pc) ss << Terminal::BOLD;
+                     ss << cmt_full << Terminal::RESET;
                  }
              }
         }
@@ -868,6 +882,7 @@ void Dashboard::draw_prompt() {
 }
 
 void Dashboard::run() {
+    init();
     m_editor.history_load(HISTORY_FILE);
     m_editor.set_completion_callback([this](const std::string& input) { 
         if (!m_show_autocompletion)
@@ -1044,6 +1059,23 @@ void Dashboard::perform_set(const std::string& args_str, bool detailed) {
         m_output_buffer << "Error: Invalid syntax for set. Use: set <target> = <value>\n";
         return;
     }
+
+    if (lhs_str.length() >= 2 && lhs_str[0] == '@' && lhs_str[1] == '@') {
+        std::string var_name;
+        size_t j = 2;
+        while (j < lhs_str.length() && (std::isalnum(static_cast<unsigned char>(lhs_str[j])) || lhs_str[j] == '_')) {
+            var_name += lhs_str[j];
+            j++;
+        }
+        auto& vars = m_debugger.get_core().get_context().getVariables();
+        if (vars.find(var_name)) {
+             m_output_buffer << "Error: System variable @@" << var_name << " is read-only.\n";
+        } else {
+             m_output_buffer << "Error: Cannot define new system variable @@" << var_name << ".\n";
+        }
+        return;
+    }
+
     try {
         Expression eval(m_debugger.get_core());
         Expression::Value val = eval.evaluate(rhs_str);
@@ -1179,6 +1211,25 @@ void Dashboard::cmd_undef(const std::string& args_str) {
         m_output_buffer << "Error: Missing symbol name.\n";
         return;
     }
+
+    // Obsługa usuwania zmiennych (@var lub @@var)
+    if (name.length() > 0 && name[0] == '@') {
+        std::string var_name = (name.length() > 1 && name[1] == '@') ? name.substr(2) : name.substr(1);
+        auto& vars = m_debugger.get_core().get_context().getVariables();
+        
+        if (vars.remove(var_name)) {
+            m_output_buffer << "Variable @" << var_name << " removed.\n";
+        } else {
+            const Variable* v = vars.find(var_name);
+            if (v && v->isSystem()) {
+                m_output_buffer << "Error: System variable @@" << var_name << " cannot be undefined.\n";
+            } else {
+                m_output_buffer << "Error: Variable @" << var_name << " not found.\n";
+            }
+        }
+        return;
+    }
+
     if (m_debugger.get_core().get_context().getSymbols().remove(name))
         m_output_buffer << "Symbol '" << name << "' removed.\n";
     else
@@ -1401,6 +1452,29 @@ void Dashboard::handle_command(const std::string& input) {
 
 void Dashboard::init() {
     // replxx init removed
+    auto& vars = m_debugger.get_core().get_context().getVariables();
+    
+    vars.add(Variable("mem", [this]() {
+        return Expression::Value((double)m_memory_view.get_address());
+    }, "Memory View Cursor"));
+
+    vars.add(Variable("code", [this]() {
+        return Expression::Value((double)m_code_view.get_cursor());
+    }, "Code View Cursor"));
+
+    vars.add(Variable("ret", [this]() {
+        auto& core = m_debugger.get_core();
+        uint16_t sp = core.get_cpu().get_SP();
+        uint16_t ret = core.get_memory().peek(sp) | (core.get_memory().peek((sp + 1) & 0xFFFF) << 8);
+        return Expression::Value((double)ret);
+    }, "Return address (from stack)"));
+}
+
+Dashboard::~Dashboard() {
+    auto& vars = m_debugger.get_core().get_context().getVariables();
+    vars.removeSystem("mem");
+    vars.removeSystem("code");
+    vars.removeSystem("ret");
 }
 
 void Dashboard::print_dashboard() {

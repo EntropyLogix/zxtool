@@ -126,7 +126,7 @@ private:
     };
     Z80Analyzer<Memory>::CodeLine resolve_line(uint16_t addr, bool& conflict, bool& shadow, bool& is_orphan);
     DisasmInfo format_disasm(const Z80Analyzer<Memory>::CodeLine& line, bool is_pc, bool is_cursor, bool conflict, bool shadow, bool is_orphan, bool is_traced, bool is_smc);
-    void format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst);
+    void format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst, bool bold = false);
     uint16_t m_start_addr = 0;
     uint16_t m_pc = 0;
     int m_width = 80;
@@ -226,6 +226,7 @@ public:
         auto view_completer = [](const std::string&, int, const std::string& a, Terminal::Completion& r){ std::vector<std::string> opts = {"memory", "registers", "stack", "code", "watch", "breakpoints"}; for (const auto& o : opts) if (o.find(a) == 0) r.candidates.push_back(o); };
         m_command_registry.add({"view", "v"}, {[this](const std::string& s){ cmd_view(s); }, true, "memory|registers|stack|code|watch|breakpoints", {CommandRegistry::CTX_CUSTOM}, view_completer});
     }
+    ~Dashboard();
     void run();
     const CommandRegistry& get_command_registry() const { return m_command_registry; }
 

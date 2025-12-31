@@ -62,7 +62,7 @@ void Autocompletion::complete_expression(const std::string& full_input, const st
         if (!result.prefix.empty() && result.prefix[0] == '@') {
             auto& vars = m_dashboard.m_debugger.get_core().get_context().getVariables();
             for (const auto& pair : vars.by_name()) {
-                std::string var_name = "@" + pair.first;
+                std::string var_name = (pair.second.isSystem() ? "@@" : "@") + pair.first;
                 std::string var_upper = Strings::upper(var_name);
                 if (var_upper.find(prefix_upper) == 0)
                     result.candidates.push_back(var_name);
@@ -91,7 +91,7 @@ void Autocompletion::complete_symbol(const std::string& full_input, const std::s
     }
     auto& vars = m_dashboard.m_debugger.get_core().get_context().getVariables();
     for (const auto& pair : vars.by_name()) {
-        std::string var_name = "@" + pair.first;
+        std::string var_name = (pair.second.isSystem() ? "@@" : "@") + pair.first;
         if (Strings::upper(var_name).find(prefix_upper) == 0)
             result.candidates.push_back(var_name);
     }
