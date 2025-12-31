@@ -37,8 +37,9 @@ std::string Hint::get_command_syntax_hint(const std::string& input) {
     auto parts = Strings::split_once(input, " \t");
     if (parts.first.length() < input.length()) {
         std::string command_name = parts.first;
-        auto command_iterator = m_dashboard.m_commands.find(command_name);
-        if (command_iterator != m_dashboard.m_commands.end() && !command_iterator->second.syntax.empty()) {
+        const auto& cmds = m_dashboard.get_command_registry().get_commands();
+        auto command_iterator = cmds.find(command_name);
+        if (command_iterator != cmds.end() && !command_iterator->second.syntax.empty()) {
             std::string arguments = parts.second;
             bool is_whitespace_only = arguments.empty() || std::all_of(arguments.begin(), arguments.end(), [](unsigned char c){ return std::isspace(c); });
             if (is_whitespace_only)
@@ -145,7 +146,9 @@ void Hint::update_cache(const std::string& input) {
     std::string trimmed_input = Strings::trim(input);
     if (!trimmed_input.empty()) {
         std::string best_cmd;
-        for (const auto& pair : m_dashboard.m_commands) {
+        const auto& registry = m_dashboard.get_command_registry();
+        const auto& cmds = registry.get_commands();
+        for (const auto& pair : cmds) {
             const std::string& cmd = pair.first;
             bool is_alnum = Commands::is_identifier(cmd);
             bool require_separator = is_alnum;
@@ -165,18 +168,12 @@ void Hint::update_cache(const std::string& input) {
 
         if (!best_cmd.empty()) {
             std::string arguments_part = input.substr(best_cmd.length());
-            const auto& entry = m_dashboard.m_commands.at(best_cmd);
             int parameter_index = 0;
             size_t current_argument_offset = 0;
             Commands::get_current_arg(arguments_part, parameter_index, current_argument_offset);
+            CommandRegistry::CompletionType type = registry.resolve_type(best_cmd, parameter_index, arguments_part);
             
-            Dashboard::CompletionType type = Dashboard::CTX_NONE;
-            if (parameter_index < (int)entry.param_types.size())
-                type = entry.param_types[parameter_index];
-            else if (!entry.param_types.empty() && entry.param_types.back() == Dashboard::CTX_EXPRESSION)
-                type = Dashboard::CTX_EXPRESSION;
-            
-            if (type == Dashboard::CTX_EXPRESSION)
+            if (type == CommandRegistry::CTX_EXPRESSION)
                 m_cached_highlight = true;
         }
     }
@@ -210,6 +207,16 @@ void Hint::update_cache(const std::string& input) {
         for (const auto& p : stack)
             m_cached_unclosed.push_back(p.second);
     }
+}
+
+static std::string get_syntax_part(const std::string& syntax, int idx) {
+    auto parts = Strings::split(syntax, ' ');
+    if (idx >= 0 && idx < (int)parts.size()) return parts[idx];
+    return "";
+}
+
+static bool is_arg_empty(const std::string& arg) {
+    return arg.empty() || std::all_of(arg.begin(), arg.end(), [](unsigned char c){ return std::isspace(c); });
 }
 
 std::string Hint::calculate(const std::string& input, int cursor_pos, std::string& color, int& error_pos, std::vector<int>& highlights) {
@@ -249,35 +256,86 @@ std::string Hint::calculate(const std::string& input, int cursor_pos, std::strin
 
     Terminal::Completion completion_result = m_dashboard.m_autocompletion.get(input);
     std::string completion_hint = get_completion_hint(completion_result);
-    if (!completion_result.is_custom_context) {
-        if (!completion_hint.empty())
-            return completion_hint;
-        return get_command_syntax_hint(input);
-    }
-    if (completion_result.is_custom_context && completion_result.prefix.empty() && !completion_result.candidates.empty() && completion_result.candidates.size() <= 10) {
-        std::string hint;
-        for(size_t i=0; i<completion_result.candidates.size(); ++i) {
-            if (i > 0)
-                hint += "|";
-            hint += completion_result.candidates[i];
-            if (hint.length() > 80) {
-                hint += "..."; break; }
+
+    // 1. Find the matching command to determine syntax context
+    std::string best_cmd;
+    const auto& registry = m_dashboard.get_command_registry();
+    const auto& cmds = registry.get_commands();
+    for (const auto& pair : cmds) {
+        const std::string& cmd = pair.first;
+        bool is_alnum = Commands::is_identifier(cmd);
+        bool require_separator = is_alnum;
+        if (input.length() >= cmd.length()) {
+            if (input.compare(0, cmd.length(), cmd) == 0) {
+                bool is_match = false;
+                if (require_separator) {
+                    if (input.length() > cmd.length() && std::isspace(static_cast<unsigned char>(input[cmd.length()])))
+                        is_match = true;
+                } else
+                    is_match = true;
+                if (is_match && cmd.length() > best_cmd.length())
+                    best_cmd = cmd;
+            }
         }
-        return hint;
     }
+
+    // 2. Build the syntax hint (tail)
+    std::string syntax_tail_hint;
+    if (!best_cmd.empty()) {
+        const auto& entry = cmds.at(best_cmd);
+        std::string arguments_part = input.substr(best_cmd.length());
+        int parameter_index = 0;
+        size_t current_argument_offset = 0;
+        Commands::get_current_arg(arguments_part, parameter_index, current_argument_offset);
+
+        std::string current_arg = arguments_part.substr(current_argument_offset);
+        bool arg_empty = is_arg_empty(current_arg);
+
+        // Only show syntax hint for the next parameter if we are NOT currently completing the current one.
+        int syntax_start_idx = -1;
+        if (completion_hint.empty()) {
+            syntax_start_idx = arg_empty ? parameter_index : parameter_index + 1;
+        }
+
+        if (syntax_start_idx != -1) {
+            std::vector<std::string> candidates = registry.get_subcommand_candidates(best_cmd, syntax_start_idx, arguments_part);
+            if (!candidates.empty()) {
+                for (size_t i = 0; i < candidates.size(); ++i) {
+                    if (i > 0) syntax_tail_hint += "|";
+                    syntax_tail_hint += candidates[i];
+                }
+            } else if (!entry.syntax.empty()) {
+                syntax_tail_hint = get_syntax_part(entry.syntax, syntax_start_idx);
+            }
+        }
+    } else if (!completion_result.candidates.empty()) {
+        // If no command matched but we have candidates (completing the command name itself),
+        // show the syntax of the best candidate.
+        auto it = cmds.find(completion_result.candidates[0]);
+        if (it != cmds.end()) {
+            syntax_tail_hint = get_syntax_part(it->second.syntax, 0);
+        }
+    }
+
+    // 3. Handle Context Hints (Operators, Functions) which take precedence for immediate feedback
     std::string operator_hint = get_operator_hint(input);
     std::string context_hint = get_context_hint(input, color, error_pos);
+
     if (!operator_hint.empty()) {
-        if (context_hint == ")" || context_hint == "]" || context_hint == "}")
-            return operator_hint + context_hint;
-        return operator_hint;
-    }
-    if (!completion_hint.empty()) {
-        if (context_hint == ")" || context_hint == "]" || context_hint == "}")
-            return completion_hint + context_hint;
-        return completion_hint;
+        return operator_hint + context_hint;
     }
     if (!context_hint.empty())
-        return context_hint;
-    return get_command_syntax_hint(input);
+        return completion_hint + context_hint;
+
+    // 4. Combine Completion and Syntax Tail
+    std::string full_hint = completion_hint;
+    if (!syntax_tail_hint.empty()) {
+        bool need_space = false;
+        if (!full_hint.empty()) need_space = true;
+        else if (input.length() > 0 && !std::isspace(static_cast<unsigned char>(input.back()))) need_space = true;
+        
+        if (need_space) full_hint += " ";
+        full_hint += syntax_tail_hint;
+    }
+    return full_hint;
 }

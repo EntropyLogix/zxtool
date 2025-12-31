@@ -7,7 +7,8 @@ Autocompletion::Autocompletion(Dashboard& dashboard) : m_dashboard(dashboard) {}
 
 std::string Autocompletion::find_matching_command(const std::string& input) {
     std::string best_match;
-    for (const auto& pair : m_dashboard.m_commands) {
+    const auto& cmds = m_dashboard.get_command_registry().get_commands();
+    for (const auto& pair : cmds) {
         const std::string& cmd = pair.first;
         bool is_alnum = Commands::is_identifier(cmd);
         bool require_separator = is_alnum;
@@ -103,7 +104,8 @@ void Autocompletion::complete_command_name(const std::string& input, Terminal::C
         first_non_space = 0;
     result.replace_pos = (int)first_non_space;
     result.prefix = trimmed_input;
-    for (const auto& pair : m_dashboard.m_commands) {
+    const auto& cmds = m_dashboard.get_command_registry().get_commands();
+    for (const auto& pair : cmds) {
         const std::string& cmd = pair.first;
         if (cmd.find(trimmed_input) == 0)
             result.candidates.push_back(cmd);
@@ -135,23 +137,33 @@ Terminal::Completion Autocompletion::get(const std::string& input) {
     std::string matched_command = find_matching_command(input);
     if (!matched_command.empty()) {
         std::string arguments_part = input.substr(matched_command.length());
-        const auto& entry = m_dashboard.m_commands.at(matched_command);
+        const auto& registry = m_dashboard.get_command_registry();
+        const auto& entry = registry.get_commands().at(matched_command);
         int parameter_index = 0;
         size_t current_argument_offset = 0;
         Commands::get_current_arg(arguments_part, parameter_index, current_argument_offset);
-        Dashboard::CompletionType type = Dashboard::CTX_NONE;
-        if (parameter_index < (int)entry.param_types.size())
-            type = entry.param_types[parameter_index];
-        else if (!entry.param_types.empty() && entry.param_types.back() == Dashboard::CTX_EXPRESSION)
-            type = Dashboard::CTX_EXPRESSION;
-        if (type == Dashboard::CTX_EXPRESSION)
+        CommandRegistry::CompletionType type = registry.resolve_type(matched_command, parameter_index, arguments_part);
+
+        if (type == CommandRegistry::CTX_EXPRESSION)
             complete_expression(input, arguments_part, current_argument_offset, result);
-        else if (type == Dashboard::CTX_SYMBOL)
+        else if (type == CommandRegistry::CTX_SYMBOL)
             complete_symbol(input, arguments_part, current_argument_offset, result);
-        else if (type == Dashboard::CTX_CUSTOM && entry.custom_completer) {
+        else if (type == CommandRegistry::CTX_SUBCOMMAND) {
             result.is_custom_context = true;
             std::string current_argument = arguments_part.substr(current_argument_offset);
             result.replace_pos = (int)(matched_command.length() + current_argument_offset);
+            result.prefix = current_argument;
+            std::vector<std::string> candidates = registry.get_subcommand_candidates(matched_command, parameter_index, arguments_part);
+            for (const auto& c : candidates) {
+                if (c.find(result.prefix) == 0)
+                    result.candidates.push_back(c);
+            }
+        }
+        else if (type == CommandRegistry::CTX_CUSTOM && entry.custom_completer) {
+            result.is_custom_context = true;
+            std::string current_argument = arguments_part.substr(current_argument_offset);
+            result.replace_pos = (int)(matched_command.length() + current_argument_offset);
+            result.prefix = current_argument;
             entry.custom_completer(input, parameter_index, current_argument, result);
         }
     } else

@@ -16,6 +16,15 @@
 
 static constexpr const char* HISTORY_FILE = ".zxtool_history";
 
+void CommandRegistry::add(const std::vector<std::string>& names, CommandEntry entry) {
+    bool first = true;
+    for (const auto& name : names) {
+        entry.is_alias = !first;
+        m_commands[name] = entry;
+        first = false;
+    }
+}
+
 std::string DebugView::format_header(const std::string& title, const std::string& extra) const {
     std::stringstream ss;
     if (m_has_focus)
@@ -45,6 +54,28 @@ void MemoryView::ensure_visible() {
     } else if (dist >= view_size) {
         m_view_addr = (m_cursor_addr & 0xFFF0) - (m_rows - 1) * 16;
     }
+}
+
+bool MemoryView::on_key(const Terminal::Input& in) {
+    if (in.key == Terminal::Key::UP) { scroll(-16); return true; }
+    if (in.key == Terminal::Key::DOWN) { scroll(16); return true; }
+    if (in.key == Terminal::Key::LEFT) { scroll(-1); return true; }
+    if (in.key == Terminal::Key::RIGHT) { scroll(1); return true; }
+    
+    if (std::isxdigit(static_cast<unsigned char>(in.c))) {
+        uint8_t nibble = 0;
+        char c = std::toupper(in.c);
+        if (c >= '0' && c <= '9') nibble = c - '0';
+        else if (c >= 'A' && c <= 'F') nibble = c - 'A' + 10;
+        
+        uint16_t addr = get_address();
+        uint8_t val = m_core.get_memory().peek(addr);
+        val = (val << 4) | nibble;
+        m_core.get_memory().write(addr, val);
+        m_core.get_code_map().invalidate_region(addr, 1);
+        return true;
+    }
+    return false;
 }
 
 std::vector<std::string> MemoryView::render() {
@@ -145,6 +176,12 @@ std::string RegisterView::format_flags(uint8_t f, uint8_t prev_f) {
             ss << m_theme.value_dim << c << Terminal::RESET;
     }
     return ss.str();
+}
+
+bool StackView::on_key(const Terminal::Input& in) {
+    if (in.key == Terminal::Key::UP) { scroll(-2); return true; }
+    if (in.key == Terminal::Key::DOWN) { scroll(2); return true; }
+    return false;
 }
 
 std::vector<std::string> StackView::render() {
@@ -712,6 +749,58 @@ void CodeView::scroll(int delta) {
     }
 }
 
+int CodeView::get_meta_height(uint16_t addr) {
+    int lines = 0;
+    if (!m_core.get_context().getSymbols().get_label(addr).empty()) lines++;
+    
+    const Comment* block_cmt = m_core.get_context().getComments().find(addr, Comment::Type::Block);
+    if (block_cmt && !block_cmt->getText().empty()) {
+        std::stringstream desc_ss(block_cmt->getText());
+        std::string segment;
+        while(std::getline(desc_ss, segment, '\n')) {
+            if (m_wrap_comments && m_width > 0 && (int)segment.length() > m_width) {
+                lines += (segment.length() + m_width - 1) / m_width;
+            } else {
+                lines++;
+            }
+        }
+    }
+    return lines;
+}
+
+int CodeView::get_line_height(uint16_t addr) {
+    int lines = get_meta_height(addr);
+    lines++; // Base instruction line
+    
+    const Comment* inline_cmt = m_core.get_context().getComments().find(addr, Comment::Type::Inline);
+    if (inline_cmt && !inline_cmt->getText().empty() && m_wrap_comments && m_width > 0) {
+        auto l = m_core.get_analyzer().parse_instruction(addr);
+        // Estimate visible length of instruction
+        auto info = format_disasm(l, false, false, false, false, false, false, false);
+        
+        int comment_col = 30;
+        int padding = comment_col - info.visible_len;
+        if (padding < 1) padding = 1;
+        
+        int current_len = info.visible_len + padding;
+        int max_width = m_width;
+        int available = max_width - current_len;
+        if (available < 10) available = 10;
+        
+        std::string cmt_full = "; " + inline_cmt->getText();
+        if ((int)cmt_full.length() > available) {
+            int next_available = m_width - comment_col;
+            if (next_available < 10) next_available = 10;
+            
+            int remaining_len = (int)cmt_full.length() - available;
+            if (remaining_len > 0) {
+                lines += (remaining_len + next_available - 1) / next_available;
+            }
+        }
+    }
+    return lines;
+}
+
 void CodeView::move_cursor(int delta) {
     if (delta < 0) {
         uint16_t prev = m_core.get_analyzer().parse_instruction_backwards(m_cursor_addr, &m_core.get_code_map());
@@ -727,51 +816,32 @@ void CodeView::move_cursor(int delta) {
         m_cursor_addr += line.bytes.size();
         
         while (true) {
-            int lines_generated = 0;
             uint16_t p = m_start_addr;
             bool visible = false;
-            int limit = m_rows + m_skip_lines;
+            
+            int current_row = -m_skip_lines;
+            int safety = 0;
 
-            while (lines_generated < limit + 50) {
+            while (current_row < m_rows && safety++ < 1000) {
+                int h = get_line_height(p);
+                int meta = get_meta_height(p);
+
                 if (p == m_cursor_addr) {
-                    int meta_lines = 0;
-                    if (!m_core.get_context().getSymbols().get_label(p).empty()) meta_lines++;
-                    const Comment* block_cmt = m_core.get_context().getComments().find(p, Comment::Type::Block);
-                    if (block_cmt && !block_cmt->getText().empty()) {
-                        std::string text = block_cmt->getText();
-                        meta_lines += std::count(text.begin(), text.end(), '\n') + 1;
-                    }
-                    int instr_line_index = lines_generated + meta_lines;
-                    if (instr_line_index >= m_skip_lines && instr_line_index < limit)
-                        visible = true;
+                    int instr_row = current_row + meta;
+                    if (instr_row >= 0 && instr_row < m_rows) visible = true;
                     break;
                 }
 
-                int instr_lines = 1;
-                if (!m_core.get_context().getSymbols().get_label(p).empty()) instr_lines++;
-                const Comment* block_cmt = m_core.get_context().getComments().find(p, Comment::Type::Block);
-                if (block_cmt && !block_cmt->getText().empty()) {
-                    std::string text = block_cmt->getText();
-                    instr_lines += std::count(text.begin(), text.end(), '\n') + 1;
-                }
-                lines_generated += instr_lines;
+                current_row += h;
 
                 auto l = m_core.get_analyzer().parse_instruction(p);
                 if (l.bytes.empty()) p++; else p += l.bytes.size();
-                
-                if (lines_generated > limit + 50) break;
             }
 
             if (visible) break;
 
             if (m_start_addr == m_cursor_addr) {
-                int meta_lines = 0;
-                if (!m_core.get_context().getSymbols().get_label(m_start_addr).empty()) meta_lines++;
-                const Comment* block_cmt = m_core.get_context().getComments().find(m_start_addr, Comment::Type::Block);
-                if (block_cmt && !block_cmt->getText().empty()) {
-                    std::string text = block_cmt->getText();
-                    meta_lines += std::count(text.begin(), text.end(), '\n') + 1;
-                }
+                int meta_lines = get_meta_height(m_start_addr);
                 if (meta_lines - m_skip_lines >= m_rows) {
                     m_skip_lines = meta_lines - m_rows + 1;
                 }
@@ -785,44 +855,16 @@ void CodeView::move_cursor(int delta) {
     }
 }
 
+bool CodeView::on_key(const Terminal::Input& in) {
+    if (in.key == Terminal::Key::UP) { move_cursor(-1); return true; }
+    if (in.key == Terminal::Key::DOWN) { move_cursor(1); return true; }
+    return false;
+}
+
 void Dashboard::draw_prompt() {
     std::string prompt = (m_focus == FOCUS_CMD) ? (m_theme.header_focus + "[COMMAND] " + Terminal::RESET) : (Terminal::RESET + m_theme.header_blur + "[COMMAND] " + Terminal::RESET);
     m_editor.draw(prompt);
     std::cout << "\033[?12h" << std::flush;
-}
-
-bool Dashboard::scroll_up() {
-    if (m_focus == FOCUS_MEMORY) {
-        m_memory_view.scroll(-16);
-        return true;
-    }
-    else if (m_focus == FOCUS_CODE) {
-        m_auto_follow = false;
-        m_code_view.move_cursor(-1);
-        return true;
-    }
-    else if (m_focus == FOCUS_STACK) {
-        m_stack_view.scroll(-2);
-        return true;
-    }
-    return false;
-}
-
-bool Dashboard::scroll_down() {
-    if (m_focus == FOCUS_MEMORY) {
-        m_memory_view.scroll(16);
-        return true;
-    }
-    else if (m_focus == FOCUS_CODE) {
-        m_auto_follow = false;
-        m_code_view.move_cursor(1);
-        return true;
-    }
-    else if (m_focus == FOCUS_STACK) {
-        m_stack_view.scroll(2);
-        return true;
-    }
-    return false;
 }
 
 void Dashboard::run() {
@@ -856,49 +898,32 @@ void Dashboard::run() {
         bool pass_to_editor = false;
         bool cmd_empty = m_editor.get_line().empty();
 
-        // 1. Global Navigation (Tab / Shift-Tab)
         if (in.key == Terminal::Key::SHIFT_TAB) {
-            m_last_focus = FOCUS_CMD; // Reset toggle history on manual navigation
-            m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT); 
+            m_last_focus = FOCUS_CMD;
+            m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT);
             validate_focus();
             needs_repaint = true;
             handled = true;
-        } else if (in.key == Terminal::Key::TAB) {
-            if (cmd_empty) {
-                m_last_focus = FOCUS_CMD; 
-                m_focus = (Focus)((m_focus + 1) % FOCUS_COUNT); 
-                validate_focus();
-                needs_repaint = true;
-                handled = true;
-            }
         }
 
-        // 2. View Specific Navigation (Precedence if focused)
+        // 1. View Specific Navigation (Precedence if focused)
         if (!handled && m_focus != FOCUS_CMD) {
-            if ((in.key == Terminal::Key::UP && scroll_up()) || (in.key == Terminal::Key::DOWN && scroll_down())) {
-                needs_repaint = true;
-                handled = true;
-            } else if (m_focus == FOCUS_MEMORY && (in.key == Terminal::Key::LEFT || in.key == Terminal::Key::RIGHT)) {
-                m_memory_view.scroll(in.key == Terminal::Key::LEFT ? -1 : 1);
-                needs_repaint = true;
-                handled = true;
-            } else if (m_focus == FOCUS_MEMORY && std::isxdigit(static_cast<unsigned char>(in.c))) {
-                uint8_t nibble = 0;
-                char c = std::toupper(in.c);
-                if (c >= '0' && c <= '9') nibble = c - '0';
-                else if (c >= 'A' && c <= 'F') nibble = c - 'A' + 10;
-                
-                uint16_t addr = m_memory_view.get_address();
-                uint8_t val = m_debugger.get_core().get_memory().peek(addr);
-                val = (val << 4) | nibble;
-                m_debugger.get_core().get_memory().write(addr, val);
-                m_debugger.get_core().get_code_map().invalidate_region(addr, 1);
+            bool view_handled = false;
+            if (m_focus == FOCUS_MEMORY) view_handled = m_memory_view.on_key(in);
+            else if (m_focus == FOCUS_CODE) {
+                view_handled = m_code_view.on_key(in);
+                if (view_handled) m_auto_follow = false;
+            }
+            else if (m_focus == FOCUS_STACK) view_handled = m_stack_view.on_key(in);
+            else if (m_focus == FOCUS_REGS) view_handled = m_register_view.on_key(in);
+            
+            if (view_handled) {
                 needs_repaint = true;
                 handled = true;
             }
         }
 
-        // 3. Space Toggle
+        // 2. Space Toggle
         if (!handled && in.c == ' ') {
             if (m_focus != FOCUS_CMD) {
                 if (cmd_empty) {
@@ -1060,8 +1085,11 @@ void Dashboard::cmd_quit(const std::string&) {
 void Dashboard::cmd_help(const std::string&) {
     m_output_buffer << "Available commands:\n";
     m_output_buffer << "------------------------------------------------------------\n";
-    for (const auto& pair : m_commands) {
-        m_output_buffer << std::left << std::setw(15) << pair.first << pair.second.syntax << "\n";
+    const auto& cmds = m_command_registry.get_commands();
+    for (const auto& pair : cmds) {
+        if (!pair.second.is_alias) {
+            m_output_buffer << std::left << std::setw(15) << pair.first << pair.second.syntax << "\n";
+        }
     }
 }
 
@@ -1081,6 +1109,64 @@ void Dashboard::cmd_step(const std::string& args) {
     m_auto_follow = true;
     update_code_view();
     update_stack_view();
+}
+
+void Dashboard::cmd_code(const std::string& args) {
+    if (args.empty()) {
+        m_focus = FOCUS_CODE;
+        m_show_code = true;
+        return;
+    }
+    try {
+        Expression eval(m_debugger.get_core());
+        auto val = eval.evaluate(args);
+        uint16_t addr = 0;
+        if (val.is_address() && !val.address().empty()) addr = val.address()[0];
+        else if (val.is_number()) addr = (uint16_t)val.number();
+        else if (val.is_symbol()) addr = val.symbol().read();
+        else if (val.is_register()) addr = val.reg().read(m_debugger.get_core().get_cpu());
+        else { m_output_buffer << "Invalid address.\n"; return; }
+        
+        m_auto_follow = false;
+        center_code_view(addr);
+        m_focus = FOCUS_CODE;
+        m_show_code = true;
+        m_output_buffer << "Code view centered at $" << Strings::hex(addr) << "\n";
+    } catch (const std::exception& e) {
+        m_output_buffer << "Error: " << e.what() << "\n";
+    }
+}
+
+void Dashboard::cmd_view(const std::string& args) {
+    std::string target = Strings::lower(Strings::trim(args));
+    if (target.empty()) {
+        m_output_buffer << "Current focus: ";
+        switch(m_focus) {
+            case FOCUS_MEMORY: m_output_buffer << "Memory"; break;
+            case FOCUS_REGS: m_output_buffer << "Registers"; break;
+            case FOCUS_STACK: m_output_buffer << "Stack"; break;
+            case FOCUS_CODE: m_output_buffer << "Code"; break;
+            case FOCUS_WATCH: m_output_buffer << "Watch"; break;
+            case FOCUS_BREAKPOINTS: m_output_buffer << "Breakpoints"; break;
+            case FOCUS_CMD: m_output_buffer << "Command"; break;
+            default: m_output_buffer << "Unknown"; break;
+        }
+        m_output_buffer << "\n";
+        return;
+    }
+
+    if (target == "memory" || target == "m" || target == "mem") { m_focus = FOCUS_MEMORY; m_show_mem = true; }
+    else if (target == "registers" || target == "regs" || target == "r") { m_focus = FOCUS_REGS; m_show_regs = true; }
+    else if (target == "stack" || target == "s") { m_focus = FOCUS_STACK; m_show_stack = true; }
+    else if (target == "code" || target == "c") { m_focus = FOCUS_CODE; m_show_code = true; }
+    else if (target == "watch" || target == "w") { m_focus = FOCUS_WATCH; m_show_watch = true; }
+    else if (target == "breakpoints" || target == "break" || target == "b") { m_focus = FOCUS_BREAKPOINTS; m_show_breakpoints = true; }
+    else if (target == "command" || target == "cmd") { m_focus = FOCUS_CMD; }
+    else {
+        m_output_buffer << "Unknown view: " << target << "\n";
+        return;
+    }
+    m_output_buffer << "Focus switched to " << target << "\n";
 }
 
 void Dashboard::cmd_set(const std::string& args_str) {
@@ -1287,11 +1373,12 @@ void Dashboard::handle_command(const std::string& input) {
         return;
     }
 
-    const CommandEntry* best_entry = nullptr;
+    const CommandRegistry::CommandEntry* best_entry = nullptr;
+    const auto& cmds = m_command_registry.get_commands();
     std::string best_cmd;
-    for (const auto& pair : m_commands) {
+    for (const auto& pair : cmds) {
         const std::string& cmd_key = pair.first;
-        const CommandEntry& entry = pair.second;
+        const auto& entry = pair.second;
         if (clean_input.compare(0, cmd_key.length(), cmd_key) == 0) {
             if (entry.require_separator) {
                 if (clean_input.length() > cmd_key.length() && !std::isspace(static_cast<unsigned char>(clean_input[cmd_key.length()])))
@@ -1305,7 +1392,7 @@ void Dashboard::handle_command(const std::string& input) {
     }
     if (!best_cmd.empty() && best_entry) {
         std::string args = Strings::trim(clean_input.substr(best_cmd.length()));
-        (this->*(best_entry->handler))(args);
+        best_entry->handler(args);
     } else {
         auto parts = Strings::split_once(clean_input, " \t");
         m_output_buffer << "Unknown command: " << parts.first << "\n";
@@ -1472,30 +1559,15 @@ void Dashboard::print_footer() {
 void Dashboard::update_code_view() {
     if (!m_auto_follow)
         return;
+    center_code_view(m_debugger.get_core().get_cpu().get_PC());
+}
 
+void Dashboard::center_code_view(uint16_t pc) {
     auto& core = m_debugger.get_core();
-    uint16_t pc = core.get_cpu().get_PC();
     int target_row = std::max(3, m_code_view.get_rows() / 3);
 
-    auto count_meta_lines = [&](uint16_t addr) {
-        int lines = 0;
-        auto& ctx = core.get_analyzer().context;
-        const Comment* block_cmt = ctx.getComments().find(addr, Comment::Type::Block);
-        if (block_cmt && !block_cmt->getText().empty()) {
-             std::stringstream desc_ss(block_cmt->getText());
-             std::string segment;
-             while(std::getline(desc_ss, segment, '\n')) {
-                 lines++;
-             }
-        }
-        std::string label = core.get_context().getSymbols().get_label(addr);
-        if (!label.empty())
-            lines++;
-        return lines;
-    };
-
     // Calculate lines occupied by PC instruction's metadata (which appear above it)
-    int pc_meta_lines = count_meta_lines(pc);
+    int pc_meta_lines = m_code_view.get_meta_height(pc);
     
     // We want the instruction line itself to be at target_row.
     // The lines above the instruction line are:
@@ -1518,7 +1590,7 @@ void Dashboard::update_code_view() {
 
             bool is_code = (core.get_code_map()[prev] & CodeMap::FLAG_CODE_START);
             int lines_added = 0;
-            int meta = count_meta_lines(prev);
+            int meta = m_code_view.get_meta_height(prev);
 
             if (is_code || meta > 0) {
                 lines_added = 1 + meta;
@@ -2235,4 +2307,95 @@ std::string Dashboard::format(const Expression::Value& val, bool detailed, const
         }
     }
     return ss.str();
+}
+
+CommandRegistry::CompletionType CommandRegistry::resolve_type(const std::string& cmd, int param_index, const std::string& args_part) const {
+    if (m_commands.find(cmd) == m_commands.end()) return CTX_NONE;
+    const auto& entry = m_commands.at(cmd);
+
+    const std::vector<CompletionType>* current_types = &entry.param_types;
+    const std::map<std::string, SubcommandEntry>* current_subcommands = &entry.subcommands;
+
+    int current_arg_idx = 0;
+    size_t pos = 0;
+
+    while (current_arg_idx <= param_index) {
+        CompletionType type = CTX_NONE;
+        if (current_arg_idx < (int)current_types->size()) {
+            type = (*current_types)[current_arg_idx];
+        } else if (!current_types->empty() && current_types->back() == CTX_EXPRESSION) {
+            type = CTX_EXPRESSION;
+        }
+
+        if (current_arg_idx == param_index) {
+            return type;
+        }
+
+        size_t start = pos;
+        while (start < args_part.length() && std::isspace(args_part[start])) start++;
+        if (start >= args_part.length()) break;
+
+        size_t end = start;
+        while (end < args_part.length() && !std::isspace(args_part[end])) end++;
+        
+        std::string arg_val = args_part.substr(start, end - start);
+        pos = end;
+
+        if (type == CTX_SUBCOMMAND) {
+            auto it = current_subcommands->find(arg_val);
+            if (it != current_subcommands->end()) {
+                current_types = &it->second.param_types;
+                current_subcommands = &it->second.subcommands;
+                param_index -= (current_arg_idx + 1);
+                current_arg_idx = -1;
+            }
+        }
+        current_arg_idx++;
+    }
+    return CTX_NONE;
+}
+
+std::vector<std::string> CommandRegistry::get_subcommand_candidates(const std::string& cmd, int param_index, const std::string& args_part) const {
+    if (m_commands.find(cmd) == m_commands.end()) return {};
+    const auto& entry = m_commands.at(cmd);
+
+    const std::vector<CompletionType>* current_types = &entry.param_types;
+    const std::map<std::string, SubcommandEntry>* current_subcommands = &entry.subcommands;
+
+    int current_arg_idx = 0;
+    size_t pos = 0;
+
+    while (current_arg_idx <= param_index) {
+        CompletionType type = CTX_NONE;
+        if (current_arg_idx < (int)current_types->size()) type = (*current_types)[current_arg_idx];
+
+        if (current_arg_idx == param_index) {
+            if (type == CTX_SUBCOMMAND) {
+                std::vector<std::string> candidates;
+                for (const auto& pair : *current_subcommands) candidates.push_back(pair.first);
+                return candidates;
+            }
+            return {};
+        }
+
+        size_t start = pos;
+        while (start < args_part.length() && std::isspace(args_part[start])) start++;
+        if (start >= args_part.length()) break;
+        size_t end = start;
+        while (end < args_part.length() && !std::isspace(args_part[end])) end++;
+        std::string arg_val = args_part.substr(start, end - start);
+        pos = end;
+
+        if (type == CTX_SUBCOMMAND) {
+            auto it = current_subcommands->find(arg_val);
+            if (it != current_subcommands->end()) {
+                current_types = &it->second.param_types;
+                current_subcommands = &it->second.subcommands;
+                param_index -= (current_arg_idx + 1);
+                current_arg_idx = -1;
+            }
+        }
+        current_arg_idx++;
+    }
+    return {};
 }

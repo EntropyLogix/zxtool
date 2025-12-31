@@ -50,6 +50,7 @@ public:
     void set_focus(bool focus) { m_has_focus = focus; }
     void set_rows(int rows) { m_rows = rows; }
     int get_rows() const { return m_rows; }
+    virtual bool on_key(const Terminal::Input& in) { return false; }
 
 protected:
     std::string format_header(const std::string& title, const std::string& extra = "") const;
@@ -67,6 +68,7 @@ public:
     void set_address(uint16_t addr);
     uint16_t get_address() const { return m_cursor_addr; }
     void scroll(int delta);
+    bool on_key(const Terminal::Input& in) override;
 private:
     void ensure_visible();
     uint16_t m_cursor_addr = 0;
@@ -91,6 +93,7 @@ public:
     uint16_t get_address() const { return m_view_addr; }
     void scroll(int delta) { m_view_addr += delta; }
     void set_prev_sp(uint16_t sp) { m_prev_sp = sp; }
+    bool on_key(const Terminal::Input& in) override;
 private:
     uint16_t m_view_addr = 0;
     uint16_t m_prev_sp = 0;
@@ -104,6 +107,7 @@ public:
     void set_skip_lines(int skip) { m_skip_lines = skip; }
     uint16_t get_address() const { return m_start_addr; }
     void scroll(int delta);
+    bool on_key(const Terminal::Input& in) override;
     void set_state(uint16_t pc, int width, uint16_t last_pc, bool has_history, bool pc_moved, uint64_t tstates, uint64_t prev_tstates) {
         m_pc = pc; m_width = width; m_last_pc = last_pc; m_has_history = has_history; m_pc_moved = pc_moved;
         m_tstates = tstates; m_prev_tstates = prev_tstates;
@@ -113,6 +117,8 @@ public:
     void set_cursor(uint16_t addr) { m_cursor_addr = addr; }
     uint16_t get_cursor() const { return m_cursor_addr; }
     void move_cursor(int delta);
+    int get_line_height(uint16_t addr);
+    int get_meta_height(uint16_t addr);
 private:
     struct DisasmInfo {
         std::string text;
@@ -135,6 +141,35 @@ private:
     uint16_t m_cursor_addr = 0;
 };
 
+class CommandRegistry {
+public:
+    enum CompletionType { CTX_NONE, CTX_EXPRESSION, CTX_SYMBOL, CTX_CUSTOM, CTX_SUBCOMMAND };
+
+    struct SubcommandEntry {
+        std::vector<CompletionType> param_types;
+        std::map<std::string, SubcommandEntry> subcommands;
+    };
+
+    struct CommandEntry {
+        std::function<void(const std::string&)> handler;
+        bool require_separator;
+        std::string syntax;
+        std::vector<CompletionType> param_types;
+        std::function<void(const std::string& full_input, int param_index, const std::string& args, Terminal::Completion& result)> custom_completer = nullptr;
+        std::map<std::string, SubcommandEntry> subcommands;
+        bool is_alias = false;
+    };
+
+    void add(const std::vector<std::string>& names, CommandEntry entry);
+    const std::map<std::string, CommandEntry>& get_commands() const { return m_commands; }
+    
+    CompletionType resolve_type(const std::string& cmd, int param_index, const std::string& args_part) const;
+    std::vector<std::string> get_subcommand_candidates(const std::string& cmd, int param_index, const std::string& args_part) const;
+
+private:
+    std::map<std::string, CommandEntry> m_commands;
+};
+
 class Dashboard {
 public:
     friend class Autocompletion;
@@ -150,27 +185,49 @@ public:
         m_debugger.set_logger([this](const std::string& msg){ log(msg); });
         m_editor.set_highlight_color(m_theme.bracket_match);
         m_editor.set_error_color(m_theme.hint_error);
-        m_commands = {
-            {"evaluate", {&Dashboard::cmd_evaluate, true, "expression", {CTX_EXPRESSION}}},
-            {"eval", {&Dashboard::cmd_evaluate, true, "expression", {CTX_EXPRESSION}}},
-            {"quit", {&Dashboard::cmd_quit, true, "", {}}},
-            {"q", {&Dashboard::cmd_quit, true, "", {}}},
-            {"help", {&Dashboard::cmd_help, false, "", {}}},
-            {"set", {&Dashboard::cmd_set, true, "target = value", {CTX_EXPRESSION, CTX_EXPRESSION, CTX_EXPRESSION}}},
-            {"undef", {&Dashboard::cmd_undef, true, "symbol", {CTX_SYMBOL}}},
-            {"?", {&Dashboard::cmd_expression, false, "expression", {CTX_EXPRESSION}}},
-            {"??", {&Dashboard::cmd_expression_detailed, false, "expression", {CTX_EXPRESSION}}},
-            {"options", {&Dashboard::cmd_options, false, "colors|autocompletion|bracketshighlight value", {CTX_CUSTOM, CTX_CUSTOM}, 
-                [this](const std::string& f, int i, const std::string& a, Terminal::Completion& r){ m_autocompletion.complete_options(f, i, a, r); }
-            }},
-            {"watch", {&Dashboard::cmd_watch, true, "address", {CTX_EXPRESSION}}},
-            {"break", {&Dashboard::cmd_break, true, "address", {CTX_EXPRESSION}}},
-            {"b", {&Dashboard::cmd_break, true, "address", {CTX_EXPRESSION}}},
-            {"step", {&Dashboard::cmd_step, true, "[count]", {CTX_EXPRESSION}}},
-            {"s", {&Dashboard::cmd_step, true, "[count]", {CTX_EXPRESSION}}}
+        
+        m_command_registry.add({"evaluate", "eval"}, {[this](const std::string& s){ cmd_evaluate(s); }, true, "expression", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"quit", "q"}, {[this](const std::string& s){ cmd_quit(s); }, true, "", {}});
+        m_command_registry.add({"help"}, {[this](const std::string& s){ cmd_help(s); }, false, "", {}});
+        m_command_registry.add({"set"}, {[this](const std::string& s){ cmd_set(s); }, true, "target = value", {CommandRegistry::CTX_EXPRESSION, CommandRegistry::CTX_EXPRESSION, CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"undef"}, {[this](const std::string& s){ cmd_undef(s); }, true, "symbol", {CommandRegistry::CTX_SYMBOL}});
+        m_command_registry.add({"?"}, {[this](const std::string& s){ cmd_expression(s); }, false, "expression", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"??"}, {[this](const std::string& s){ cmd_expression_detailed(s); }, false, "expression", {CommandRegistry::CTX_EXPRESSION}});
+        
+        CommandRegistry::CommandEntry opt_entry;
+        opt_entry.handler = [this](const std::string& s){ cmd_options(s); };
+        opt_entry.require_separator = false;
+        opt_entry.syntax = "colors|autocompletion|bracketshighlight|comments value";
+        opt_entry.param_types = {CommandRegistry::CTX_SUBCOMMAND};
+        
+        CommandRegistry::SubcommandEntry leaf;
+        leaf.param_types = {};
+
+        CommandRegistry::SubcommandEntry bool_opts;
+        bool_opts.param_types = {CommandRegistry::CTX_SUBCOMMAND};
+        bool_opts.subcommands = { {"on", leaf}, {"off", leaf} };
+
+        CommandRegistry::SubcommandEntry comment_opts;
+        comment_opts.param_types = {CommandRegistry::CTX_SUBCOMMAND};
+        comment_opts.subcommands = { {"wrap", leaf}, {"truncate", leaf} };
+
+        opt_entry.subcommands = {
+            {"colors", bool_opts},
+            {"autocompletion", bool_opts},
+            {"bracketshighlight", bool_opts},
+            {"comments", comment_opts}
         };
+        m_command_registry.add({"options"}, opt_entry);
+
+        m_command_registry.add({"watch", "w"}, {[this](const std::string& s){ cmd_watch(s); }, true, "address", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"break", "b"}, {[this](const std::string& s){ cmd_break(s); }, true, "address", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"step", "s"}, {[this](const std::string& s){ cmd_step(s); }, true, "[count]", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"code", "c"}, {[this](const std::string& s){ cmd_code(s); }, true, "address", {CommandRegistry::CTX_EXPRESSION}});
+        auto view_completer = [](const std::string&, int, const std::string& a, Terminal::Completion& r){ std::vector<std::string> opts = {"memory", "registers", "stack", "code", "watch", "breakpoints"}; for (const auto& o : opts) if (o.find(a) == 0) r.candidates.push_back(o); };
+        m_command_registry.add({"view", "v"}, {[this](const std::string& s){ cmd_view(s); }, true, "memory|registers|stack|code|watch|breakpoints", {CommandRegistry::CTX_CUSTOM}, view_completer});
     }
     void run();
+    const CommandRegistry& get_command_registry() const { return m_command_registry; }
 
 private:    
     enum Focus { FOCUS_MEMORY, FOCUS_REGS, FOCUS_STACK, FOCUS_CODE, FOCUS_WATCH, FOCUS_BREAKPOINTS, FOCUS_CMD, FOCUS_COUNT };
@@ -198,16 +255,7 @@ private:
     bool m_show_bracket_highlight = true;
     bool m_wrap_comments = false;
     
-    enum CompletionType { CTX_NONE, CTX_EXPRESSION, CTX_SYMBOL, CTX_CUSTOM };
-
-    struct CommandEntry {
-        void (Dashboard::*handler)(const std::string&);
-        bool require_separator;
-        std::string syntax;
-        std::vector<CompletionType> param_types;
-        std::function<void(const std::string& full_input, int param_index, const std::string& args, Terminal::Completion& result)> custom_completer = nullptr;
-    };
-    std::map<std::string, CommandEntry> m_commands;
+    CommandRegistry m_command_registry;
     Terminal::LineEditor m_editor;
     Autocompletion m_autocompletion{ *this };
     Hint m_hint{ *this };
@@ -218,13 +266,12 @@ private:
     void print_separator() { std::cout << m_theme.separator << std::string(80, '-') << Terminal::RESET << "\n"; }
     void print_dashboard();
     void draw_prompt();
-    bool scroll_up();
-    bool scroll_down();
     void print_footer();
     void print_columns(const std::vector<std::string>& left, const std::vector<std::string>& right, size_t left_width);
     void print_output_buffer();
     void log(const std::string& msg) { m_output_buffer << msg << "\n"; }
     void update_code_view();
+    void center_code_view(uint16_t addr);
     void update_stack_view();
     void update_theme();
 
@@ -239,6 +286,8 @@ private:
     void cmd_break(const std::string& args);
     void cmd_help(const std::string& args);
     void cmd_step(const std::string& args);
+    void cmd_code(const std::string& args);
+    void cmd_view(const std::string& args);
     
     void perform_evaluate(const std::string& expr, bool detailed);
     void perform_set(const std::string& args, bool detailed);
