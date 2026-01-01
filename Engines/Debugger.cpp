@@ -16,17 +16,62 @@ void Debugger::remove_breakpoint(uint16_t addr) {
         [addr](const Breakpoint& b){ return b.addr == addr; }), m_breakpoints.end());
 }
 
-void Debugger::add_watch(uint16_t addr) {
-    m_watches.push_back(addr);
+void Debugger::remove_breakpoint_by_index(size_t index) {
+    if (index < m_breakpoints.size()) m_breakpoints.erase(m_breakpoints.begin() + index);
 }
 
-void Debugger::remove_watch(uint16_t addr) {
-    m_watches.erase(std::remove(m_watches.begin(), m_watches.end(), addr), m_watches.end());
+void Debugger::enable_breakpoint(size_t index) {
+    if (index < m_breakpoints.size()) m_breakpoints[index].enabled = true;
+}
+
+void Debugger::enable_breakpoint(uint16_t addr) {
+    auto it = std::find_if(m_breakpoints.begin(), m_breakpoints.end(), [addr](const Breakpoint& b){ return b.addr == addr; });
+    if (it != m_breakpoints.end()) it->enabled = true;
+}
+
+void Debugger::disable_breakpoint(size_t index) {
+    if (index < m_breakpoints.size()) m_breakpoints[index].enabled = false;
+}
+
+void Debugger::disable_breakpoint(uint16_t addr) {
+    auto it = std::find_if(m_breakpoints.begin(), m_breakpoints.end(), [addr](const Breakpoint& b){ return b.addr == addr; });
+    if (it != m_breakpoints.end()) it->enabled = false;
+}
+
+void Debugger::enable_all_breakpoints() {
+    for (auto& bp : m_breakpoints) bp.enabled = true;
+}
+
+void Debugger::disable_all_breakpoints() {
+    for (auto& bp : m_breakpoints) bp.enabled = false;
+}
+
+void Debugger::clear_breakpoints() {
+    m_breakpoints.clear();
+}
+
+void Debugger::add_watch(const std::string& expr) {
+    m_watches.push_back(expr);
+}
+
+void Debugger::remove_watch(size_t index) {
+    if (index < m_watches.size()) m_watches.erase(m_watches.begin() + index);
+}
+
+void Debugger::clear_watches() {
+    m_watches.clear();
 }
 
 bool Debugger::check_breakpoints(uint16_t pc) {
     for (const auto& bp : m_breakpoints)
         if (bp.enabled && bp.addr == pc)
+            return true;
+    return false;
+}
+
+bool Debugger::has_breakpoint(uint16_t addr) const {
+    for (const auto& bp : m_breakpoints)
+        if (bp.addr == addr)
             return true;
     return false;
 }

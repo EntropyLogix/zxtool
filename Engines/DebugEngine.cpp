@@ -25,6 +25,40 @@ void CommandRegistry::add(const std::vector<std::string>& names, CommandEntry en
     }
 }
 
+const CommandRegistry::CommandEntry* CommandRegistry::find_command(const std::string& name) const {
+    auto it = m_commands.find(name);
+    if (it != m_commands.end()) return &it->second;
+    return nullptr;
+}
+
+std::string CommandRegistry::get_syntax(const std::string& cmd_name) const {
+    auto it = m_commands.find(cmd_name);
+    if (it == m_commands.end()) return "";
+    const auto& entry = it->second;
+    
+    if (!entry.usage.empty()) return entry.usage;
+    
+    if (!entry.subcommands.empty()) {
+        std::string s;
+        int i = 0;
+        for (const auto& pair : entry.subcommands) {
+            if (i++ > 0) s += "|";
+            s += pair.first;
+        }
+        return s;
+    }
+    
+    if (!entry.param_types.empty()) {
+        std::string s;
+        for (size_t i = 0; i < entry.param_types.size(); ++i) {
+            if (i > 0) s += " ";
+            s += "<arg>";
+        }
+        return s;
+    }
+    return "";
+}
+
 std::string DebugView::format_header(const std::string& title, const std::string& extra) const {
     std::stringstream ss;
     if (m_has_focus)
@@ -325,6 +359,86 @@ std::vector<std::string> StackView::render() {
             ss << rst;
         }
         lines.push_back(ss.str());
+    }
+    return lines;
+}
+
+std::vector<std::string> WatchView::render() {
+    std::vector<std::string> lines;
+    const auto& watches = m_debugger.get_watches();
+    std::string extra;
+    if (watches.size() > 3) extra = " (Top 3)";
+    lines.push_back(format_header("WATCH", extra));
+
+    int count = 0;
+    for (size_t i = 0; i < watches.size() && count < 3; ++i) {
+        std::stringstream ss;
+        ss << m_theme.value_dim << "#" << (i + 1) << " " << Terminal::RESET;
+        
+        std::string expr = watches[i];
+        std::string expr_display = expr;
+        if (expr_display.length() > 12) expr_display = expr_display.substr(0, 11) + ".";
+        ss << m_theme.label << std::left << std::setw(12) << expr_display << Terminal::RESET << " ";
+
+        try {
+            Expression eval(m_core);
+            auto val = eval.evaluate(expr);
+            std::string val_str;
+            std::string smart;
+            
+            if (val.is_number() || val.is_register() || val.is_symbol()) {
+                double d = val.get_scalar(m_core);
+                int64_t v = (int64_t)d;
+                std::stringstream vs;
+                vs << Strings::hex((uint16_t)v) << "  " << std::dec << v;
+                val_str = vs.str();
+                if (v >= 32 && v <= 126) smart = std::string("'") + (char)v + "'";
+                else smart = ".";
+            } else {
+                val_str = "Complex";
+                smart = "?";
+            }
+
+            if (val_str.length() > 15) val_str = val_str.substr(0, 14) + ".";
+            ss << m_theme.value << std::left << std::setw(15) << val_str << Terminal::RESET << " ";
+            ss << m_theme.comment << std::left << std::setw(6) << smart << Terminal::RESET;
+        } catch (...) {
+            ss << m_theme.error << "Error" << Terminal::RESET;
+        }
+        lines.push_back(ss.str());
+        count++;
+    }
+    if (watches.size() > 3) {
+        lines.push_back(m_theme.value_dim + "... (+" + std::to_string(watches.size() - 3) + " more)" + Terminal::RESET);
+    }
+    return lines;
+}
+
+std::vector<std::string> BreakpointView::render() {
+    std::vector<std::string> lines;
+    const auto& bps = m_debugger.get_breakpoints();
+    std::string extra;
+    if (bps.size() > 3) extra = " (Top 3)";
+    lines.push_back(format_header("BREAKPOINTS", extra));
+
+    int count = 0;
+    for (size_t i = 0; i < bps.size() && count < 3; ++i) {
+        const auto& bp = bps[i];
+        std::stringstream ss;
+        ss << m_theme.value_dim << "#" << (i + 1) << " " << Terminal::RESET;
+        ss << (bp.enabled ? (m_theme.highlight + "[*]") : (m_theme.value_dim + "[ ]")) << Terminal::RESET << " ";
+        ss << m_theme.address << Strings::hex(bp.addr) << Terminal::RESET << "  ";
+        
+        auto sym = m_core.get_context().getSymbols().find_nearest(bp.addr);
+        std::string label = (!sym.first.empty() && sym.second == bp.addr) ? sym.first : "";
+        if (label.length() > 20) label = label.substr(0, 17) + "...";
+        ss << m_theme.label << label << Terminal::RESET;
+        
+        lines.push_back(ss.str());
+        count++;
+    }
+    if (bps.size() > 3) {
+        lines.push_back(m_theme.value_dim + "... (+" + std::to_string(bps.size() - 3) + " more)" + Terminal::RESET);
     }
     return lines;
 }
@@ -1134,13 +1248,63 @@ void Dashboard::cmd_quit(const std::string&) {
     m_running = false;
 }
 
-void Dashboard::cmd_help(const std::string&) {
-    m_output_buffer << "Available commands:\n";
-    m_output_buffer << "------------------------------------------------------------\n";
-    const auto& cmds = m_command_registry.get_commands();
-    for (const auto& pair : cmds) {
-        if (!pair.second.is_alias) {
-            m_output_buffer << std::left << std::setw(15) << pair.first << pair.second.syntax << "\n";
+void Dashboard::cmd_help(const std::string& args) {
+    std::string clean_args = Strings::trim(args);
+    if (clean_args.empty()) {
+        m_output_buffer << "Available commands:\n";
+        m_output_buffer << "------------------------------------------------------------\n";
+        const auto& cmds = m_command_registry.get_commands();
+        for (const auto& pair : cmds) {
+            if (!pair.second.is_alias) {
+                std::string syntax = m_command_registry.get_syntax(pair.first);
+                m_output_buffer << std::left << std::setw(15) << pair.first << std::setw(30) << syntax << pair.second.description << "\n";
+            }
+        }
+    } else {
+        auto parts = Strings::split(clean_args, ' ');
+        std::string cmd_name = parts[0];
+        const auto* entry = m_command_registry.find_command(cmd_name);
+        
+        if (!entry) {
+            m_output_buffer << "Unknown command: " << cmd_name << "\n";
+            return;
+        }
+
+        const CommandRegistry::SubcommandEntry* sub = nullptr;
+        std::string path = cmd_name;
+
+        for (size_t i = 1; i < parts.size(); ++i) {
+            const auto& subs = (sub ? sub->subcommands : entry->subcommands);
+            auto it = subs.find(parts[i]);
+            if (it != subs.end()) {
+                sub = &it->second;
+                path += " " + parts[i];
+            } else {
+                break;
+            }
+        }
+
+        std::string desc = sub ? sub->description : entry->description;
+        std::string usage = sub ? sub->usage : entry->usage;
+        if (usage.empty()) {
+             if (sub) usage = ""; // Could generate from param_types if needed
+             else usage = m_command_registry.get_syntax(cmd_name);
+        }
+
+        m_output_buffer << "Command: " << path << "\n";
+        m_output_buffer << "Description: " << desc << "\n";
+        m_output_buffer << "Usage: " << path << " " << usage << "\n";
+
+        const auto& subs = (sub ? sub->subcommands : entry->subcommands);
+        if (!subs.empty()) {
+            m_output_buffer << "\nSubcommands:\n";
+            size_t max_len = 0;
+            for (const auto& pair : subs) {
+                if (pair.first.length() > max_len) max_len = pair.first.length();
+            }
+            for (const auto& pair : subs) {
+                m_output_buffer << "  " << std::left << std::setw((int)(max_len + 2)) << pair.first << pair.second.description << "\n";
+            }
         }
     }
 }
@@ -1370,42 +1534,180 @@ void Dashboard::cmd_options(const std::string& args) {
 }
 
 void Dashboard::cmd_watch(const std::string& args) {
-    if (args.empty()) {
-        m_show_watch = !m_show_watch;
+    std::string expr_str = Strings::trim(args);
+    if (expr_str.empty()) {
+        cmd_watch_list("");
         return;
     }
     try {
         Expression eval(m_debugger.get_core());
-        auto val = eval.evaluate(args);
-        uint16_t addr = 0;
-        if (val.is_address() && !val.address().empty()) addr = val.address()[0];
-        else if (val.is_number()) addr = (uint16_t)val.number();
-        else if (val.is_symbol()) addr = val.symbol().read();
-        else { m_output_buffer << "Invalid address.\n"; return; }
-        m_debugger.add_watch(addr);
+        eval.evaluate(expr_str); // Trial evaluation to validate syntax
+        m_debugger.add_watch(expr_str);
         m_show_watch = true;
-        m_output_buffer << "Watch added: $" << Strings::hex(addr) << "\n";
+        m_output_buffer << "Watch added: " << expr_str << "\n";
     } catch (const std::exception& e) {
-        m_output_buffer << "Error: " << e.what() << "\n";
+        m_output_buffer << "Error: Invalid expression: " << e.what() << "\n";
     }
 }
 
+void Dashboard::cmd_unwatch(const std::string& args) {
+    int id = 0;
+    if (Strings::parse_integer(args, id)) {
+        if (id > 0 && id <= (int)m_debugger.get_watches().size()) {
+            m_debugger.remove_watch(id - 1);
+            m_output_buffer << "Watch #" << id << " removed.\n";
+        } else {
+            m_output_buffer << "Error: Invalid watch ID.\n";
+        }
+    } else {
+        m_output_buffer << "Error: Invalid ID format.\n";
+    }
+}
+
+void Dashboard::cmd_clear_watch(const std::string&) {
+    m_debugger.clear_watches();
+    m_output_buffer << "All watches cleared.\n";
+}
+
+void Dashboard::cmd_watch_list(const std::string&) {
+    const auto& watches = m_debugger.get_watches();
+    m_output_buffer << "WATCH LIST:\n";
+    m_output_buffer << "------------------------------------------------------------\n";
+    for (size_t i = 0; i < watches.size(); ++i) {
+        m_output_buffer << "#" << (i + 1) << " " << watches[i];
+        try {
+            Expression eval(m_debugger.get_core());
+            auto val = eval.evaluate(watches[i]);
+            m_output_buffer << " = " << format(val, false);
+        } catch (...) {
+            m_output_buffer << " = Error";
+        }
+        m_output_buffer << "\n";
+    }
+    if (watches.empty()) m_output_buffer << "No watches.\n";
+}
+
+void Dashboard::cmd_break_list(const std::string&) {
+    const auto& bps = m_debugger.get_breakpoints();
+    m_output_buffer << "BREAKPOINT LIST:\n";
+    m_output_buffer << "------------------------------------------------------------\n";
+    for (size_t i = 0; i < bps.size(); ++i) {
+        const auto& bp = bps[i];
+        m_output_buffer << "#" << (i + 1) << " " << (bp.enabled ? "[*]" : "[ ]") << " $" << Strings::hex(bp.addr);
+        auto sym = m_debugger.get_core().get_context().getSymbols().find_nearest(bp.addr);
+        if (!sym.first.empty() && sym.second == bp.addr)
+            m_output_buffer << " (" << sym.first << ")";
+        m_output_buffer << "\n";
+    }
+    if (bps.empty()) m_output_buffer << "No breakpoints.\n";
+}
+
 void Dashboard::cmd_break(const std::string& args) {
+    std::string clean_args = Strings::trim(args);
+    if (clean_args.empty()) {
+        cmd_break_list("");
+        return;
+    }
+
+    auto parts = Strings::split_once(clean_args, " \t");
+    std::string subcmd = Strings::lower(parts.first);
+    std::string arg = Strings::trim(parts.second);
+
+    if (subcmd == "list") {
+        cmd_break_list("");
+        return;
+    }
+
+    if (subcmd == "add") {
+        if (arg.empty()) { m_output_buffer << "Error: Missing address for add.\n"; return; }
+        try {
+            Expression eval(m_debugger.get_core());
+            auto val = eval.evaluate(arg);
+            uint16_t addr = (uint16_t)val.get_scalar(m_debugger.get_core());
+            if (m_debugger.has_breakpoint(addr)) {
+                m_output_buffer << "Breakpoint already exists at $" << Strings::hex(addr) << "\n";
+            } else {
+                m_debugger.add_breakpoint(addr);
+                m_show_breakpoints = true;
+                m_output_buffer << "Breakpoint added at $" << Strings::hex(addr) << "\n";
+            }
+        } catch (const std::exception& e) {
+            m_output_buffer << "Error: " << e.what() << "\n";
+        }
+        return;
+    }
+
+    // Helper lambda for delete/enable/disable logic
+    auto handle_target = [&](const std::string& target, auto action_all, auto action_id, auto action_addr) {
+        if (target == "all") {
+            action_all();
+        } else if (!target.empty() && target[0] == '#') {
+            int id = 0;
+            if (Strings::parse_integer(target.substr(1), id)) {
+                if (id > 0 && id <= (int)m_debugger.get_breakpoints().size()) {
+                    action_id(id - 1);
+                } else {
+                    m_output_buffer << "Error: Invalid breakpoint ID #" << id << "\n";
+                }
+            } else {
+                m_output_buffer << "Error: Invalid ID format.\n";
+            }
+        } else {
+            try {
+                Expression eval(m_debugger.get_core());
+                auto val = eval.evaluate(target);
+                uint16_t addr = (uint16_t)val.get_scalar(m_debugger.get_core());
+                action_addr(addr);
+            } catch (const std::exception& e) {
+                m_output_buffer << "Error: " << e.what() << "\n";
+            }
+        }
+    };
+
+    if (subcmd == "delete") {
+        if (arg.empty()) { m_output_buffer << "Error: Missing argument for delete (all, #ID, expr).\n"; return; }
+        handle_target(arg,
+            [this](){ m_debugger.clear_breakpoints(); m_output_buffer << "All breakpoints deleted.\n"; },
+            [this](size_t idx){ m_debugger.remove_breakpoint_by_index(idx); m_output_buffer << "Breakpoint #" << (idx+1) << " deleted.\n"; },
+            [this](uint16_t addr){ m_debugger.remove_breakpoint(addr); m_output_buffer << "Breakpoint at $" << Strings::hex(addr) << " deleted.\n"; }
+        );
+    } else if (subcmd == "enable") {
+        if (arg.empty()) { m_output_buffer << "Error: Missing argument for enable (all, #ID, expr).\n"; return; }
+        handle_target(arg,
+            [this](){ m_debugger.enable_all_breakpoints(); m_output_buffer << "All breakpoints enabled.\n"; },
+            [this](size_t idx){ m_debugger.enable_breakpoint(idx); m_output_buffer << "Breakpoint #" << (idx+1) << " enabled.\n"; },
+            [this](uint16_t addr){ m_debugger.enable_breakpoint(addr); m_output_buffer << "Breakpoint at $" << Strings::hex(addr) << " enabled.\n"; }
+        );
+    } else if (subcmd == "disable") {
+        if (arg.empty()) { m_output_buffer << "Error: Missing argument for disable (all, #ID, expr).\n"; return; }
+        handle_target(arg,
+            [this](){ m_debugger.disable_all_breakpoints(); m_output_buffer << "All breakpoints disabled.\n"; },
+            [this](size_t idx){ m_debugger.disable_breakpoint(idx); m_output_buffer << "Breakpoint #" << (idx+1) << " disabled.\n"; },
+            [this](uint16_t addr){ m_debugger.disable_breakpoint(addr); m_output_buffer << "Breakpoint at $" << Strings::hex(addr) << " disabled.\n"; }
+        );
+    } else {
+        m_output_buffer << "Unknown subcommand: " << subcmd << ". Use add, delete, enable, disable, list.\n";
+    }
+}
+
+void Dashboard::cmd_break_smart(const std::string& args) {
     if (args.empty()) {
-        m_show_breakpoints = !m_show_breakpoints;
+        m_output_buffer << "Error: Missing expression for toggle.\n";
         return;
     }
     try {
         Expression eval(m_debugger.get_core());
         auto val = eval.evaluate(args);
-        uint16_t addr = 0;
-        if (val.is_address() && !val.address().empty()) addr = val.address()[0];
-        else if (val.is_number()) addr = (uint16_t)val.number();
-        else if (val.is_symbol()) addr = val.symbol().read();
-        else { m_output_buffer << "Invalid address.\n"; return; }
-        m_debugger.add_breakpoint(addr);
-        m_show_breakpoints = true;
-        m_output_buffer << "Breakpoint set: $" << Strings::hex(addr) << "\n";
+        uint16_t addr = (uint16_t)val.get_scalar(m_debugger.get_core());
+        
+        if (m_debugger.has_breakpoint(addr)) {
+            m_debugger.remove_breakpoint(addr);
+            m_output_buffer << "Breakpoint removed at $" << Strings::hex(addr) << "\n";
+        } else {
+            m_debugger.add_breakpoint(addr);
+            m_show_breakpoints = true;
+            m_output_buffer << "Breakpoint set at $" << Strings::hex(addr) << "\n";
+        }
     } catch (const std::exception& e) {
         m_output_buffer << "Error: " << e.what() << "\n";
     }
@@ -1535,70 +1837,13 @@ void Dashboard::print_dashboard() {
         for (const auto& l : code_lines)
             std::cout << l << "\n";
     }
-    if (m_show_watch) {
+    
+    if (m_show_watch || m_show_breakpoints) {
         print_separator();
-        std::cout << (m_focus == FOCUS_WATCH || m_focus == FOCUS_BREAKPOINTS ? m_theme.header_focus : m_theme.header_blur) << "[STATUS]" << Terminal::RESET << "\n";
-        std::stringstream ss;
-        std::string label = " WATCH: ";
-        ss << m_theme.label << label << Terminal::RESET;
-        const auto& watches = m_debugger.get_watches();
-        std::vector<std::string> items;
-        for (uint16_t addr : watches) {
-            uint8_t val = core.get_memory().peek(addr);
-            std::stringstream item_ss;
-            auto pair = core.get_context().getSymbols().find_nearest(addr);
-            if (!pair.first.empty() && pair.second == addr)
-                item_ss << pair.first;
-            else item_ss << Strings::hex(addr);
-                item_ss << "=" << (int)val;
-            items.push_back(item_ss.str());
-        }    
-        int max_len = 80;
-        int current_len = (int)label.length();
-        bool first = true;
-        for (size_t i = 0; i < items.size(); ++i) {
-            std::string sep = first ? "" : ", ";
-            if (current_len + sep.length() + items[i].length() > (size_t)(max_len - 10)) {
-                ss << m_theme.value_dim << "... (+" << (items.size() - i) << ")" << Terminal::RESET;
-                break;
-            }
-            ss << m_theme.value << sep << items[i] << Terminal::RESET;
-            current_len += sep.length() + items[i].length();
-            first = false;
-        }
-        if (items.empty())
-            ss << m_theme.value_dim << "No items." << Terminal::RESET;
-        std::cout << ss.str() << "\n";
-        ss.str(""); ss.clear();
-        label = " BREAK: ";
-        ss << m_theme.error << label << Terminal::RESET;
-        const auto& breakpoints = m_debugger.get_breakpoints();
-        items.clear();
-        for (const auto& bp : breakpoints) {
-            std::stringstream item_ss;
-            item_ss << (bp.enabled ? "*" : "o") << Strings::hex(bp.addr);
-            auto pair = core.get_context().getSymbols().find_nearest(bp.addr);
-            if (!pair.first.empty() && pair.second == bp.addr)
-                item_ss << " (" << pair.first << ")";
-            items.push_back(item_ss.str());
-        }    
-        max_len = 80;
-        current_len = (int)label.length();
-        first = true;
-        for (size_t i = 0; i < items.size(); ++i) {
-            std::string sep = first ? "" : ", ";
-            if (current_len + sep.length() + items[i].length() > (size_t)(max_len - 10)) {
-                ss << m_theme.value_dim << "... (+" << (items.size() - i) << ")" << Terminal::RESET;
-                break;
-            }
-            ss << m_theme.value << sep << items[i] << Terminal::RESET;
-            current_len += sep.length() + items[i].length();
-            first = false;
-        }
-        if (items.empty())
-            ss << m_theme.value_dim << "No items." << Terminal::RESET;
-        std::cout << ss.str() << "\n";
-        print_separator();
+        std::vector<std::string> left, right;
+        if (m_show_watch) left = m_watch_view.render();
+        if (m_show_breakpoints) right = m_breakpoint_view.render();
+        print_columns(left, right, 38);
     }
     bool is_smc = false;
     auto line = core.get_analyzer().parse_instruction(pc);
@@ -1615,7 +1860,7 @@ void Dashboard::print_dashboard() {
     }
     bool has_output = (m_output_buffer.tellp() > 0);
     print_output_buffer();
-    if (has_output || !m_show_watch)
+    if (has_output || (!m_show_watch && !m_show_breakpoints))
         print_separator();
 
     print_footer();
@@ -2395,6 +2640,22 @@ std::string Dashboard::format(const Expression::Value& val, bool detailed, const
 }
 
 CommandRegistry::CompletionType CommandRegistry::resolve_type(const std::string& cmd, int param_index, const std::string& args_part) const {
+    if (cmd == "help") {
+        if (param_index == 0) return CTX_SUBCOMMAND;
+        
+        size_t start = 0;
+        while (start < args_part.length() && std::isspace(args_part[start])) start++;
+        size_t end = start;
+        while (end < args_part.length() && !std::isspace(args_part[end])) end++;
+        
+        if (start < args_part.length()) {
+            std::string target_cmd = args_part.substr(start, end - start);
+            std::string remaining_args = (end < args_part.length()) ? args_part.substr(end) : "";
+            return resolve_type(target_cmd, param_index - 1, remaining_args);
+        }
+        return CTX_NONE;
+    }
+
     if (m_commands.find(cmd) == m_commands.end()) return CTX_NONE;
     const auto& entry = m_commands.at(cmd);
 
@@ -2441,6 +2702,27 @@ CommandRegistry::CompletionType CommandRegistry::resolve_type(const std::string&
 }
 
 std::vector<std::string> CommandRegistry::get_subcommand_candidates(const std::string& cmd, int param_index, const std::string& args_part) const {
+    if (cmd == "help") {
+        if (param_index == 0) {
+            std::vector<std::string> candidates;
+            for (const auto& pair : m_commands) {
+                if (!pair.second.is_alias) candidates.push_back(pair.first);
+            }
+            return candidates;
+        }
+        size_t start = 0;
+        while (start < args_part.length() && std::isspace(args_part[start])) start++;
+        size_t end = start;
+        while (end < args_part.length() && !std::isspace(args_part[end])) end++;
+        
+        if (start < args_part.length()) {
+            std::string target_cmd = args_part.substr(start, end - start);
+            std::string remaining_args = (end < args_part.length()) ? args_part.substr(end) : "";
+            return get_subcommand_candidates(target_cmd, param_index - 1, remaining_args);
+        }
+        return {};
+    }
+
     if (m_commands.find(cmd) == m_commands.end()) return {};
     const auto& entry = m_commands.at(cmd);
 

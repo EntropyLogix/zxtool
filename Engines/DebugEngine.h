@@ -142,6 +142,24 @@ private:
     uint16_t m_cursor_addr = 0;
 };
 
+class WatchView : public DebugView {
+public:
+    WatchView(Core& core, Debugger& debugger, const Theme& theme) 
+        : DebugView(core, theme), m_debugger(debugger) {}
+    std::vector<std::string> render() override;
+private:
+    Debugger& m_debugger;
+};
+
+class BreakpointView : public DebugView {
+public:
+    BreakpointView(Core& core, Debugger& debugger, const Theme& theme) 
+        : DebugView(core, theme), m_debugger(debugger) {}
+    std::vector<std::string> render() override;
+private:
+    Debugger& m_debugger;
+};
+
 class CommandRegistry {
 public:
     enum CompletionType { CTX_NONE, CTX_EXPRESSION, CTX_SYMBOL, CTX_CUSTOM, CTX_SUBCOMMAND };
@@ -149,12 +167,15 @@ public:
     struct SubcommandEntry {
         std::vector<CompletionType> param_types;
         std::map<std::string, SubcommandEntry> subcommands;
+        std::string description;
+        std::string usage;
     };
 
     struct CommandEntry {
         std::function<void(const std::string&)> handler;
         bool require_separator;
-        std::string syntax;
+        std::string usage;
+        std::string description;
         std::vector<CompletionType> param_types;
         std::function<void(const std::string& full_input, int param_index, const std::string& args, Terminal::Completion& result)> custom_completer = nullptr;
         std::map<std::string, SubcommandEntry> subcommands;
@@ -166,6 +187,9 @@ public:
     
     CompletionType resolve_type(const std::string& cmd, int param_index, const std::string& args_part) const;
     std::vector<std::string> get_subcommand_candidates(const std::string& cmd, int param_index, const std::string& args_part) const;
+    
+    std::string get_syntax(const std::string& cmd_name) const;
+    const CommandEntry* find_command(const std::string& name) const;
 
 private:
     std::map<std::string, CommandEntry> m_commands;
@@ -181,24 +205,26 @@ public:
         , m_register_view(debugger.get_core(), m_theme)
         , m_stack_view(debugger.get_core(), 4, m_theme)
         , m_code_view(debugger.get_core(), 15, m_theme)
+        , m_watch_view(debugger.get_core(), debugger, m_theme)
+        , m_breakpoint_view(debugger.get_core(), debugger, m_theme)
     {
         m_code_view.set_debugger(&m_debugger);
         m_debugger.set_logger([this](const std::string& msg){ log(msg); });
         m_editor.set_highlight_color(m_theme.bracket_match);
         m_editor.set_error_color(m_theme.hint_error);
         
-        m_command_registry.add({"evaluate", "eval"}, {[this](const std::string& s){ cmd_evaluate(s); }, true, "expression", {CommandRegistry::CTX_EXPRESSION}});
-        m_command_registry.add({"quit", "q"}, {[this](const std::string& s){ cmd_quit(s); }, true, "", {}});
-        m_command_registry.add({"help"}, {[this](const std::string& s){ cmd_help(s); }, false, "", {}});
-        m_command_registry.add({"set"}, {[this](const std::string& s){ cmd_set(s); }, true, "target = value", {CommandRegistry::CTX_EXPRESSION, CommandRegistry::CTX_EXPRESSION, CommandRegistry::CTX_EXPRESSION}});
-        m_command_registry.add({"undef"}, {[this](const std::string& s){ cmd_undef(s); }, true, "symbol", {CommandRegistry::CTX_SYMBOL}});
-        m_command_registry.add({"?"}, {[this](const std::string& s){ cmd_expression(s); }, false, "expression", {CommandRegistry::CTX_EXPRESSION}});
-        m_command_registry.add({"??"}, {[this](const std::string& s){ cmd_expression_detailed(s); }, false, "expression", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"evaluate", "eval"}, {[this](const std::string& s){ cmd_evaluate(s); }, true, "expression", "Evaluate expression", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"quit", "q"}, {[this](const std::string& s){ cmd_quit(s); }, true, "", "Exit debugger", {}});
+        m_command_registry.add({"help"}, {[this](const std::string& s){ cmd_help(s); }, false, "[command]", "Show help", {}});
+        m_command_registry.add({"set"}, {[this](const std::string& s){ cmd_set(s); }, true, "target = value", "Set variable/memory", {CommandRegistry::CTX_EXPRESSION, CommandRegistry::CTX_EXPRESSION, CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"undef"}, {[this](const std::string& s){ cmd_undef(s); }, true, "symbol", "Undefine symbol", {CommandRegistry::CTX_SYMBOL}});
+        m_command_registry.add({"?"}, {[this](const std::string& s){ cmd_expression(s); }, false, "expression", "Evaluate expression", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"??"}, {[this](const std::string& s){ cmd_expression_detailed(s); }, false, "expression", "Evaluate detailed", {CommandRegistry::CTX_EXPRESSION}});
         
         CommandRegistry::CommandEntry opt_entry;
         opt_entry.handler = [this](const std::string& s){ cmd_options(s); };
         opt_entry.require_separator = false;
-        opt_entry.syntax = "colors|autocompletion|bracketshighlight|comments value";
+        opt_entry.description = "Configure options";
         opt_entry.param_types = {CommandRegistry::CTX_SUBCOMMAND};
         
         CommandRegistry::SubcommandEntry leaf;
@@ -206,27 +232,54 @@ public:
 
         CommandRegistry::SubcommandEntry bool_opts;
         bool_opts.param_types = {CommandRegistry::CTX_SUBCOMMAND};
-        bool_opts.subcommands = { {"on", leaf}, {"off", leaf} };
+        bool_opts.description = "Enable/Disable";
+        bool_opts.subcommands = { {"on", { {}, {}, "Enable", "" }}, {"off", { {}, {}, "Disable", "" }} };
 
         CommandRegistry::SubcommandEntry comment_opts;
         comment_opts.param_types = {CommandRegistry::CTX_SUBCOMMAND};
-        comment_opts.subcommands = { {"wrap", leaf}, {"truncate", leaf} };
+        comment_opts.description = "Comment mode";
+        comment_opts.subcommands = { {"wrap", { {}, {}, "Wrap comments", "" }}, {"truncate", { {}, {}, "Truncate comments", "" }} };
 
         opt_entry.subcommands = {
-            {"colors", bool_opts},
-            {"autocompletion", bool_opts},
-            {"bracketshighlight", bool_opts},
-            {"comments", comment_opts}
+            {"colors", { bool_opts.param_types, bool_opts.subcommands, "Toggle colors", "" }},
+            {"autocompletion", { bool_opts.param_types, bool_opts.subcommands, "Toggle autocompletion", "" }},
+            {"bracketshighlight", { bool_opts.param_types, bool_opts.subcommands, "Toggle bracket highlight", "" }},
+            {"comments", { comment_opts.param_types, comment_opts.subcommands, "Configure comments", "" }}
         };
         m_command_registry.add({"options"}, opt_entry);
 
-        m_command_registry.add({"watch", "w"}, {[this](const std::string& s){ cmd_watch(s); }, true, "address", {CommandRegistry::CTX_EXPRESSION}});
-        m_command_registry.add({"break", "b"}, {[this](const std::string& s){ cmd_break(s); }, true, "address", {CommandRegistry::CTX_EXPRESSION}});
-        m_command_registry.add({"step", "s"}, {[this](const std::string& s){ cmd_step(s); }, true, "[count]", {CommandRegistry::CTX_EXPRESSION}});
-        m_command_registry.add({"memory", "m"}, {[this](const std::string& s){ cmd_memory(s); }, true, "[address]", {CommandRegistry::CTX_EXPRESSION}});
-        m_command_registry.add({"code", "c"}, {[this](const std::string& s){ cmd_code(s); }, true, "address", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"watch", "w"}, {[this](const std::string& s){ cmd_watch(s); }, true, "expression", "Add watch", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"bl"}, {[this](const std::string& s){ cmd_break_list(s); }, false, "", "List breakpoints", {}});
+        
+        CommandRegistry::CommandEntry break_entry;
+        break_entry.handler = [this](const std::string& s){ cmd_break(s); };
+        break_entry.require_separator = true;
+        break_entry.description = "Manage breakpoints";
+        break_entry.param_types = {CommandRegistry::CTX_SUBCOMMAND};
+        
+        CommandRegistry::SubcommandEntry break_expr_arg;
+        break_expr_arg.param_types = {CommandRegistry::CTX_EXPRESSION};
+        break_expr_arg.usage = "<expr>";
+        
+        CommandRegistry::SubcommandEntry break_leaf;
+        break_leaf.param_types = {};
+
+        break_entry.subcommands = {
+            {"add", { break_expr_arg.param_types, {}, "Add breakpoint", "<expr>" }},
+            {"delete", { break_expr_arg.param_types, {}, "Delete breakpoint", "all|#ID|<expr>" }},
+            {"enable", { break_expr_arg.param_types, {}, "Enable breakpoint", "all|#ID|<expr>" }},
+            {"disable", { break_expr_arg.param_types, {}, "Disable breakpoint", "all|#ID|<expr>" }},
+            {"list", { break_leaf.param_types, {}, "List breakpoints", "" }}
+        };
+        m_command_registry.add({"break"}, break_entry);
+        
+        m_command_registry.add({"b"}, {[this](const std::string& s){ cmd_break_smart(s); }, true, "expression", "Toggle breakpoint", {CommandRegistry::CTX_EXPRESSION}});
+
+        m_command_registry.add({"step", "s"}, {[this](const std::string& s){ cmd_step(s); }, true, "[count]", "Step instruction", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"memory", "m"}, {[this](const std::string& s){ cmd_memory(s); }, true, "[address]", "Memory view", {CommandRegistry::CTX_EXPRESSION}});
+        m_command_registry.add({"code", "c"}, {[this](const std::string& s){ cmd_code(s); }, true, "address", "Code view", {CommandRegistry::CTX_EXPRESSION}});
         auto view_completer = [](const std::string&, int, const std::string& a, Terminal::Completion& r){ std::vector<std::string> opts = {"memory", "registers", "stack", "code", "watch", "breakpoints"}; for (const auto& o : opts) if (o.find(a) == 0) r.candidates.push_back(o); };
-        m_command_registry.add({"view", "v"}, {[this](const std::string& s){ cmd_view(s); }, true, "memory|registers|stack|code|watch|breakpoints", {CommandRegistry::CTX_CUSTOM}, view_completer});
+        m_command_registry.add({"view", "v"}, {[this](const std::string& s){ cmd_view(s); }, true, "target", "Switch view", {CommandRegistry::CTX_CUSTOM}, view_completer});
     }
     ~Dashboard();
     void run();
@@ -246,12 +299,14 @@ private:
     RegisterView m_register_view;
     StackView m_stack_view;
     CodeView m_code_view;
+    WatchView m_watch_view;
+    BreakpointView m_breakpoint_view;
     bool m_show_mem = true;
     bool m_show_regs = true;
     bool m_show_code = true;
     bool m_show_stack = true;
-    bool m_show_watch = false;
-    bool m_show_breakpoints = false;
+    bool m_show_watch = true;
+    bool m_show_breakpoints = true;
     bool m_auto_follow = true;
     bool m_show_colors = true;
     bool m_show_autocompletion = true;
@@ -287,6 +342,11 @@ private:
     void cmd_options(const std::string& args);
     void cmd_watch(const std::string& args);
     void cmd_break(const std::string& args);
+    void cmd_break_smart(const std::string& args);
+    void cmd_unwatch(const std::string& args);
+    void cmd_watch_list(const std::string& args);
+    void cmd_break_list(const std::string& args);
+    void cmd_clear_watch(const std::string& args);
     void cmd_help(const std::string& args);
     void cmd_step(const std::string& args);
     void cmd_next(const std::string& args);

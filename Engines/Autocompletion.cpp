@@ -152,7 +152,7 @@ Terminal::Completion Autocompletion::get(const std::string& input) {
             result.is_custom_context = true;
             std::string current_argument = arguments_part.substr(current_argument_offset);
             result.replace_pos = (int)(matched_command.length() + current_argument_offset);
-            result.prefix = current_argument;
+            result.prefix = Strings::trim(current_argument);
             std::vector<std::string> candidates = registry.get_subcommand_candidates(matched_command, parameter_index, arguments_part);
             for (const auto& c : candidates) {
                 if (c.find(result.prefix) == 0)
@@ -166,8 +166,15 @@ Terminal::Completion Autocompletion::get(const std::string& input) {
             result.prefix = current_argument;
             entry.custom_completer(input, parameter_index, current_argument, result);
         }
-    } else
+    } else {
+        size_t first_non_space = Strings::find_first_non_space(input);
+        if (first_non_space != std::string::npos) {
+             size_t space_after_cmd = input.find_first_of(" \t", first_non_space);
+             if (space_after_cmd != std::string::npos)
+                 return result;
+        }
         complete_command_name(input, result);
+    }
     std::sort(result.candidates.begin(), result.candidates.end(), [](const std::string& a, const std::string& b) {
         std::string ua = Strings::upper(a);
         std::string ub = Strings::upper(b);

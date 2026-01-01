@@ -39,11 +39,12 @@ std::string Hint::get_command_syntax_hint(const std::string& input) {
         std::string command_name = parts.first;
         const auto& cmds = m_dashboard.get_command_registry().get_commands();
         auto command_iterator = cmds.find(command_name);
-        if (command_iterator != cmds.end() && !command_iterator->second.syntax.empty()) {
+        if (command_iterator != cmds.end()) {
+            std::string syntax = m_dashboard.get_command_registry().get_syntax(command_name);
             std::string arguments = parts.second;
             bool is_whitespace_only = arguments.empty() || std::all_of(arguments.begin(), arguments.end(), [](unsigned char c){ return std::isspace(c); });
-            if (is_whitespace_only)
-                return command_iterator->second.syntax;
+            if (is_whitespace_only && !syntax.empty())
+                return syntax;
         }
     }
     return "";
@@ -304,16 +305,18 @@ std::string Hint::calculate(const std::string& input, int cursor_pos, std::strin
                     if (i > 0) syntax_tail_hint += "|";
                     syntax_tail_hint += candidates[i];
                 }
-            } else if (!entry.syntax.empty()) {
-                syntax_tail_hint = get_syntax_part(entry.syntax, syntax_start_idx);
+            } else {
+                std::string syntax = registry.get_syntax(best_cmd);
+                if (!syntax.empty()) syntax_tail_hint = get_syntax_part(syntax, syntax_start_idx);
             }
         }
     } else if (!completion_result.candidates.empty()) {
         // If no command matched but we have candidates (completing the command name itself),
         // show the syntax of the best candidate.
-        auto it = cmds.find(completion_result.candidates[0]);
-        if (it != cmds.end()) {
-            syntax_tail_hint = get_syntax_part(it->second.syntax, 0);
+        std::string best_cand = completion_result.candidates[0];
+        std::string syntax = registry.get_syntax(best_cand);
+        if (!syntax.empty()) {
+            syntax_tail_hint = get_syntax_part(syntax, 0);
         }
     }
 
