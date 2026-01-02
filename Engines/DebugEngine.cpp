@@ -1,4 +1,5 @@
 #include "DebugEngine.h"
+#include "TraceModule.h"
 
 #include <iostream>
 #include <iomanip>
@@ -13,6 +14,21 @@
 #include "../Utils/Checksum.h"
 #include "../Core/Expression.h"
 #include <limits>
+
+extern TraceModule g_trace_module;
+
+struct TraceMemoryAdapter {
+    uint16_t base_pc;
+    const uint8_t* data;
+    size_t len;
+    uint8_t peek(uint16_t addr) const {
+        if (addr >= base_pc && addr < base_pc + len) return data[addr - base_pc];
+        return 0;
+    }
+    uint8_t read(uint16_t addr) const { return peek(addr); }
+    void poke(uint16_t, uint8_t) {}
+    void write(uint16_t, uint8_t) {}
+};
 
 static constexpr const char* HISTORY_FILE = ".zxtool_history";
 
@@ -1328,7 +1344,10 @@ void Dashboard::cmd_step(const std::string& args) {
 }
 
 void Dashboard::cmd_next(const std::string&) {
+    Terminal::enable_raw_mode();
+    std::cout << "Stepping... (Press ESC to stop)\r\n" << std::flush;
     m_debugger.next();
+    Terminal::disable_raw_mode();
     m_auto_follow = true;
     update_code_view();
     update_stack_view();
@@ -1781,6 +1800,120 @@ void Dashboard::init() {
         uint16_t ret = core.get_memory().peek(sp) | (core.get_memory().peek((sp + 1) & 0xFFFF) << 8);
         return Expression::Value((double)ret);
     }, "Return address (from stack)"));
+
+    m_debugger.set_interrupt_callback([](){
+        Terminal::Input in = Terminal::read_key();
+        return in.key == Terminal::Key::ESC;
+    });
+
+    m_command_registry.add({"trace", "tr"}, {
+        [this](const std::string& args){
+            std::string a = Strings::trim(args);
+            auto parts = Strings::split_once(a, " ");
+            std::string sub = Strings::lower(parts.first);
+            
+            if (sub == "on") {
+                g_trace_module.set_recording(true);
+                m_output_buffer << "Trace recording ON.\n";
+            } else if (sub == "off") {
+                g_trace_module.set_recording(false);
+                m_output_buffer << "Trace recording OFF.\n";
+            } else if (sub == "clear") {
+                g_trace_module.clear();
+                m_output_buffer << "Trace buffer cleared.\n";
+            } else if (sub == "list") {
+                int count = 10;
+                if (!parts.second.empty()) Strings::parse_integer(parts.second, count);
+                auto history = g_trace_module.get_history(count);
+                
+                m_output_buffer << "[TRACE] Status: " << (g_trace_module.is_recording() ? "ON" : "OFF") 
+                                << " | Buffer: " << g_trace_module.get_count() << "/" << g_trace_module.get_capacity() << "\n";
+                
+                int idx = -(int)history.size();
+                for (const auto& entry : history) {
+                    std::stringstream ss;
+                    ss << " " << std::setw(3) << idx << "  " << m_theme.address << Strings::hex(entry.pc) << Terminal::RESET << ": ";
+                    
+                    std::stringstream hex_ss;
+                    for(int i=0; i<entry.len; ++i) hex_ss << Strings::hex(entry.opcodes[i]) << " ";
+                    ss << m_theme.value_dim << std::left << std::setw(12) << hex_ss.str() << Terminal::RESET;
+                    
+                    // Disassemble from trace entry bytes
+                    TraceMemoryAdapter mem_adapter{entry.pc, entry.opcodes, entry.len};
+                    Z80Analyzer<TraceMemoryAdapter> analyzer(&mem_adapter);
+                    auto line = analyzer.parse_instruction(entry.pc);
+                    
+                    ss << m_theme.mnemonic << line.mnemonic << Terminal::RESET;
+                    if (!line.operands.empty()) {
+                        ss << " ";
+                        using Operand = Z80Analyzer<TraceMemoryAdapter>::CodeLine::Operand;
+                        for (size_t i = 0; i < line.operands.size(); ++i) {
+                            if (i > 0) ss << ", ";
+                            const auto& op = line.operands[i];
+                            switch (op.type) {
+                                case Operand::REG8: case Operand::REG16: case Operand::CONDITION: ss << op.s_val; break;
+                                case Operand::IMM8: ss << "$" << Strings::hex((uint8_t)op.num_val); break;
+                                case Operand::IMM16: ss << "$" << Strings::hex((uint16_t)op.num_val); break;
+                                case Operand::MEM_IMM16: ss << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
+                                case Operand::PORT_IMM8: ss << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
+                                case Operand::MEM_REG16: ss << "(" << op.s_val << ")"; break;
+                                case Operand::MEM_INDEXED: ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
+                                case Operand::STRING: ss << "\"" << op.s_val << "\""; break;
+                                case Operand::CHAR_LITERAL: ss << "'" << (char)op.num_val << "'"; break;
+                                default: break;
+                            }
+                        }
+                    }
+                    
+                    m_output_buffer << ss.str() << "\n";
+                    idx++;
+                }
+            } else {
+                m_output_buffer << "Usage: trace on|off|clear|list [N]\n";
+            }
+        },
+        true,
+        "on|off|clear|list",
+        "Flight Recorder (Trace)",
+        {CommandRegistry::CTX_SUBCOMMAND}
+    });
+
+    m_command_registry.add({"over", "ov"}, {
+        [this](const std::string&){
+            m_debugger.over();
+            m_auto_follow = true;
+            update_code_view();
+            update_stack_view();
+        }, false, "", "Step over (run until next address)", {}
+    });
+
+    m_command_registry.add({"skip", "sk"}, {
+        [this](const std::string&){
+            m_debugger.skip();
+            m_auto_follow = true;
+            update_code_view();
+        }, false, "", "Skip instruction (advance PC without executing)", {}
+    });
+
+    m_command_registry.add({"next", "n"}, {
+        [this](const std::string& args){ cmd_next(args); },
+        false, "", "Step over instruction", {}
+    });
+
+    m_command_registry.add({"step", "s"}, {
+        [this](const std::string& args){ cmd_step(args); },
+        false, "", "Step into instruction", {CommandRegistry::CTX_EXPRESSION}
+    });
+
+    m_command_registry.add({"quit", "q"}, {
+        [this](const std::string& args){ cmd_quit(args); },
+        false, "", "Quit debugger", {}
+    });
+
+    m_command_registry.add({"help", "h"}, {
+        [this](const std::string& args){ cmd_help(args); },
+        false, "", "Show help", {CommandRegistry::CTX_SUBCOMMAND}
+    });
 }
 
 Dashboard::~Dashboard() {

@@ -1,6 +1,11 @@
 #include "Debugger.h"
+#include "TraceModule.h"
 #include "../Utils/Strings.h"
 #include <algorithm>
+#include <functional>
+
+TraceModule g_trace_module;
+static std::function<bool()> g_dbg_interrupt_callback;
 
 Debugger::Debugger(Core& core, const Options& options) : m_core(core), m_options(options) { 
     m_prev_state = m_core.get_cpu().save_state(); 
@@ -82,6 +87,10 @@ void Debugger::step(int n) {
         if (i > 0 && check_breakpoints(m_core.get_cpu().get_PC()))
             break;
         uint16_t pc_before = m_core.get_cpu().get_PC();
+        if (g_trace_module.is_recording()) {
+            auto line = m_core.get_analyzer().parse_instruction(pc_before);
+            g_trace_module.push(pc_before, line.bytes);
+        }
         record_trace(pc_before);
         m_core.get_cpu().step();
         uint16_t pc_after = m_core.get_cpu().get_PC();
@@ -94,35 +103,108 @@ void Debugger::step(int n) {
 void Debugger::next() {
     m_prev_state = m_core.get_cpu().save_state();
     uint16_t pc_before = m_core.get_cpu().get_PC();
-    record_trace(pc_before);
-        
     uint16_t temp_pc = pc_before;
     auto line = m_core.get_analyzer().parse_instruction(temp_pc);
         
     if (line.mnemonic.empty()) { 
+        record_trace(pc_before);
+        if (g_trace_module.is_recording()) {
+            g_trace_module.push(pc_before, line.bytes);
+        }
         m_core.get_cpu().step(); 
     }
     else {
         using Type = Z80Analyzer<Memory>::CodeLine::Type;
         bool is_call = line.has_flag(Type::CALL);
         bool is_block = line.has_flag(Type::BLOCK);
+        bool is_djnz = (line.mnemonic == "DJNZ");
 
-        if (is_call || is_block) {
-            uint16_t next_pc = temp_pc + line.bytes.size();
-            log("Stepping over... (Target: " + Strings::hex(next_pc) + ")");
-            while (m_core.get_cpu().get_PC() != next_pc) {
-                if (check_breakpoints(m_core.get_cpu().get_PC()))
-                    break;
-                record_trace(m_core.get_cpu().get_PC());
-                m_core.get_cpu().step();
+        if (is_call || is_block || is_djnz) {
+            uint16_t next_pc = temp_pc + (uint16_t)line.bytes.size();
+            
+            record_trace(pc_before);
+            if (g_trace_module.is_recording()) {
+                g_trace_module.push(pc_before, line.bytes);
             }
-        } else
             m_core.get_cpu().step();
+
+            if (m_core.get_cpu().get_PC() != next_pc)
+                run_until(next_pc);
+        } else {
+            record_trace(pc_before);
+            if (g_trace_module.is_recording()) {
+                g_trace_module.push(pc_before, line.bytes);
+            }
+            m_core.get_cpu().step();
+        }
     }
     uint16_t pc_after = m_core.get_cpu().get_PC();
     m_last_pc = pc_before;
     m_has_history = true;
     m_pc_moved = (pc_before != pc_after);
+}
+
+void Debugger::over() {
+    m_prev_state = m_core.get_cpu().save_state();
+    uint16_t pc = m_core.get_cpu().get_PC();
+    auto line = m_core.get_analyzer().parse_instruction(pc);
+    uint16_t next_pc = pc + (uint16_t)line.bytes.size();
+    
+    record_trace(pc);
+    if (g_trace_module.is_recording()) {
+        g_trace_module.push(pc, line.bytes);
+    }
+    m_core.get_cpu().step();
+    
+    if (m_core.get_cpu().get_PC() != next_pc)
+        run_until(next_pc);
+    
+    uint16_t pc_after = m_core.get_cpu().get_PC();
+    m_last_pc = pc;
+    m_has_history = true;
+    m_pc_moved = (pc != pc_after);
+}
+
+void Debugger::skip() {
+    m_prev_state = m_core.get_cpu().save_state();
+    uint16_t pc = m_core.get_cpu().get_PC();
+    auto line = m_core.get_analyzer().parse_instruction(pc);
+    uint16_t next_pc = pc + (uint16_t)line.bytes.size();
+    
+    m_core.get_cpu().set_PC(next_pc);
+    
+    m_last_pc = pc;
+    m_has_history = true;
+    m_pc_moved = true;
+    log("Skipped instruction. PC: " + Strings::hex(pc) + " -> " + Strings::hex(next_pc));
+}
+
+void Debugger::run_until(uint16_t target_pc) {
+    log("Running until " + Strings::hex(target_pc) + "...");
+    int batch = 0;
+    while (m_core.get_cpu().get_PC() != target_pc) {
+        if (check_breakpoints(m_core.get_cpu().get_PC()))
+            break;
+        
+        if (++batch >= 4096) {
+            batch = 0;
+            if (g_dbg_interrupt_callback && g_dbg_interrupt_callback()) {
+                log("Interrupted by user.");
+                break;
+            }
+        }
+
+        if (g_trace_module.is_recording()) {
+            auto l = m_core.get_analyzer().parse_instruction(m_core.get_cpu().get_PC());
+            g_trace_module.push(m_core.get_cpu().get_PC(), l.bytes);
+        }
+        record_trace(m_core.get_cpu().get_PC());
+        m_core.get_cpu().step();
+    }
+}
+
+void Debugger::set_interrupt_callback(std::function<bool()> cb) {
+    g_dbg_interrupt_callback = cb;
 }
 
 void Debugger::log(const std::string& msg) {

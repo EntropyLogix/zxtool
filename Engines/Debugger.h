@@ -49,6 +49,10 @@ public:
     bool has_breakpoint(uint16_t addr) const;
     void step(int n);
     void next();
+    void over();
+    void skip();
+    void run_until(uint16_t target_pc);
+    void set_interrupt_callback(std::function<bool()> cb);
     
     bool is_traced(uint16_t pc) const;
 
