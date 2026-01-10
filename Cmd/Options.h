@@ -3,13 +3,15 @@
 
 #include <string>
 #include <vector>
+#include <utility>
+#include <cstdint>
 
 struct Options {
     enum class ToolMode { Assemble, Disassemble, Run, Debug, Unknown };
     enum class DisasmMode { Heuristic, Raw, Execute };
 
     ToolMode mode = ToolMode::Unknown;
-    std::vector<std::string> inputFiles;
+    std::vector<std::pair<std::string, uint16_t>> inputFiles;
     std::string outputFile;
     std::string outputFormat;
     std::string mapFile;

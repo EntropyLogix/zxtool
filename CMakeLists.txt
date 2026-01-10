@@ -37,6 +37,7 @@ add_executable(zxtool
                 Files/Z80File.cpp
                 Files/SymbolFile.cpp
                 Files/ControlFile.cpp
+                Files/SkoolFile.cpp
                 Files/FileManager.cpp
                 Utils/Checksum.cpp
                 Utils/Strings.cpp

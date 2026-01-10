@@ -1732,6 +1732,185 @@ void Dashboard::cmd_break_smart(const std::string& args) {
     }
 }
 
+template <typename T>
+std::string Dashboard::format_instruction(const T& line) {
+    std::stringstream ss;
+    ss << m_theme.mnemonic << line.mnemonic << Terminal::RESET;
+    if (!line.operands.empty()) {
+        ss << " ";
+        using Operand = typename T::Operand;
+        for (size_t i = 0; i < line.operands.size(); ++i) {
+            if (i > 0) ss << ", ";
+            const auto& op = line.operands[i];
+            switch (op.type) {
+                case Operand::REG8: case Operand::REG16: case Operand::CONDITION: ss << op.s_val; break;
+                case Operand::IMM8: ss << "$" << Strings::hex((uint8_t)op.num_val); break;
+                case Operand::IMM16: ss << "$" << Strings::hex((uint16_t)op.num_val); break;
+                case Operand::MEM_IMM16: ss << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
+                case Operand::PORT_IMM8: ss << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
+                case Operand::MEM_REG16: ss << "(" << op.s_val << ")"; break;
+                case Operand::MEM_INDEXED: ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
+                case Operand::STRING: ss << "\"" << op.s_val << "\""; break;
+                case Operand::CHAR_LITERAL: ss << "'" << (char)op.num_val << "'"; break;
+                default: break;
+            }
+        }
+    }
+    return ss.str();
+}
+
+void Dashboard::cmd_trace(const std::string& args) {
+    std::string a = Strings::trim(args);
+    auto parts = Strings::split_once(a, " ");
+    std::string sub = Strings::lower(parts.first);
+    
+    if (sub == "on") {
+        g_trace_module.set_recording(true);
+        m_output_buffer << "Trace recording ON.\n";
+    } else if (sub == "off") {
+        g_trace_module.set_recording(false);
+        m_output_buffer << "Trace recording OFF.\n";
+    } else if (sub == "clear") {
+        g_trace_module.clear();
+        m_output_buffer << "Trace buffer cleared.\n";
+    } else if (sub == "list") {
+        int count = 10;
+        if (!parts.second.empty()) Strings::parse_integer(parts.second, count);
+        auto history = g_trace_module.get_history(count);
+        
+        m_output_buffer << "[TRACE] Status: " << (g_trace_module.is_recording() ? "ON" : "OFF") 
+                        << " | Buffer: " << g_trace_module.get_count() << "/" << g_trace_module.get_capacity() << "\n";
+        
+        int idx = -(int)history.size();
+        for (const auto& entry : history) {
+            std::stringstream ss;
+            ss << " " << std::setw(3) << idx << "  " << m_theme.address << Strings::hex(entry.pc) << Terminal::RESET << ": ";
+            
+            std::stringstream hex_ss;
+            for(int i=0; i<entry.len; ++i) hex_ss << Strings::hex(entry.opcodes[i]) << " ";
+            ss << m_theme.value_dim << std::left << std::setw(12) << hex_ss.str() << Terminal::RESET;
+            
+            // Disassemble from trace entry bytes
+            TraceMemoryAdapter mem_adapter{entry.pc, entry.opcodes, entry.len};
+            Z80Analyzer<TraceMemoryAdapter> analyzer(&mem_adapter);
+            auto line = analyzer.parse_instruction(entry.pc);
+            
+            ss << format_instruction(line);
+            
+            m_output_buffer << ss.str() << "\n";
+            idx++;
+        }
+    } else {
+        m_output_buffer << "Usage: trace on|off|clear|list [N]\n";
+    }
+}
+
+void Dashboard::cmd_codemap(const std::string& args) {
+    std::vector<std::string> tokens;
+    std::stringstream ss(args);
+    std::string item;
+    while (ss >> item) tokens.push_back(item);
+    auto& core = m_debugger.get_core();
+
+    if (tokens.empty()) {
+        m_output_buffer << "MEMORY MAP (Satellite View, 64KB)\n";
+        m_output_buffer << "Legend: [C]ode, [D]ata, [.]Empty/Unknown, [x]Mixed\n\n";
+        for (int row = 0; row < 8; ++row) {
+            uint16_t base = row * 0x2000;
+            std::string line_str = Strings::hex(base) + ": ";
+            for (int col = 0; col < 32; ++col) {
+                if (col > 0 && col % 8 == 0) line_str += " ";
+                int code_w = 0;
+                uint16_t chunk_start = base + col * 256;
+                for (int i = 0; i < 256; i += 16) {
+                    auto l = core.get_analyzer().parse_instruction(chunk_start + i);
+                    if (!l.mnemonic.empty()) code_w++;
+                }
+                if (code_w > 12) line_str += 'C';
+                else if (code_w > 4) line_str += 'x';
+                else line_str += '.';
+            }
+            m_output_buffer << line_str << "\n";
+        }
+        m_output_buffer << "\nCoverage: Estimated based on static analysis.\n";
+        return;
+    }
+
+    Expression expr(core);
+    uint16_t start = 0, end = 0;
+    try {
+        uint16_t center = (uint16_t)expr.evaluate(args).get_scalar(core);
+        start = center - 64;
+        end = center + 64;
+        m_output_buffer << "Focus: " << Strings::hex(center) << " (Range: " << Strings::hex(start) << " - " << Strings::hex(end) << ")\n";
+    } catch (...) {
+        bool found = false;
+        auto comma = args.find(',');
+        if (comma != std::string::npos) {
+            try {
+                start = (uint16_t)expr.evaluate(args.substr(0, comma)).get_scalar(core);
+                end = (uint16_t)expr.evaluate(args.substr(comma + 1)).get_scalar(core);
+                found = true;
+            } catch(...) {}
+        } 
+        if (!found) {
+            std::vector<std::string> parts = Strings::split(args, ' ');
+            for (size_t i = 1; i < parts.size(); ++i) {
+                std::string left, right;
+                for(size_t j=0; j<i; ++j) left += (j>0?" ":"") + parts[j];
+                for(size_t j=i; j<parts.size(); ++j) right += (j>i?" ":"") + parts[j];
+                try {
+                    start = (uint16_t)expr.evaluate(left).get_scalar(core);
+                    end = (uint16_t)expr.evaluate(right).get_scalar(core);
+                    found = true;
+                    break;
+                } catch(...) {}
+            }
+        }
+        if (found) m_output_buffer << "Range: " << Strings::hex(start) << " - " << Strings::hex(end) << "\n";
+        else { m_output_buffer << "Error: Invalid address or range expression.\n"; return; }
+    }
+
+    m_output_buffer << "\nADDR RANGE      TYPE           FLAGS\n";
+    m_output_buffer << "------------------------------------------\n";
+    uint16_t pc = start;
+    while (pc <= end) {
+        auto line = core.get_analyzer().parse_instruction(pc);
+        bool is_code = !line.mnemonic.empty();
+        std::string type = is_code ? "CODE" : "DATA";
+        uint16_t block_start = pc;
+        uint16_t block_end = pc;
+        while (block_end < end) {
+            uint16_t next_pc = block_end + (uint16_t)(is_code ? line.bytes.size() : 1);
+            if (next_pc > end || next_pc < block_end) break;
+            auto next_line = core.get_analyzer().parse_instruction(next_pc);
+            if ((!next_line.mnemonic.empty()) != is_code) break;
+            block_end = next_pc;
+            line = next_line;
+            if (block_end == end) break;
+        }
+        uint16_t last_byte = block_end + (uint16_t)(is_code ? line.bytes.size() : 1) - 1;
+        std::string range = Strings::hex(block_start) + " - " + Strings::hex(last_byte);
+        while (range.length() < 15) range += " ";
+        m_output_buffer << range << type << "           " << (is_code ? "[Exec]" : "[Read]") << "\n";
+        pc = last_byte + 1;
+        if (pc <= block_end) break;
+    }
+}
+
+void Dashboard::cmd_over(const std::string&) {
+    m_debugger.over();
+    m_auto_follow = true;
+    update_code_view();
+    update_stack_view();
+}
+
+void Dashboard::cmd_skip(const std::string&) {
+    m_debugger.skip();
+    m_auto_follow = true;
+    update_code_view();
+}
+
 void Dashboard::handle_command(const std::string& input) {
     std::string sanitized_input;
     for (size_t i = 0; i < input.length(); ++i) {
@@ -1807,92 +1986,27 @@ void Dashboard::init() {
     });
 
     m_command_registry.add({"trace", "tr"}, {
-        [this](const std::string& args){
-            std::string a = Strings::trim(args);
-            auto parts = Strings::split_once(a, " ");
-            std::string sub = Strings::lower(parts.first);
-            
-            if (sub == "on") {
-                g_trace_module.set_recording(true);
-                m_output_buffer << "Trace recording ON.\n";
-            } else if (sub == "off") {
-                g_trace_module.set_recording(false);
-                m_output_buffer << "Trace recording OFF.\n";
-            } else if (sub == "clear") {
-                g_trace_module.clear();
-                m_output_buffer << "Trace buffer cleared.\n";
-            } else if (sub == "list") {
-                int count = 10;
-                if (!parts.second.empty()) Strings::parse_integer(parts.second, count);
-                auto history = g_trace_module.get_history(count);
-                
-                m_output_buffer << "[TRACE] Status: " << (g_trace_module.is_recording() ? "ON" : "OFF") 
-                                << " | Buffer: " << g_trace_module.get_count() << "/" << g_trace_module.get_capacity() << "\n";
-                
-                int idx = -(int)history.size();
-                for (const auto& entry : history) {
-                    std::stringstream ss;
-                    ss << " " << std::setw(3) << idx << "  " << m_theme.address << Strings::hex(entry.pc) << Terminal::RESET << ": ";
-                    
-                    std::stringstream hex_ss;
-                    for(int i=0; i<entry.len; ++i) hex_ss << Strings::hex(entry.opcodes[i]) << " ";
-                    ss << m_theme.value_dim << std::left << std::setw(12) << hex_ss.str() << Terminal::RESET;
-                    
-                    // Disassemble from trace entry bytes
-                    TraceMemoryAdapter mem_adapter{entry.pc, entry.opcodes, entry.len};
-                    Z80Analyzer<TraceMemoryAdapter> analyzer(&mem_adapter);
-                    auto line = analyzer.parse_instruction(entry.pc);
-                    
-                    ss << m_theme.mnemonic << line.mnemonic << Terminal::RESET;
-                    if (!line.operands.empty()) {
-                        ss << " ";
-                        using Operand = Z80Analyzer<TraceMemoryAdapter>::CodeLine::Operand;
-                        for (size_t i = 0; i < line.operands.size(); ++i) {
-                            if (i > 0) ss << ", ";
-                            const auto& op = line.operands[i];
-                            switch (op.type) {
-                                case Operand::REG8: case Operand::REG16: case Operand::CONDITION: ss << op.s_val; break;
-                                case Operand::IMM8: ss << "$" << Strings::hex((uint8_t)op.num_val); break;
-                                case Operand::IMM16: ss << "$" << Strings::hex((uint16_t)op.num_val); break;
-                                case Operand::MEM_IMM16: ss << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
-                                case Operand::PORT_IMM8: ss << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
-                                case Operand::MEM_REG16: ss << "(" << op.s_val << ")"; break;
-                                case Operand::MEM_INDEXED: ss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
-                                case Operand::STRING: ss << "\"" << op.s_val << "\""; break;
-                                case Operand::CHAR_LITERAL: ss << "'" << (char)op.num_val << "'"; break;
-                                default: break;
-                            }
-                        }
-                    }
-                    
-                    m_output_buffer << ss.str() << "\n";
-                    idx++;
-                }
-            } else {
-                m_output_buffer << "Usage: trace on|off|clear|list [N]\n";
-            }
-        },
+        [this](const std::string& args){ cmd_trace(args); },
         true,
         "on|off|clear|list",
         "Flight Recorder (Trace)",
         {CommandRegistry::CTX_SUBCOMMAND}
     });
 
+    m_command_registry.add({"codemap", "cm"}, {
+        [this](const std::string& args){ cmd_codemap(args); },
+        false, "", "Show memory map or block details", {CommandRegistry::CTX_EXPRESSION}
+    });
+
+
     m_command_registry.add({"over", "ov"}, {
-        [this](const std::string&){
-            m_debugger.over();
-            m_auto_follow = true;
-            update_code_view();
-            update_stack_view();
-        }, false, "", "Step over (run until next address)", {}
+        [this](const std::string& args){ cmd_over(args); },
+        false, "", "Step over (run until next address)", {}
     });
 
     m_command_registry.add({"skip", "sk"}, {
-        [this](const std::string&){
-            m_debugger.skip();
-            m_auto_follow = true;
-            update_code_view();
-        }, false, "", "Skip instruction (advance PC without executing)", {}
+        [this](const std::string& args){ cmd_skip(args); },
+        false, "", "Skip instruction (advance PC without executing)", {}
     });
 
     m_command_registry.add({"next", "n"}, {
@@ -2276,27 +2390,7 @@ std::string Dashboard::format_disasm(uint16_t addr, const Z80Analyzer<Memory>::C
     if (line.mnemonic.empty()) {
             lss << ".db $" << Strings::hex(m_debugger.get_core().get_memory().peek(addr));
     } else {
-        lss << line.mnemonic;
-        if (!line.operands.empty()) {
-            lss << " ";
-            using Operand = Z80Analyzer<Memory>::CodeLine::Operand;
-            for (size_t i = 0; i < line.operands.size(); ++i) {
-                if (i > 0) lss << ", ";
-                const auto& op = line.operands[i];
-                switch (op.type) {
-                    case Operand::REG8: case Operand::REG16: case Operand::CONDITION: lss << op.s_val; break;
-                    case Operand::IMM8: lss << "$" << Strings::hex((uint8_t)op.num_val); break;
-                    case Operand::IMM16: lss << "$" << Strings::hex((uint16_t)op.num_val); break;
-                    case Operand::MEM_IMM16: lss << "($" << Strings::hex((uint16_t)op.num_val) << ")"; break;
-                    case Operand::PORT_IMM8: lss << "($" << Strings::hex((uint8_t)op.num_val) << ")"; break;
-                    case Operand::MEM_REG16: lss << "(" << op.s_val << ")"; break;
-                    case Operand::MEM_INDEXED: lss << "(" << op.base_reg << (op.offset >= 0 ? "+" : "") << (int)op.offset << ")"; break;
-                    case Operand::STRING: lss << "\"" << op.s_val << "\""; break;
-                    case Operand::CHAR_LITERAL: lss << "'" << (char)op.num_val << "'"; break;
-                    default: break;
-                }
-            }
-        }
+        lss << format_instruction(line);
     }
     return lss.str();
 }

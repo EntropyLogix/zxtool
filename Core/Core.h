@@ -6,6 +6,9 @@
 #include <vector>
 #include <string>
 #include <filesystem>
+#include <utility>
+#include <map>
+#include <iostream>
 
 #include "Memory.h"
 #include "CodeMap.h"
@@ -14,6 +17,14 @@
 #include "Context.h"
 
 #include "../Files/FileManager.h"
+
+inline std::ostream& operator<<(std::ostream& os, const std::pair<std::string, uint16_t>& p) {
+    os << p.first;
+    if (p.second != 0) {
+        os << ":" << std::hex << "0x" << p.second << std::dec;
+    }
+    return os;
+}
 
 class Core : public IFileProvider {
 public:
@@ -25,7 +36,7 @@ public:
 
     // Wczytuje pliki z listy (format "plik" lub "plik:adres")
     // Automatycznie szuka i ładuje pliki .map, .sym, .ctl, .lst
-    void load_input_files(const std::vector<std::string>& inputs);
+    void load_input_files(const std::vector<std::pair<std::string, uint16_t>>& inputs);
     void reset();
     void print_symbols(const std::string& filter = "");
 
@@ -46,6 +57,9 @@ public:
 
     uint16_t parse_address(const std::string& addr_str);
 
+    // Virtual file support for in-memory assembly generation
+    void add_virtual_file(const std::string& name, const std::string& content);
+
 private:
     Memory m_memory;
     CodeMap m_code_map_data;
@@ -57,6 +71,7 @@ private:
     std::vector<Block> m_blocks;
     std::vector<std::filesystem::path> m_current_path_stack;
     FileManager m_file_manager;
+    std::map<std::string, std::string> m_virtual_files;
 
     // Helper methods
     void process_file(const std::string& path, uint16_t address);

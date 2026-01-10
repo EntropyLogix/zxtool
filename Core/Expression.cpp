@@ -1404,6 +1404,18 @@ bool Expression::parse_string(const std::string& expr, size_t& index, std::vecto
         size_t j = index + 1;
         std::string s;
         while (j < expr.length()) {
+            if (expr[j] == '\\' && j + 1 < expr.length()) {
+                char next = expr[j+1];
+                if (next == 'n') s += '\n';
+                else if (next == 'r') s += '\r';
+                else if (next == 't') s += '\t';
+                else if (next == '\\') s += '\\';
+                else if (next == '"') s += '"';
+                else if (next == '\'') s += '\'';
+                else s += next;
+                j += 2;
+                continue;
+            }
             if (expr[j] == quote) {
                 tokens.push_back({TokenType::STRING, Value(s)});
                 index = j + 1;

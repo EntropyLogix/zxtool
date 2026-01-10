@@ -280,6 +280,7 @@ public:
         m_command_registry.add({"code", "c"}, {[this](const std::string& s){ cmd_code(s); }, true, "address", "Code view", {CommandRegistry::CTX_EXPRESSION}});
         auto view_completer = [](const std::string&, int, const std::string& a, Terminal::Completion& r){ std::vector<std::string> opts = {"memory", "registers", "stack", "code", "watch", "breakpoints"}; for (const auto& o : opts) if (o.find(a) == 0) r.candidates.push_back(o); };
         m_command_registry.add({"view", "v"}, {[this](const std::string& s){ cmd_view(s); }, true, "target", "Switch view", {CommandRegistry::CTX_CUSTOM}, view_completer});
+        m_command_registry.add({"analyze"}, {[this](const std::string&){ m_debugger.analyze(); }, false, "", "Run heuristic analysis from PC", {}});
     }
     ~Dashboard();
     void run();
@@ -353,6 +354,10 @@ private:
     void cmd_memory(const std::string& args);
     void cmd_code(const std::string& args);
     void cmd_view(const std::string& args);
+    void cmd_trace(const std::string& args);
+    void cmd_codemap(const std::string& args);
+    void cmd_over(const std::string& args);
+    void cmd_skip(const std::string& args);
     
     void perform_evaluate(const std::string& expr, bool detailed);
     void perform_set(const std::string& args, bool detailed);
@@ -367,6 +372,7 @@ private:
     void print_asm_info(std::stringstream& ss, uint16_t addr);
     std::string format_disasm(uint16_t addr, const Z80Analyzer<Memory>::CodeLine& line);
     void update_crc32(uint32_t& crc, uint8_t b);
+    template <typename T> std::string format_instruction(const T& line);
 
     template <typename T> std::string format_sequence(const std::vector<T>& data, const std::string& prefix, const std::string& suffix, const std::string& separator, bool use_hex_prefix, bool allow_step_gt_1);
 };

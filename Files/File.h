@@ -23,12 +23,12 @@ public:
     virtual std::vector<std::string> get_extensions() const = 0;
 };
 
-class IBinaryFile : public IFile {
+class IBinaryFile : virtual public IFile {
 public:
     virtual LoadResult load(const std::string& filename, std::vector<LoadedBlock>& blocks, uint16_t address) = 0;
 };
 
-class IAuxiliaryFile : public IFile {
+class IAuxiliaryFile : virtual public IFile {
 public:
     virtual bool load(const std::string& filename) = 0;
 };

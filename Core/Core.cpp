@@ -4,6 +4,7 @@
 #include "../Files/Z80File.h"
 #include "../Files/SymbolFile.h"
 #include "../Files/ControlFile.h"
+#include "../Files/SkoolFile.h"
 #include "../Utils/Strings.h"
 #include <filesystem>
 #include <iostream>
@@ -30,22 +31,12 @@ Core::Core()
     m_file_manager.register_loader(new Z80File(*this));
     m_file_manager.register_loader(new SymbolFile(m_analyzer));
     m_file_manager.register_loader(new ControlFile(m_analyzer));
+    m_file_manager.register_loader(new SkoolFile(*this));
 }
 
-void Core::load_input_files(const std::vector<std::string>& inputs) {
+void Core::load_input_files(const std::vector<std::pair<std::string, uint16_t>>& inputs) {
     for (const auto& input : inputs) {
-        std::string path = input;
-        uint16_t address = 0;
-        
-        size_t colon = input.find(':');
-        if (colon != std::string::npos) {
-            path = input.substr(0, colon);
-            int32_t val = 0;
-            Strings::parse_integer(input.substr(colon + 1), val);
-            address = (uint16_t)val;
-        }
-        
-        process_file(path, address);
+        process_file(input.first, input.second);
     }
 }
 
@@ -121,7 +112,17 @@ static std::filesystem::path resolve_path(const std::string& identifier, const s
     return path_stack.back().parent_path() / p;
 }
 
+void Core::add_virtual_file(const std::string& name, const std::string& content) {
+    m_virtual_files[name] = content;
+}
+
 bool Core::read_file(const std::string& identifier, std::vector<uint8_t>& data) {
+    if (m_virtual_files.count(identifier)) {
+        const auto& content = m_virtual_files[identifier];
+        data.assign(content.begin(), content.end());
+        return true;
+    }
+
     auto file_path = resolve_path(identifier, m_current_path_stack);
 
     std::ifstream file(file_path, std::ios::binary | std::ios::ate);
@@ -143,6 +144,9 @@ bool Core::read_file(const std::string& identifier, std::vector<uint8_t>& data) 
 }
 
 size_t Core::file_size(const std::string& identifier) {
+    if (m_virtual_files.count(identifier)) {
+        return m_virtual_files[identifier].size();
+    }
     auto file_path = resolve_path(identifier, m_current_path_stack);
     try {
         return std::filesystem::file_size(file_path);
@@ -152,6 +156,9 @@ size_t Core::file_size(const std::string& identifier) {
 }
 
 bool Core::exists(const std::string& identifier) {
+    if (m_virtual_files.count(identifier)) {
+        return true;
+    }
     auto file_path = resolve_path(identifier, m_current_path_stack);
     return std::filesystem::exists(file_path);
 }

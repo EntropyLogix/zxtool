@@ -75,7 +75,7 @@ bool ControlFile::load(const std::string& filename) {
         size_t labelPos = remainder.find("label=");
         if (labelPos != std::string::npos) {
             std::string name = remainder.substr(labelPos + 6);
-            size_t space = name.find_first_of(" \r\n\t");
+            size_t space = name.find_first_of(" \r\n\t,");
             if (space != std::string::npos) name = name.substr(0, space);
             m_analyzer.context.getSymbols().add_label(addr, name);
         }
@@ -148,6 +148,14 @@ bool ControlFile::load(const std::string& filename) {
                 break;
             case 't': case 'T': case 'Z': // Text
                 set_range(Analyzer::TYPE_TEXT);
+                break;
+            case 'u': case 'U': // Unused
+                set_range(Analyzer::TYPE_IGNORE);
+                if (!remainder.empty()) m_analyzer.context.getComments().add(Comment(addr, "; Unused: " + clean_skool_tags(remainder, m_analyzer), Comment::Type::Block));
+                break;
+            case 'M': // Memory map
+                // Format: M base,length,description
+                if (!remainder.empty()) m_analyzer.context.getComments().add(Comment(addr, "; Block: " + clean_skool_tags(remainder, m_analyzer), Comment::Type::Block));
                 break;
             case 'i': // Ignore
                 set_range(Analyzer::TYPE_IGNORE);

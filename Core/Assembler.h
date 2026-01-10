@@ -7,6 +7,8 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <sstream>
+#include <stdexcept>
 
 class LineAssemblerMemory {
 public:
@@ -28,8 +30,11 @@ public:
         m_memory.m_output = &output;
         
         std::string full_code = " ORG " + std::to_string(pc) + "\n";
-        for (const auto& pair : symbols)
+        m_line_offset = 1;
+        for (const auto& pair : symbols) {
             full_code += pair.first + " EQU " + std::to_string(pair.second) + "\n";
+            m_line_offset++;
+        }
         full_code += code;
         m_file_provider.set_code(full_code);
         this->custom_constants.clear();
@@ -40,6 +45,28 @@ public:
             throw;
         }
         m_memory.m_output = nullptr;
+    }
+
+    bool is_reserved(const std::string& name) {
+        return this->m_keywords.is_reserved(name);
+    }
+
+protected:
+    [[noreturn]] void report_error(const std::string& message) const override {
+        std::stringstream error_stream;
+        if (this->m_context.source.source_location) {
+            size_t line = this->m_context.source.source_location->line_number;
+            if (line >= m_line_offset)
+                error_stream << "Line " << (line - m_line_offset + 1) << ": ";
+            else
+                error_stream << "Internal(" << (line + 1) << "): ";
+        }
+        error_stream << "error: " << message;
+        
+        if (this->m_context.source.source_location)
+             error_stream << "\n    " << this->m_context.source.source_location->content;
+
+        throw std::runtime_error(error_stream.str());
     }
 
 private:
@@ -58,13 +85,14 @@ private:
 
     LineAssemblerMemory m_memory;
     StringFileProvider m_file_provider;
+    size_t m_line_offset = 0;
 };
 
 class ToolAssembler : public Z80Assembler<Memory>
 {
 public:
-    ToolAssembler(Memory* memory, IFileProvider* source_provider, const typename Z80Assembler<Memory>::Options& options = Z80Assembler<Memory>::get_default_options())
-        : Z80Assembler<Memory>(memory, source_provider, options) {}
+    ToolAssembler(Memory* memory, IFileProvider* source_provider, const typename Z80Assembler<Memory>::Config& config = Z80Assembler<Memory>::get_default_config())
+        : Z80Assembler<Memory>(memory, source_provider, config) {}
 };
 
 #endif//__ASSEMBLER_H__

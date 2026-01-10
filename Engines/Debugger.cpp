@@ -3,6 +3,9 @@
 #include "../Utils/Strings.h"
 #include <algorithm>
 #include <functional>
+#include <sstream>
+#include <vector>
+#include <iomanip>
 
 TraceModule g_trace_module;
 static std::function<bool()> g_dbg_interrupt_callback;
@@ -10,6 +13,9 @@ static std::function<bool()> g_dbg_interrupt_callback;
 Debugger::Debugger(Core& core, const Options& options) : m_core(core), m_options(options) { 
     m_prev_state = m_core.get_cpu().save_state(); 
     m_trace.resize(64);
+
+    // Disable label generation during debugging
+    m_core.get_profiler().set_generate_labels(false);
 }
 
 void Debugger::add_breakpoint(uint16_t addr) {
@@ -201,6 +207,25 @@ void Debugger::run_until(uint16_t target_pc) {
         record_trace(m_core.get_cpu().get_PC());
         m_core.get_cpu().step();
     }
+}
+
+void Debugger::analyze() {
+    uint16_t pc = m_core.get_cpu().get_PC();
+    auto& map = m_core.get_code_map();
+    
+    // Run heuristic analysis from current PC
+    m_core.get_analyzer().parse_code(pc, 0, &map, false, true);
+
+    // Re-apply CTL data to ensure user overrides are preserved
+    const auto& ctl_map = m_core.get_analyzer().m_map;
+    if (ctl_map.size() == map.size()) {
+        for (size_t i = 0; i < map.size(); ++i) {
+            if (ctl_map[i] != Z80Analyzer<Memory>::CodeMap::FLAG_NONE) {
+                map[i] = ctl_map[i];
+            }
+        }
+    }
+    log("Manual code analysis triggered from PC: " + Strings::hex(pc));
 }
 
 void Debugger::set_interrupt_callback(std::function<bool()> cb) {

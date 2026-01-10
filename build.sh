@@ -6,7 +6,7 @@ set -e
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 BUILD_DIR="$SCRIPT_DIR/build"
 
-echo "--- Building Z80 tools (Release mode) ---"
+echo "--- Building Z80 tools (Debug mode) ---"
 
-cmake -B "$BUILD_DIR" -S "$SCRIPT_DIR" -DCMAKE_BUILD_TYPE=Release
-cmake --build "$BUILD_DIR" --config Release
+cmake -B "$BUILD_DIR" -S "$SCRIPT_DIR" -DCMAKE_BUILD_TYPE=Debug
+cmake --build "$BUILD_DIR" --config Debug

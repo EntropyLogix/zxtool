@@ -52,6 +52,7 @@ public:
     void over();
     void skip();
     void run_until(uint16_t target_pc);
+    void analyze();
     void set_interrupt_callback(std::function<bool()> cb);
     
     bool is_traced(uint16_t pc) const;

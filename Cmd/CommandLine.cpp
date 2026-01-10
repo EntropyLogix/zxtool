@@ -1,5 +1,6 @@
 #include "CommandLine.h"
 #include "Options.h"
+#include "../Utils/Strings.h"
 #include <stdexcept>
 #include <iostream>
 #include <algorithm>
@@ -95,8 +96,6 @@ bool CommandLine::parse(int argc, char* argv[]) {
                 if (arg == "-o" || arg == "--output") {
                     if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
                     options.outputFile = argv[++i];
-                } else if (arg == "-l" || arg == "--labels") {
-                    options.autoLabels = true;
                 } else if (arg == "-e" || arg == "--entry") {
                     if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
                     options.entryPointStr = argv[++i];
@@ -170,8 +169,6 @@ bool CommandLine::parse(int argc, char* argv[]) {
                 if (arg == "-e" || arg == "--entry") {
                     if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
                     options.entryPointStr = argv[++i];
-                } else if (arg == "-l" || arg == "--labels") {
-                    options.autoLabels = true;
                 } else if (arg == "-s" || arg == "--script") {
                     if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
                     options.scriptFile = argv[++i];
@@ -182,7 +179,16 @@ bool CommandLine::parse(int argc, char* argv[]) {
                 throw std::runtime_error("Unknown argument '" + arg + "'.");
             }
         } else { // It's a positional argument, should be the input file
-            options.inputFiles.push_back(arg);
+            std::string path = arg;
+            uint16_t address = 0;
+            size_t colon = arg.find(':');
+            if (colon != std::string::npos) {
+                path = arg.substr(0, colon);
+                int32_t val = 0;
+                Strings::parse_integer(arg.substr(colon + 1), val);
+                address = (uint16_t)val;
+            }
+            options.inputFiles.push_back({path, address});
         }
     }
     if (options.inputFiles.empty()) {
@@ -207,7 +213,8 @@ void CommandLine::print_usage() const {
     std::cerr << "zxtool v0.0.1 - A unified tool for Z80 assembly and analysis.\n\n"
               << "Usage: zxtool <command> <input_files...> [options]\n"
               << "       zxtool --help | --version\n\n"
-              << "Input files can be specified with an optional load address, e.g., 'file.bin:0x8000'.\n\n"
+              << "Input files can be specified with an optional load address, e.g., 'file.bin:0x8000'.\n"
+              << "Sidecar files (.map, .sym, .ctl) are automatically loaded if present.\n\n"
               << "Commands:\n"
               << "  asm                Build a Z80 source file.\n"
               << "  disasm             Statically analyze a binary file.\n"
@@ -221,7 +228,6 @@ void CommandLine::print_usage() const {
               << "  -m, --map            Generate a symbol map file.\n"
               << "  -l, --listing        Generate a source listing file.\n\n"
               << "Static Analysis Options (disasm command):\n"
-              << "  -l, --labels         Auto-load symbol files.\n"
               << "  -e, --entry [a:n]    Entry point 'a' for code flow tracing (optional limit 'n').\n"
               << "  -m, --mode <m>       Disassembly mode: raw, heuristic, execute.\n\n"
               << "Headless Execution Options (run command):\n"
@@ -233,6 +239,5 @@ void CommandLine::print_usage() const {
               << "  -dc, --dump-code [a:n]  Dump n instructions from address a on exit (default: all blocks).\n"
               << "  -dm, --dump-mem [a:n]   Dump n bytes from address a on exit (default: all blocks).\n\n"
               << "Interactive Debugging Options (debug command):\n"
-              << "  -l, --labels         Auto-load symbol files.\n"
               << "  -s, --script <file>  Execute debugger commands from file on start.\n";
 }
