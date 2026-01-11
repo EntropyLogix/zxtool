@@ -22,6 +22,7 @@ private:
     Core& m_core;
 
     void parse_and_process(const std::string& filename, bool generate_asm, std::string& out_asm);
+    bool parse_control_file(const std::string& filename);
 };
 
 #endif // __SKOOLFILE_H__

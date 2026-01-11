@@ -3,7 +3,6 @@
 #include "../Files/AsmFiles.h"
 #include "../Files/Z80File.h"
 #include "../Files/SymbolFile.h"
-#include "../Files/ControlFile.h"
 #include "../Files/SkoolFile.h"
 #include "../Utils/Strings.h"
 #include <filesystem>
@@ -30,7 +29,6 @@ Core::Core()
     m_file_manager.register_loader(new AsmFiles(m_assembler));
     m_file_manager.register_loader(new Z80File(*this));
     m_file_manager.register_loader(new SymbolFile(m_analyzer));
-    m_file_manager.register_loader(new ControlFile(m_analyzer));
     m_file_manager.register_loader(new SkoolFile(*this));
 }
 

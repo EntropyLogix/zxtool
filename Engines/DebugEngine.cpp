@@ -590,6 +590,10 @@ Z80Analyzer<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& confli
             if (flags & CodeMap::FLAG_CODE_INTERIOR) shadow = true;
         }
     }
+    // Safety check: ensure we never return a 0-length line to avoid infinite loops
+    if (line.bytes.empty()) {
+        line = m_core.get_analyzer().parse_db(addr, 1);
+    }
     return line;
 }
 
@@ -972,8 +976,10 @@ void CodeView::move_cursor(int delta) {
         int diff = (int)m_start_addr - (int)m_cursor_addr;
         if (diff > 0 && diff < 100) {
             m_start_addr = m_cursor_addr;
+            m_skip_lines = 0;
         } else if (diff < -60000) {
             m_start_addr = m_cursor_addr;
+            m_skip_lines = 0;
         }
     } else {
         auto line = m_core.get_analyzer().parse_instruction(m_cursor_addr);
