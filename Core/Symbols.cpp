@@ -2,7 +2,7 @@
 
 void Symbols::add(const Symbol& s) {
     m_by_name[s.getName()] = s;
-    if (s.getType() == Symbol::Type::Label) {
+    if (s.getType() == Symbol::Type::Label || s.getType() == Symbol::Type::Constant) {
         m_by_addr[s.read()] = s;
     }
 }
@@ -10,8 +10,11 @@ void Symbols::add(const Symbol& s) {
 bool Symbols::remove(const std::string& name) {
     auto it = m_by_name.find(name);
     if (it != m_by_name.end()) {
-        if (it->second.getType() == Symbol::Type::Label)
-            m_by_addr.erase(it->second.read());
+        uint16_t addr = it->second.read();
+        auto it_addr = m_by_addr.find(addr);
+        if (it_addr != m_by_addr.end() && it_addr->second.getName() == name) {
+            m_by_addr.erase(it_addr);
+        }
         m_by_name.erase(it);
         return true;
     }

@@ -12,6 +12,7 @@ public:
     const Options& get_options() const { return options; }
 private:
     void print_usage() const;
+    bool is_valid_address(const std::string& s);
 
     Options options;
 };

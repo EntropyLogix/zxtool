@@ -3,40 +3,20 @@
 #include "../Utils/Strings.h"
 #include <stdexcept>
 #include <iostream>
-#include <algorithm>
 #include <cctype>
 
-namespace {
-    bool is_valid_number(const std::string& s) {
-        if (s.empty()) return false;
-        std::string upper = s;
-        std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-
-        if (upper.size() > 2 && upper.substr(0, 2) == "0X") {
-             return upper.find_first_not_of("0123456789ABCDEF", 2) == std::string::npos;
-        }
-        if (upper.size() > 1 && upper.back() == 'H') {
-             return upper.find_first_not_of("0123456789ABCDEF", 0) == upper.size() - 1;
-        }
-        return upper.find_first_not_of("0123456789") == std::string::npos;
+bool CommandLine::is_valid_address(const std::string& s) {
+    size_t colon = s.find(':');
+    std::string addr = (colon == std::string::npos) ? s : s.substr(0, colon);
+    
+    int32_t dummy;
+    if (!Strings::parse_integer(addr, dummy)) return false;
+    
+    if (colon != std::string::npos) {
+            std::string len_str = s.substr(colon + 1);
+            if (!Strings::parse_integer(len_str, dummy)) return false;
     }
-
-    bool is_valid_address_format(const std::string& s) {
-        std::string addr = s;
-        std::string len_str;
-        size_t colon = addr.find(':');
-        if (colon != std::string::npos) {
-            len_str = addr.substr(colon + 1);
-            addr = addr.substr(0, colon);
-        }
-        
-        if (!is_valid_number(addr)) return false;
-        
-        if (colon != std::string::npos) {
-             if (!is_valid_number(len_str)) return false;
-        }
-        return true;
-    }
+    return true;
 }
 
 bool CommandLine::parse(int argc, char* argv[]) {
@@ -58,14 +38,18 @@ bool CommandLine::parse(int argc, char* argv[]) {
             throw std::runtime_error("Invalid arguments. Command and input files are required.");
     }
     std::string mode_str = argv[1];
-    if (mode_str == "asm")
+    if (mode_str == "asm") {
         options.mode = Options::ToolMode::Assemble;
+        options.generateListing = true;
+    }
     else if (mode_str == "disasm")
         options.mode = Options::ToolMode::Disassemble;
     else if (mode_str == "run")
         options.mode = Options::ToolMode::Run;
     else if (mode_str == "debug")
         options.mode = Options::ToolMode::Debug;
+    else if (mode_str == "profile")
+        options.mode = Options::ToolMode::Profile;
     else
         throw std::runtime_error("Unknown command: '" + mode_str + "'. Use 'asm', 'disasm', 'run', or 'debug'.");
     for (int i = 2; i < argc; ++i) {
@@ -109,11 +93,10 @@ bool CommandLine::parse(int argc, char* argv[]) {
                 } else {
                     throw std::runtime_error("Unknown argument '" + arg + "' for 'disasm' mode.");
                 }
-            } else if (options.mode == Options::ToolMode::Run) {
+            } else if (options.mode == Options::ToolMode::Run || options.mode == Options::ToolMode::Profile) {
                 if (arg == "-e" || arg == "--entry") {
                     if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
                     std::string val = argv[++i];
-                    if (!is_valid_address_format(val)) throw std::runtime_error("Invalid address format for " + arg + ": " + val);
                     options.entryPointStr = val;
                 } else if (arg == "-s" || arg == "--steps") {
                     if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
@@ -124,12 +107,14 @@ bool CommandLine::parse(int argc, char* argv[]) {
                 } else if (arg == "-to" || arg == "--timeout") {
                     if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
                     options.timeout = std::stoll(argv[++i], nullptr, 10);
+                } else if (arg == "-f" || arg == "--finish") {
+                    options.runUntilReturn = true;
                 } else if (arg == "-dr" || arg == "--dump-regs") {
                     options.dumpRegs = true;
                 } else if (arg == "-dc" || arg == "--dump-code") {
                     if (i + 1 < argc) {
                         std::string next_arg = argv[i + 1];
-                        if (next_arg[0] != '-' && is_valid_address_format(next_arg)) {
+                        if (next_arg[0] != '-' && is_valid_address(next_arg)) {
                             if (next_arg.find(':') != std::string::npos) {
                                 options.dumpCodeStr = argv[++i];
                             } else {
@@ -147,7 +132,7 @@ bool CommandLine::parse(int argc, char* argv[]) {
                 } else if (arg == "-dm" || arg == "--dump-mem") {
                     if (i + 1 < argc) {
                         std::string next_arg = argv[i + 1];
-                        if (next_arg[0] != '-' && is_valid_address_format(next_arg)) {
+                        if (next_arg[0] != '-' && is_valid_address(next_arg)) {
                             if (next_arg.find(':') != std::string::npos) {
                                 options.dumpMemStr = argv[++i];
                             } else {
@@ -162,8 +147,14 @@ bool CommandLine::parse(int argc, char* argv[]) {
                     } else {
                         options.dumpMemStr = "ALL";
                     }
+                } else if (arg == "--hotspots") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
+                    options.profileHotspots = std::stoi(argv[++i]);
+                } else if (arg == "--export") {
+                    if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
+                    options.profileExportFile = argv[++i];
                 } else {
-                    throw std::runtime_error("Unknown argument '" + arg + "' for 'run' mode.");
+                    throw std::runtime_error("Unknown argument '" + arg + "'.");
                 }
             } else if (options.mode == Options::ToolMode::Debug) {
                 if (arg == "-e" || arg == "--entry") {
@@ -220,6 +211,7 @@ void CommandLine::print_usage() const {
               << "  disasm             Statically analyze a binary file.\n"
               << "  run                Run code in headless mode.\n"
               << "  debug              Start an interactive debugging session.\n\n"
+              << "  profile            Run code and analyze performance.\n\n"
               << "Options:\n"
               << "  -v, --verbose        Show detailed assembly process.\n\n"
               << "Build Options (asm command):\n"
@@ -230,14 +222,18 @@ void CommandLine::print_usage() const {
               << "Static Analysis Options (disasm command):\n"
               << "  -e, --entry [a:n]    Entry point 'a' for code flow tracing (optional limit 'n').\n"
               << "  -m, --mode <m>       Disassembly mode: raw, heuristic, execute.\n\n"
-              << "Headless Execution Options (run command):\n"
+              << "Execution/Profile Options (run/profile command):\n"
               << "  -e, --entry <addr>   Entry point for execution.\n"
               << "  -s, --steps <n>      Stop after N instructions.\n"
               << "  -t, --ticks <n>      Stop after N T-states.\n"
               << "  -to, --timeout <s>   Stop after S seconds.\n"
+              << "  -f,  --finish         Run until return (RET) from entry point.\n"
               << "  -dr, --dump-regs       Dump registers on exit.\n"
               << "  -dc, --dump-code [a:n]  Dump n instructions from address a on exit (default: all blocks).\n"
-              << "  -dm, --dump-mem [a:n]   Dump n bytes from address a on exit (default: all blocks).\n\n"
+              << "  -dm, --dump-mem [a:n]   Dump n bytes from address a on exit (default: all blocks).\n"
+              << "  --hotspots <n>       Number of hotspots to show in profile report (default: 20).\n"
+              << "  --export <file>      Export profile data to CSV file.\n\n"
               << "Interactive Debugging Options (debug command):\n"
+              << "  -e, --entry <addr>   Entry point for execution.\n"
               << "  -s, --script <file>  Execute debugger commands from file on start.\n";
 }

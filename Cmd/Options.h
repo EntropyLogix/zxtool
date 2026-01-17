@@ -7,7 +7,7 @@
 #include <cstdint>
 
 struct Options {
-    enum class ToolMode { Assemble, Disassemble, Run, Debug, Unknown };
+    enum class ToolMode { Assemble, Disassemble, Run, Debug, Profile, Unknown };
     enum class DisasmMode { Heuristic, Raw, Execute };
 
     ToolMode mode = ToolMode::Unknown;
@@ -29,6 +29,9 @@ struct Options {
     bool dumpRegs = false;
     std::string dumpCodeStr;
     bool autoLabels = false;
+    bool runUntilReturn = false;
+    int profileHotspots = 20;
+    std::string profileExportFile;
     DisasmMode disasmMode = DisasmMode::Execute;
 };
 

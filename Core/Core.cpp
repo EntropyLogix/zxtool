@@ -3,6 +3,7 @@
 #include "../Files/AsmFiles.h"
 #include "../Files/Z80File.h"
 #include "../Files/SymbolFile.h"
+#include "../Files/LstFile.h"
 #include "../Files/SkoolFile.h"
 #include "../Utils/Strings.h"
 #include <filesystem>
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
+#include <regex>
 
 namespace fs = std::filesystem;
 
@@ -30,12 +32,31 @@ Core::Core()
     m_file_manager.register_loader(new Z80File(*this));
     m_file_manager.register_loader(new SymbolFile(m_analyzer));
     m_file_manager.register_loader(new SkoolFile(*this));
+    m_file_manager.register_loader(new LstFile(*this));
 }
 
 void Core::load_input_files(const std::vector<std::pair<std::string, uint16_t>>& inputs) {
     for (const auto& input : inputs) {
         process_file(input.first, input.second);
     }
+
+    // Configure analyzer with valid ranges from loaded blocks
+    std::vector<std::pair<uint16_t, uint16_t>> ranges;
+    for (const auto& block : m_blocks) {
+        ranges.push_back({block.start_address, block.size});
+    }
+    m_analyzer.set_valid_ranges(ranges);
+    
+    if (m_blocks.empty()) {
+        std::cout << "No memory blocks loaded. Skipping static analysis." << std::endl;
+        return;
+    }
+
+    uint16_t pc = m_cpu.get_PC();
+    std::cout << "Running static analysis from $" << Strings::hex(pc) << "..." << std::endl;
+    /*m_analyzer.parse_code(pc, 0, &get_code_map(), false, true, 16, [&](uint16_t addr) {
+        return m_analyzer.is_valid_address(addr);
+    });*/
 }
 
 void Core::reset() {
@@ -45,6 +66,8 @@ void Core::reset() {
     m_context.getSymbols().clear();
     m_context.getComments().clear();
     m_current_path_stack.clear();
+    std::fill(m_code_map_data.begin(), m_code_map_data.end(), 0);
+    //m_analyzer.m_map.clear();
 }
 
 void Core::process_file(const std::string& path, uint16_t address) {
@@ -54,27 +77,88 @@ void Core::process_file(const std::string& path, uint16_t address) {
 
     // Load only binary files here
     auto result = m_file_manager.load_binary(path, m_blocks, address);
+    uint16_t analysis_start = address;
     if (!result.success) {
         std::string ext = fs::path(path).extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
         // If FileManager failed, it might be because of unknown extension or load error.
         std::cerr << "Warning: Failed to load binary file or unknown extension '" << ext << "' for file: " << path << std::endl;
+        return;
     } else {
         if (result.start_address)
-            m_cpu.set_PC(*result.start_address);
+            analysis_start = *result.start_address;
+        
+        if (result.start_address) m_cpu.set_PC(*result.start_address);
     }
     
     load_sidecar_files(path);
 
     // Merge ControlFile map (if any) into the main code map
-    if (m_analyzer.m_map.size() == 0x10000) {
+    /*if (m_analyzer.m_map.size() == 0x10000) {
         for (size_t i = 0; i < 0x10000; ++i) {
             m_code_map_data[i] |= m_analyzer.m_map[i];
         }
-    }
+    }*/
 
-    std::cout << "Running static analysis..." << std::endl;
-    m_analyzer.parse_code(address, 0, &get_code_map(), false, true);
+    const auto& listing = m_assembler.get_listing();
+    if (!listing.empty()) {
+        // Ensure blocks from assembler are in m_blocks
+        std::cout << "Processing assembler blocks..." << std::endl;
+        for (const auto& asm_block : m_assembler.get_blocks()) {
+            bool exists = false;
+            for (const auto& loaded_block : m_blocks) {
+                if (loaded_block.start_address == asm_block.start_address && loaded_block.size == asm_block.size) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                m_blocks.push_back({asm_block.start_address, asm_block.size, "ASM Block"});
+                std::cout << "Added ASM block: " << Strings::hex(asm_block.start_address) << " size: " << asm_block.size << std::endl;
+            }
+        }
+
+        auto& map = get_code_map();
+        auto& comments = m_context.getComments();
+        auto& symbols = m_context.getSymbols();
+
+        // Import symbols from assembler
+        for (const auto& pair : m_assembler.get_symbols()) {
+            const auto& info = pair.second;
+            Symbol::Type type = info.label ? Symbol::Type::Label : Symbol::Type::Constant;
+            symbols.add(Symbol(info.name, (uint16_t)info.value, type));
+        }
+        
+        for (const auto& line : listing) {
+            if (line.bytes.empty()) continue;
+            
+            // 1. Mark Code/Data in CodeMap
+            bool is_code = true;
+            std::string upper_content = Strings::upper(line.source_line.content);
+            // Pad with spaces to ensure we match whole words (e.g. " DB ")
+            std::string padded = " " + upper_content + " ";
+            std::replace(padded.begin(), padded.end(), '\t', ' ');
+
+            if (padded.find(" DB ") != std::string::npos || padded.find(" DEFB ") != std::string::npos ||
+                padded.find(" DW ") != std::string::npos || padded.find(" DEFW ") != std::string::npos ||
+                padded.find(" DS ") != std::string::npos || padded.find(" DEFS ") != std::string::npos ||
+                padded.find(" DM ") != std::string::npos || padded.find(" DEFM ") != std::string::npos) {
+                is_code = false;
+            }
+
+            if (is_code) {
+                map.mark_code(line.address, line.bytes.size(), true);
+            } else {
+                map.mark_data(line.address, line.bytes.size(), false, true);
+            }
+
+            // 2. Add Source as Comment
+            std::string clean_content = Strings::trim(line.source_line.content);
+            if (!clean_content.empty()) {
+                comments.add(Comment(line.address, clean_content, Comment::Type::Inline));
+            }
+        }
+    }
 }
 
 void Core::load_sidecar_files(const std::string& path) {
@@ -92,11 +176,6 @@ void Core::load_sidecar_files(const std::string& path) {
             std::cout << "Loading auxiliary file " << sidecar << std::endl;
             // Try to load as auxiliary file
             if (!m_file_manager.load_aux(sidecar)) {
-                // Fallback for .lst if not registered or handled specially
-                if (ext == ".lst") {
-                     SymbolFile symLoader(m_analyzer);
-                     symLoader.load_sym(sidecar);
-                }
             }
         }
     }
@@ -127,14 +206,37 @@ bool Core::read_file(const std::string& identifier, std::vector<uint8_t>& data) 
     if (!file) {
         return false;
     }
-
     m_current_path_stack.push_back(file_path);
 
-    std::streamsize size = file.tellg();
+    // Check if we need to strip LST formatting
+    std::string ext = file_path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    
+    if (ext == ".lst") {
+        std::string line;
+        std::string content;
+        // Regex to strip LST columns: [LineNum] [Addr] [Bytes]
+        // 1. Optional Line Number: ^\s*\d+[\+]?\s+
+        // 2. Address: [0-9A-Fa-f]{4}[:]?\s+
+        // 3. Bytes: (?:[0-9A-Fa-f]{2}\s+)+
+        static const std::regex re_linenum(R"(^\s*\d+[\+]?\s+)");
+        static const std::regex re_addr(R"(^\s*[0-9A-Fa-f]{4}[:]?\s+)");
+        static const std::regex re_bytes(R"(^\s*(?:[0-9A-Fa-f]{2}\s+)+)");
+
+        while (std::getline(file, line)) {
+            std::string clean = std::regex_replace(line, re_linenum, "");
+            clean = std::regex_replace(clean, re_addr, "");
+            clean = std::regex_replace(clean, re_bytes, "");
+            content += clean + "\n";
+        }
+        data.assign(content.begin(), content.end());
+    } else {
+        std::streamsize size = file.tellg();
     file.seekg(0, std::ios::beg);
     data.resize(size);
     if (size > 0) {
         file.read(reinterpret_cast<char*>(data.data()), size);
+    }
     }
     
     m_current_path_stack.pop_back();

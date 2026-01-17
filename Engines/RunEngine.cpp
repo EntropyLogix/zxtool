@@ -1,7 +1,9 @@
 #include "RunEngine.h"
 #include <iostream>
 #include <chrono>
+#include <iomanip>
 #include "../Utils/Strings.h"
+#include "../Core/Expression.h"
 
 RunEngine::RunEngine(Core& core, const Options& options) : m_core(core), m_options(options) {}
 
@@ -23,20 +25,70 @@ int RunEngine::run() {
             }
             ep = ep.substr(0, colon);
         }
-        int32_t val = 0;
-        Strings::parse_integer(ep, val);
-        m_cpu.set_PC((uint16_t)val);
+        try {
+            Expression eval(m_core);
+            uint16_t val = (uint16_t)eval.evaluate(ep).get_scalar(m_core);
+            m_cpu.set_PC(val);
+        } catch (const std::exception& e) {
+            std::cerr << "Error evaluating entry point '" << ep << "': " << e.what() << "\n";
+            return 1;
+        }
     }
-    if (runSteps > 0) {
-        for (long long i = 0; i < runSteps; ++i)
+
+    auto start_time = std::chrono::steady_clock::now();
+    uint64_t start_ticks = m_cpu.get_ticks();
+
+    if (m_options.runUntilReturn) {
+        uint16_t initial_sp = m_cpu.get_SP();
+        long long steps = 0;
+        while (true) {
+            auto line = m_analyzer.parse_instruction(m_cpu.get_PC());
+            bool is_ret = line.has_flag(Analyzer::CodeLine::Type::RETURN);
+
             m_cpu.step();
+            steps++;
+
+            if (is_ret && m_cpu.get_SP() > initial_sp)
+                break;
+
+            if (runSteps > 0 && steps >= runSteps) break;
+            if (m_options.timeout > 0 && (steps % 10000 == 0)) {
+                if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_time).count() >= m_options.timeout)
+                    break;
+            }
+            if (m_cpu.is_halted()) break;
+        }
+    } else if (runSteps > 0) {
+        for (long long i = 0; i < runSteps; ++i) {
+            m_cpu.step();
+            if (m_options.timeout > 0 && (i % 10000 == 0)) {
+                if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_time).count() >= m_options.timeout)
+                    break;
+            }
+        }
     } else if (m_options.runTicks > 0)
         m_cpu.run(m_options.runTicks);
     else if (m_options.timeout > 0) {
-        auto start = std::chrono::steady_clock::now();
-        while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() < m_options.timeout)
+        while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_time).count() < m_options.timeout)
             m_cpu.run(m_cpu.get_ticks() + 100000);
     }
+
+    auto end_time = std::chrono::steady_clock::now();
+    auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+    uint64_t total_ticks = m_cpu.get_ticks() - start_ticks;
+
+    bool has_output = m_options.dumpRegs || !m_options.dumpCodeStr.empty() || !m_options.dumpMemStr.empty();
+    if (m_options.verbose || !has_output) {
+        std::cout << "Execution Statistics:\n";
+        std::cout << "  Duration: " << duration_ms << " ms\n";
+        std::cout << "  T-States: " << total_ticks << "\n";
+        if (duration_ms > 0) {
+            double mhz = (double)total_ticks / (double)duration_ms / 1000.0;
+            std::cout << "  Speed:    " << std::fixed << std::setprecision(3) << mhz << " MHz\n";
+        }
+        std::cout << "------------------------------------------------------------\n";
+    }
+
     if (m_options.dumpRegs) {
         std::cout << "PC: " << Strings::hex(m_cpu.get_PC()) << " SP: " << Strings::hex(m_cpu.get_SP()) << "\n";
         std::cout << "AF: " << Strings::hex(m_cpu.get_AF()) << " BC: " << Strings::hex(m_cpu.get_BC()) << "\n";

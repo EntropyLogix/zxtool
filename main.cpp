@@ -1,5 +1,5 @@
-#include "Z80Analyze.h"
-#include "Z80Assemble.h"
+#include "Z80Decoder.h"
+#include "Z80Assembler.h"
 
 #include "Cmd/CommandLine.h"
 #include "Core/Application.h" 

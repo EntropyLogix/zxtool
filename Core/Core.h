@@ -28,7 +28,7 @@ inline std::ostream& operator<<(std::ostream& os, const std::pair<std::string, u
 
 class Core : public IFileProvider {
 public:
-    using CpuType = Z80<Z80Analyzer<Memory>::CodeMapProfiler, Z80StandardEvents, Z80Analyzer<Memory>::CodeMapProfiler>;
+    using CpuType = Z80<Z80Disassembler<Memory>::CodeMapProfiler, Z80StandardEvents, Z80Disassembler<Memory>::CodeMapProfiler>;
     
     using Block = LoadedBlock;
 
@@ -43,7 +43,7 @@ public:
     Memory& get_memory() { return m_memory; }
     CpuType& get_cpu() { return m_cpu; }
     CodeMap& get_code_map() { return m_code_map_data; }
-    Z80Analyzer<Memory>::CodeMapProfiler& get_profiler() { return m_profiler; }
+    Z80Disassembler<Memory>::CodeMapProfiler& get_profiler() { return m_profiler; }
 
     Analyzer& get_analyzer() { return m_analyzer; }
     Context& get_context() { return m_context; }
@@ -63,7 +63,7 @@ public:
 private:
     Memory m_memory;
     CodeMap m_code_map_data;
-    Z80Analyzer<Memory>::CodeMapProfiler m_profiler;
+    Z80Disassembler<Memory>::CodeMapProfiler m_profiler;
     CpuType m_cpu;
     ToolAssembler m_assembler;
     Context m_context;

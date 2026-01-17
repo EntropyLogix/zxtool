@@ -459,16 +459,16 @@ std::vector<std::string> BreakpointView::render() {
     return lines;
 }
 
-void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst, bool bold) {
+void CodeView::format_operands(const Z80Disassembler<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst, bool bold) {
     if (line.operands.empty()) return;
-    using Operand = Z80Analyzer<Memory>::CodeLine::Operand;
+    using Operand = Z80Disassembler<Memory>::CodeLine::Operand;
     for (size_t i = 0; i < line.operands.size(); ++i) {
         if (i > 0)
             os << ", ";
         const auto& op = line.operands[i];
 
         std::string label;
-        if (op.type == Operand::IMM16 || op.type == Operand::MEM_IMM16) {
+        if (op.type == Operand::IMM16 || op.type == Operand::MEM_IMM16 || op.type == Operand::IMM8) {
              const Symbol* s = m_core.get_context().getSymbols().find((uint16_t)op.num_val);
              if (s) label = s->getName();
         }
@@ -485,7 +485,10 @@ void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::o
                 os << op.s_val;
                 break;
             case Operand::IMM8:
-                os << "$" << Strings::hex((uint8_t)op.num_val);
+                if (!label.empty())
+                    os << label;
+                else
+                    os << "$" << Strings::hex((uint8_t)op.num_val);
                 break;
             case Operand::IMM16:
                 if (!label.empty())
@@ -522,8 +525,8 @@ void CodeView::format_operands(const Z80Analyzer<Memory>::CodeLine& line, std::o
     }
 }
 
-Z80Analyzer<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& conflict, bool& shadow, bool& is_orphan) {
-    Z80Analyzer<Memory>::CodeLine line;
+Z80Disassembler<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& conflict, bool& shadow, bool& is_orphan) {
+    Z80Disassembler<Memory>::CodeLine line;
     auto* code_map = &m_core.get_code_map();
     bool is_pc_line = (addr == m_pc);
     conflict = false;
@@ -597,7 +600,7 @@ Z80Analyzer<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& confli
     return line;
 }
 
-CodeView::DisasmInfo CodeView::format_disasm(const Z80Analyzer<Memory>::CodeLine& line, bool is_pc, bool is_cursor, bool conflict, bool shadow, bool is_orphan, bool is_traced, bool is_smc) {
+CodeView::DisasmInfo CodeView::format_disasm(const Z80Disassembler<Memory>::CodeLine& line, bool is_pc, bool is_cursor, bool conflict, bool shadow, bool is_orphan, bool is_traced, bool is_smc) {
     std::stringstream mn_ss;
     std::string rst = is_cursor ? (Terminal::RESET + m_theme.pc_bg) : Terminal::RESET;
 
@@ -804,7 +807,8 @@ std::vector<std::string> CodeView::render() {
              if (!comment.empty()) {
                  std::string cmt_full = "; " + comment;
                  int max_width = (m_width > 0) ? m_width : 80;
-                 int current_len = disasm_info.visible_len + padding;
+                 int prefix_len = 20; // Cursor(3) + Addr(6) + Bytes(11)
+                 int current_len = prefix_len + disasm_info.visible_len + padding;
                  int available = max_width - current_len;
                  if (available < 10) available = 10;
 
@@ -950,7 +954,8 @@ int CodeView::get_line_height(uint16_t addr) {
         int padding = comment_col - info.visible_len;
         if (padding < 1) padding = 1;
         
-        int current_len = info.visible_len + padding;
+        int prefix_len = 20; // Cursor(3) + Addr(6) + Bytes(11)
+        int current_len = prefix_len + info.visible_len + padding;
         int max_width = m_width;
         int available = max_width - current_len;
         if (available < 10) available = 10;
@@ -1798,8 +1803,8 @@ void Dashboard::cmd_trace(const std::string& args) {
             
             // Disassemble from trace entry bytes
             TraceMemoryAdapter mem_adapter{entry.pc, entry.opcodes, entry.len};
-            Z80Analyzer<TraceMemoryAdapter> analyzer(&mem_adapter);
-            auto line = analyzer.parse_instruction(entry.pc);
+            Z80Disassembler<TraceMemoryAdapter> analyzer(&mem_adapter);
+            auto line = analyzer.get_decoder().parse_instruction(entry.pc);
             
             ss << format_instruction(line);
             
@@ -1901,6 +1906,74 @@ void Dashboard::cmd_codemap(const std::string& args) {
         m_output_buffer << range << type << "           " << (is_code ? "[Exec]" : "[Read]") << "\n";
         pc = last_byte + 1;
         if (pc <= block_end) break;
+    }
+}
+
+void Dashboard::cmd_label(const std::string& args) {
+    std::string clean_args = Strings::trim(args);
+    auto parts = Strings::split_once(clean_args, " \t");
+    if (parts.first.empty() || parts.second.empty()) {
+        m_output_buffer << "Usage: label <address> <name>\n";
+        return;
+    }
+
+    try {
+        Expression eval(m_debugger.get_core());
+        uint16_t addr = (uint16_t)eval.evaluate(parts.first).get_scalar(m_debugger.get_core());
+        std::string name = Strings::trim(parts.second);
+        
+        if (name.empty()) {
+            m_output_buffer << "Error: Label name cannot be empty.\n";
+            return;
+        }
+        if (!Commands::is_identifier(name)) {
+             m_output_buffer << "Error: Invalid label name '" << name << "'. Use alphanumeric characters and underscores.\n";
+             return;
+        }
+
+        m_debugger.get_core().get_context().getSymbols().add_label(addr, name);
+        m_output_buffer << "Label '" << name << "' added at $" << Strings::hex(addr) << "\n";
+        update_code_view();
+    } catch (const std::exception& e) {
+        m_output_buffer << "Error: " << e.what() << "\n";
+    }
+}
+
+void Dashboard::cmd_mark(const std::string& args) {
+    std::string clean_args = Strings::trim(args);
+    auto parts = Strings::split_once(clean_args, " \t");
+    if (parts.first.empty() || parts.second.empty()) {
+        m_output_buffer << "Usage: mark <address> <type>\nTypes: code, data (byte), word, text, ignore\n";
+        return;
+    }
+
+    try {
+        Expression eval(m_debugger.get_core());
+        uint16_t addr = (uint16_t)eval.evaluate(parts.first).get_scalar(m_debugger.get_core());
+        std::string type_str = Strings::lower(Strings::trim(parts.second));
+        
+        Analyzer::ExtendedFlags type = Analyzer::TYPE_UNKNOWN;
+        uint8_t flags = 0;
+
+        if (type_str == "code" || type_str == "c") { type = Analyzer::TYPE_CODE; flags = CodeMap::FLAG_CODE_START; }
+        else if (type_str == "data" || type_str == "byte" || type_str == "b") { type = Analyzer::TYPE_BYTE; flags = CodeMap::FLAG_DATA_READ; }
+        else if (type_str == "word" || type_str == "w") { type = Analyzer::TYPE_WORD; flags = CodeMap::FLAG_DATA_READ; }
+        else if (type_str == "text" || type_str == "txt" || type_str == "t") { type = Analyzer::TYPE_TEXT; flags = CodeMap::FLAG_DATA_READ; }
+        else if (type_str == "ignore" || type_str == "i") { type = Analyzer::TYPE_IGNORE; }
+        else {
+            m_output_buffer << "Unknown type: " << type_str << ". Use code, data, word, text, ignore.\n";
+            return;
+        }
+
+        auto& map = m_debugger.get_core().get_code_map();
+        m_debugger.get_core().get_analyzer().set_map_type(map, addr, type);
+        map.invalidate_region(addr, 1); // Clear conflicting code flags
+        map[addr] |= flags;
+        
+        m_output_buffer << "Address $" << Strings::hex(addr) << " marked as " << type_str << ".\n";
+        update_code_view();
+    } catch (const std::exception& e) {
+        m_output_buffer << "Error: " << e.what() << "\n";
     }
 }
 
@@ -2033,6 +2106,16 @@ void Dashboard::init() {
     m_command_registry.add({"help", "h"}, {
         [this](const std::string& args){ cmd_help(args); },
         false, "", "Show help", {CommandRegistry::CTX_SUBCOMMAND}
+    });
+
+    m_command_registry.add({"label", "lbl"}, {
+        [this](const std::string& args){ cmd_label(args); },
+        true, "address name", "Add label", {CommandRegistry::CTX_EXPRESSION, CommandRegistry::CTX_NONE}
+    });
+
+    m_command_registry.add({"mark"}, {
+        [this](const std::string& args){ cmd_mark(args); },
+        true, "address type", "Mark address type", {CommandRegistry::CTX_EXPRESSION, CommandRegistry::CTX_CUSTOM}
     });
 }
 
@@ -2238,11 +2321,9 @@ int DebugEngine::run() {
             if (!parts.empty())
                 ep = parts[0];
             
-            int32_t val = 0;
-            if (Strings::parse_integer(ep, val))
-                m_core.get_cpu().set_PC((uint16_t)val);
-            else
-                throw std::runtime_error("Invalid address format");
+            Expression eval(m_core);
+            uint16_t val = (uint16_t)eval.evaluate(ep).get_scalar(m_core);
+            m_core.get_cpu().set_PC(val);
         } catch (const std::exception& e) {
             std::cerr << "Error parsing entry point: " << e.what() << "\n";
         }
@@ -2363,7 +2444,7 @@ void Dashboard::print_asm_info(std::stringstream& ss, uint16_t addr) {
         ss << " / Asm: " << line.mnemonic;
         if (!line.operands.empty()) {
             ss << " ";
-            using Operand = Z80Analyzer<Memory>::CodeLine::Operand;
+            using Operand = Z80Disassembler<Memory>::CodeLine::Operand;
             for (size_t i = 0; i < line.operands.size(); ++i) {
                 if (i > 0) ss << ", ";
                 const auto& op = line.operands[i];
@@ -2384,7 +2465,7 @@ void Dashboard::print_asm_info(std::stringstream& ss, uint16_t addr) {
     }
 }
 
-std::string Dashboard::format_disasm(uint16_t addr, const Z80Analyzer<Memory>::CodeLine& line) {
+std::string Dashboard::format_disasm(uint16_t addr, const Z80Disassembler<Memory>::CodeLine& line) {
     std::stringstream lss;
     lss << "$" << Strings::hex(addr) << ": ";
     std::stringstream bytes_ss;

@@ -4,20 +4,24 @@
 #include "CoreIncludes.h"
 
 #include "Memory.h"
+//#include "CodeMap.h"
+#include "Z80Disassembler.h"
 #include <string>
 #include <vector>
 #include <map>
+#include <functional>
 
 class Context;
 
 // ---------------------------------------------------------
 // Smart Analyzer
 // ---------------------------------------------------------
-class Analyzer : public Z80Analyzer<Memory> {
+class Analyzer /*: public Z80Disassembler<Memory>*/ {
 public:
     // Używamy typów z klasy bazowej
-    using Z80Analyzer<Memory>::CodeLine;
-    using MapFlags = Z80Analyzer<Memory>::CodeMap::MapFlags;
+    using CodeLine = Z80Disassembler<Memory>::CodeLine;
+    using CodeMap = Z80Disassembler<Memory>::CodeMap;
+    //using MapFlags = Z80Disassembler<Memory>::CodeMap::MapFlags;
 
     // Rozszerzone flagi dla CodeMap (Bity 5-7)
     // Mapowanie BlockType z CTL na bity w mapie
@@ -35,17 +39,30 @@ public:
 
     Context& context;
     CodeMap m_map;
+    std::vector<std::pair<uint16_t, uint16_t>> m_valid_ranges;
+    Memory* m_memory;
 
     Analyzer(Memory* memory, Context* ctx);
     
     // Helper do ustawiania bitów typu w mapie (nie ruszając flag profilera)
-    void set_map_type(CodeMap& map, uint16_t addr, ExtendedFlags type);
-    ExtendedFlags get_map_type(const CodeMap& map, uint16_t addr);
+    void set_map_type(Z80Disassembler<Memory>::CodeMap& map, uint16_t addr, ExtendedFlags type);
+    ExtendedFlags get_map_type(const Z80Disassembler<Memory>::CodeMap& map, uint16_t addr);
+    void set_valid_ranges(const std::vector<std::pair<uint16_t, uint16_t>>& ranges) { m_valid_ranges = ranges; }
+    bool is_valid_address(uint16_t addr); // override;
+
+    // Overload to support lambda validator (compatibility wrapper)
+    std::vector<CodeLine> parse_code(uint16_t& start_address, size_t instruction_limit, Z80Disassembler<Memory>::CodeMap* external_code_map, bool use_execution = false, bool use_heuristic = false, size_t max_data_group = 16, std::function<bool(uint16_t)> validator = nullptr);
+
+    // Wrappers for Z80Decoder methods
+    CodeLine parse_instruction(uint16_t address);
+    CodeLine parse_db(uint16_t address, size_t count = 1);
+    CodeLine parse_dw(uint16_t address, size_t count = 1);
+    uint16_t parse_instruction_backwards(uint16_t target_addr, CodeMap* map = nullptr);
 
 protected:
     // --- Override głównej pętli generowania ---
     // Tu integrujemy wiedzę z CTL z logiką disassemblera
-    std::vector<CodeLine> generate_listing(CodeMap& map, uint16_t& start_address, size_t instruction_limit, bool use_map, size_t max_data_group) override;
+    //std::vector<CodeLine> generate_listing(Z80Disassembler<Memory>::CodeMap& map, uint16_t& start_address, size_t instruction_limit, bool use_map, size_t max_data_group) override;
 };
 
 #endif

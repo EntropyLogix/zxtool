@@ -265,8 +265,7 @@ void SkoolFile::parse_and_process(const std::string& filename, bool generate_asm
     });
 
     std::stringstream asm_ss;
-    auto& map = m_core.get_analyzer().m_map;
-    if (map.size() < 0x10000) map.resize(0x10000, 0);
+    auto& map = m_core.get_code_map();
 
     uint16_t last_gen_addr = 0xFFFF;
     LineAssembler assembler;
@@ -296,19 +295,21 @@ void SkoolFile::parse_and_process(const std::string& filename, bool generate_asm
         
         if (is_data) {
             for (int k = 0; k < length && (info.addr + k < 0x10000); ++k) {
-                 m_core.get_analyzer().set_map_type(map, info.addr + k, type);
+                 m_core.get_analyzer().set_map_type(map, info.addr + k, type); // Helper works on CodeMap
+                 map[info.addr + k] |= CodeMap::FLAG_DATA_READ;
             }
         } else {
-            m_core.get_analyzer().set_map_type(map, info.addr, Analyzer::TYPE_CODE);
+            m_core.get_analyzer().set_map_type(map, info.addr, Analyzer::TYPE_CODE); // Helper works on CodeMap
+            map[info.addr] |= CodeMap::FLAG_CODE_START;
         }
 
         if (!info.comment.empty()) {
             m_core.get_context().getComments().add(Comment(info.addr, clean_skool_tags(info.comment, m_core.get_analyzer()), Comment::Type::Inline));
         }
 
-        if (generate_asm) {
-            int estimated_size = 1;
-
+        int estimated_size = 1;
+        
+        if (!is_data) {
             // Try to assemble line to get size
             std::map<std::string, uint16_t> dummy_symbols;
             std::string word;
@@ -341,7 +342,14 @@ void SkoolFile::parse_and_process(const std::string& filename, bool generate_asm
             } catch (...) {
                 // Fallback to 1
             }
+            
+            // Mark interior bytes
+            for (int k = 1; k < estimated_size && (info.addr + k < 0x10000); ++k) {
+                map[info.addr + k] |= CodeMap::FLAG_CODE_INTERIOR;
+            }
+        }
 
+        if (generate_asm) {
             if (info.addr != last_gen_addr) {
                 if (last_gen_addr != 0xFFFF && info.addr < last_gen_addr) {
                     std::cerr << "Warning: Address overlap at $" << std::hex << info.addr << " (expected $" << last_gen_addr << ")" << std::endl;
@@ -357,8 +365,7 @@ void SkoolFile::parse_and_process(const std::string& filename, bool generate_asm
 }
 
 bool SkoolFile::parse_control_file(const std::string& filename) {
-    auto& map = m_core.get_analyzer().m_map;
-    if (map.size() < 0x10000) map.resize(0x10000, 0);
+    auto& map = m_core.get_code_map();
     
     std::ifstream file(filename);
     if (!file.is_open()) return false;
@@ -426,18 +433,22 @@ bool SkoolFile::parse_control_file(const std::string& filename) {
             }
         }
 
-        auto set_range = [&](Analyzer::ExtendedFlags t) {
+        auto set_range = [&](Analyzer::ExtendedFlags t, uint8_t flags) {
             if (length > 1) {
-                for(int i=0; i<length && (addr+i < 0x10000); ++i)
-                    m_core.get_analyzer().set_map_type(map, addr + i, t);
+                for(int i=0; i<length && (addr+i < 0x10000); ++i) {
+                    m_core.get_analyzer().set_map_type(map, addr + i, t); // Helper works on CodeMap
+                    map[addr + i] |= flags;
+                }
             } else {
-                m_core.get_analyzer().set_map_type(map, addr, t);
+                m_core.get_analyzer().set_map_type(map, addr, t); // Helper works on CodeMap
+                map[addr] |= flags;
             }
         };
 
         switch (type) {
             case 'c': // Code
-                m_core.get_analyzer().set_map_type(map, addr, Analyzer::TYPE_CODE);
+                m_core.get_analyzer().set_map_type(map, addr, Analyzer::TYPE_CODE); // Helper works on CodeMap
+                map[addr] |= CodeMap::FLAG_CODE_START;
                 if (!remainder.empty()) m_core.get_context().getComments().add(Comment(addr, clean_skool_tags(remainder, m_core.get_analyzer()), Comment::Type::Inline));
                 break;
             case 'C': // Comment
@@ -452,17 +463,21 @@ bool SkoolFile::parse_control_file(const std::string& filename) {
             case 'b': case 'B': // Byte
             case 's': case 'S': // Space
             case 'g':           // Game state
-                set_range(Analyzer::TYPE_BYTE);
+            {
+                uint8_t flags = CodeMap::FLAG_DATA_READ;
+                if (type == 's' || type == 'S' || type == 'g') flags |= CodeMap::FLAG_DATA_WRITE;
+                set_range(Analyzer::TYPE_BYTE, flags);
                 if (!remainder.empty() && type == 'b') m_core.get_context().getComments().add(Comment(addr, "; " + clean_skool_tags(remainder, m_core.get_analyzer()), Comment::Type::Block));
                 break;
+            }
             case 'w': case 'W': // Word
-                set_range(Analyzer::TYPE_WORD);
+                set_range(Analyzer::TYPE_WORD, CodeMap::FLAG_DATA_READ);
                 break;
             case 't': case 'T': case 'Z': // Text
-                set_range(Analyzer::TYPE_TEXT);
+                set_range(Analyzer::TYPE_TEXT, CodeMap::FLAG_DATA_READ);
                 break;
             case 'u': case 'U': // Unused
-                set_range(Analyzer::TYPE_IGNORE);
+                set_range(Analyzer::TYPE_IGNORE, 0);
                 if (!remainder.empty()) m_core.get_context().getComments().add(Comment(addr, "; Unused: " + clean_skool_tags(remainder, m_core.get_analyzer()), Comment::Type::Block));
                 break;
             case 'M': // Memory map
@@ -470,7 +485,7 @@ bool SkoolFile::parse_control_file(const std::string& filename) {
                 if (!remainder.empty()) m_core.get_context().getComments().add(Comment(addr, "; Block: " + clean_skool_tags(remainder, m_core.get_analyzer()), Comment::Type::Block));
                 break;
             case 'i': // Ignore
-                set_range(Analyzer::TYPE_IGNORE);
+                set_range(Analyzer::TYPE_IGNORE, 0);
                 break;
             case 'D': case 'N': // Description
                 m_core.get_context().getComments().add(Comment(addr, "; " + clean_skool_tags(remainder, m_core.get_analyzer()), Comment::Type::Block));

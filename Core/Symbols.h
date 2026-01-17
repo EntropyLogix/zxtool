@@ -23,7 +23,7 @@ public:
 
     // --- ILabels Interface Implementation ---
     std::string get_label(uint16_t address) const override;
-    void add_label(uint16_t address, const std::string& label) override;
+    void add_label(uint16_t address, const std::string& label);
 
 private:
     std::map<std::string, Symbol> m_by_name;
