@@ -6,31 +6,34 @@
 #include <cstdint>
 #include <optional>
 
-struct LoadedBlock {
-    uint16_t start_address;
-    uint16_t size;
-    std::string description;
-};
-
-struct LoadResult {
-    bool success;
-    std::optional<uint16_t> start_address;
-};
-
-class IFile {
+class FileFormat {
 public:
-    virtual ~IFile() = default;
+    enum Capability {
+        None = 0,
+        LoadBinary   = 1 << 0,
+        SaveBinary   = 1 << 1,
+        LoadMetadata = 1 << 2,
+        SaveMetadata = 1 << 3
+    };
+
+    struct Block {
+        uint16_t start;
+        uint16_t size;
+        std::string description;
+    };
+
+    virtual ~FileFormat() = default;
     virtual std::vector<std::string> get_extensions() const = 0;
+
+    virtual uint32_t get_capabilities() const { return None; }
+
+    virtual bool load_binary(const std::string& filename, std::vector<Block>& blocks, uint16_t address) { return false; }
+    virtual bool save_binary(const std::string& filename, const std::vector<Block>& blocks) { return false; }
+    
+    virtual bool load_metadata(const std::string& filename) { return false; }
+    virtual bool save_metadata(const std::string& filename) { return false; }
 };
 
-class IBinaryFile : virtual public IFile {
-public:
-    virtual LoadResult load(const std::string& filename, std::vector<LoadedBlock>& blocks, uint16_t address) = 0;
-};
-
-class IAuxiliaryFile : virtual public IFile {
-public:
-    virtual bool load(const std::string& filename) = 0;
-};
+using LoadedBlock = FileFormat::Block;
 
 #endif // __IFILE_H__

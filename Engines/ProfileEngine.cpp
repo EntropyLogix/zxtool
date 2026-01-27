@@ -22,10 +22,10 @@ int ProfileEngine::run() {
     m_idle_cycles = 0;
 
     // Setup Entry Point
-    if (!m_options.entryPointStr.empty()) {
+    if (!m_options.profile.entryPointStr.empty()) {
         try {
             Expression eval(m_core);
-            uint16_t val = (uint16_t)eval.evaluate(m_options.entryPointStr).get_scalar(m_core);
+            uint16_t val = (uint16_t)eval.evaluate(m_options.profile.entryPointStr).get_scalar(m_core);
             cpu.set_PC(val);
         } catch (const std::exception& e) {
             std::cerr << "Error evaluating entry point: " << e.what() << "\n";
@@ -41,9 +41,9 @@ int ProfileEngine::run() {
     
     // Run Loop
     bool running = true;
-    long long max_steps = m_options.runSteps;
+    long long max_steps = m_options.profile.steps;
     long long steps = 0;
-    long long timeout_ms = m_options.timeout * 1000;
+    long long timeout_ms = m_options.profile.timeout * 1000;
     if (timeout_ms == 0 && max_steps == 0) timeout_ms = 5000; // Default 5s
 
     while (running) {
@@ -151,7 +151,7 @@ int ProfileEngine::run() {
     // Top Hotspots by Time (Cycles)
     std::sort(stats.begin(), stats.end(), [](const Stat& a, const Stat& b){ return a.cycles > b.cycles; });
 
-    int limit = m_options.profileHotspots;
+    int limit = m_options.profile.hotspots;
     if (limit < 0) limit = 20;
     std::cout << "\n--- TOP " << limit << " HOTSPOTS (By CPU Time) ---\n";
     std::cout << " #   ADDR    HITS       CYCLES     % TIME  INSTRUCTION\n";
@@ -260,10 +260,10 @@ int ProfileEngine::run() {
     }
 
     // CSV Export
-    if (!m_options.profileExportFile.empty()) {
-        std::ofstream file(m_options.profileExportFile);
+    if (!m_options.profile.exportFile.empty()) {
+        std::ofstream file(m_options.profile.exportFile);
         if (!file) {
-            std::cerr << "Error: Could not open file " << m_options.profileExportFile << " for writing.\n";
+            std::cerr << "Error: Could not open file " << m_options.profile.exportFile << " for writing.\n";
         } else {
             file << "Address,Hits,Cycles,Instruction,Operands,BranchTaken,BranchNotTaken\n";
             // Sort by address for CSV usually makes more sense for static analysis, 
@@ -289,7 +289,7 @@ int ProfileEngine::run() {
                 
                 file << "$" << Strings::hex(s.addr) << "," << s.hits << "," << s.cycles << "," << line.mnemonic << ",\"" << operands << "\"," << bt << "," << bnt << "\n";
             }
-            std::cout << "Profile data exported to " << m_options.profileExportFile << "\n";
+            std::cout << "Profile data exported to " << m_options.profile.exportFile << "\n";
         }
     }
 

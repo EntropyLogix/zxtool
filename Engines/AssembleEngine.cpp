@@ -9,8 +9,8 @@ AssembleEngine::AssembleEngine(Core& core, const Options& options)
     : m_core(core), m_options(options) {}
 
 int AssembleEngine::run() {
-    if (!m_options.outputFile.empty()) {
-        save_output_file(m_options.outputFile, m_options.outputFormat, m_core.get_blocks());
+    if (!m_options.asm_.outputFile.empty()) {
+        save_output_file(m_options.asm_.outputFile, m_options.asm_.outputFormat, m_core.get_blocks());
     }
     return 0;
 }
@@ -38,10 +38,10 @@ void AssembleEngine::save_bin(const std::string& outputFile, const std::vector<C
     }
 
     const auto& first_block = blocks.front();
-    std::cout << "Saving memory block to " << outputFile << " (Address: " << Strings::hex(first_block.start_address) << ", Size: " << std::dec << first_block.size << " bytes)" << std::endl;
+    std::cout << "Saving memory block to " << outputFile << " (Address: " << Strings::hex(first_block.start) << ", Size: " << std::dec << first_block.size << " bytes)" << std::endl;
 
     std::ofstream file(outputFile, std::ios::binary);
     for (uint16_t i = 0; i < first_block.size; ++i) {
-        file.put(m_core.get_memory().peek(first_block.start_address + i));
+        file.put(m_core.get_memory().peek(first_block.start + i));
     }
 }

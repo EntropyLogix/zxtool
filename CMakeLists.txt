@@ -33,11 +33,10 @@ add_executable(zxtool
                 Engines/ProfileEngine.cpp
                 Engines/Autocompletion.cpp
                 Engines/Hint.cpp
-                Files/AsmFiles.cpp
+                Files/AssemblyFormat.cpp
                 Files/BinFiles.cpp
                 Files/Z80File.cpp
                 Files/SymbolFile.cpp
-                Files/ControlFile.cpp
                 Files/LstFile.cpp
                 Files/SkoolFile.cpp
                 Files/FileManager.cpp

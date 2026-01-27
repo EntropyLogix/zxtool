@@ -9,6 +9,18 @@
 #include <map>
 #include <sstream>
 #include <stdexcept>
+#include <iostream>
+
+// Ensure compatibility between Memory::Map::Flags and Z80Assembler::Map
+#define CHECK_FLAG(NAME) \
+    static_assert(static_cast<uint8_t>(Memory::Map::Flags::NAME) == \
+                  static_cast<uint8_t>(Z80Assembler<Memory>::Map::NAME), \
+                  "Memory::Map::Flags::" #NAME " mismatch")
+CHECK_FLAG(None);
+CHECK_FLAG(Opcode);
+CHECK_FLAG(Operand);
+CHECK_FLAG(Data);
+#undef CHECK_FLAG
 
 class LineAssemblerMemory {
 public:
@@ -93,6 +105,43 @@ class ToolAssembler : public Z80Assembler<Memory>
 public:
     ToolAssembler(Memory* memory, IFileProvider* source_provider, const typename Z80Assembler<Memory>::Config& config = Z80Assembler<Memory>::get_default_config())
         : Z80Assembler<Memory>(memory, source_provider, config) {}
+
+    bool compile(const std::string& main_file_path, uint16_t start_addr = 0x0000, const typename Z80Assembler<Memory>::InstructionOptions* options = nullptr, const typename Z80Assembler<Memory>::OptimizationOptions* optimizations = nullptr, std::vector<uint8_t>* memory_map = nullptr) override {
+        if (m_silent) {
+            std::streambuf* old_cerr = std::cerr.rdbuf();
+            std::stringstream null_ss;
+            std::cerr.rdbuf(null_ss.rdbuf());
+            bool result = false;
+            try {
+                result = Z80Assembler<Memory>::compile(main_file_path, start_addr, options, optimizations, &m_map);
+            } catch (...) {
+                std::cerr.rdbuf(old_cerr);
+                return false;
+            }
+            std::cerr.rdbuf(old_cerr);
+            return result;
+        }
+        return Z80Assembler<Memory>::compile(main_file_path, start_addr, options, optimizations, &m_map);
+    }
+
+    bool is_reserved(const std::string& name) {
+        return this->m_keywords.is_reserved(name);
+    }
+
+    bool is_valid_label_name(const std::string& name) {
+        return this->m_keywords.is_valid_label_name(name);
+    }
+
+    void set_silent(bool silent) {
+        m_silent = silent;
+    }
+
+    const std::vector<uint8_t>& get_map() const {
+        return m_map;
+    }
+private:
+    std::vector<uint8_t> m_map;
+    bool m_silent = false;
 };
 
 #endif//__ASSEMBLER_H__

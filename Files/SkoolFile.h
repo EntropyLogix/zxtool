@@ -6,15 +6,17 @@
 #include <string>
 #include <vector>
 
-class SkoolFile : public IBinaryFile, public IAuxiliaryFile {
+class SkoolFormat : public FileFormat {
 public:
-    SkoolFile(Core& core);
+    SkoolFormat(Core& core);
 
-    // IBinaryFile implementation (Build & Load)
-    LoadResult load(const std::string& filename, std::vector<LoadedBlock>& blocks, uint16_t address) override;
+    // FileFormat implementation (Build & Load)
+    bool load_binary(const std::string& filename, std::vector<Block>& blocks, uint16_t address) override;
 
-    // IAuxiliaryFile implementation (Metadata only)
-    bool load(const std::string& filename) override;
+    // FileFormat implementation (Metadata only)
+    bool load_metadata(const std::string& filename) override;
+
+    uint32_t get_capabilities() const override { return LoadBinary | LoadMetadata; }
 
     std::vector<std::string> get_extensions() const override;
 

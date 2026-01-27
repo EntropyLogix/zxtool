@@ -30,7 +30,7 @@ class Core : public IFileProvider {
 public:
     using CpuType = Z80<Z80Disassembler<Memory>::CodeMapProfiler, Z80StandardEvents, Z80Disassembler<Memory>::CodeMapProfiler>;
     
-    using Block = LoadedBlock;
+    using Block = FileFormat::Block;
 
     Core();
 

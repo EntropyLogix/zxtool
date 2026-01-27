@@ -19,17 +19,18 @@ struct Z80Header {
 };
 #pragma pack(pop)
 
-Z80File::Z80File(Core& core) : m_core(core) {}
+Z80Format::Z80Format(Core& core) : m_core(core) {}
 
-LoadResult Z80File::load(const std::string& filename, std::vector<LoadedBlock>& blocks, uint16_t address) {
+bool Z80Format::load_binary(const std::string& filename, std::vector<FileFormat::Block>& blocks, uint16_t address) {
     if (load(m_core, filename)) {
-        blocks.push_back({0, 0, "Loaded Z80 snapshot: " + filename});
-        return {true, m_core.get_cpu().get_PC()};
+        uint16_t pc = m_core.get_cpu().get_PC();
+        blocks.push_back({pc, 0, "Loaded Z80 snapshot: " + filename});
+        return true;
     }
-    return {false, std::nullopt};
+    return false;
 }
 
-bool Z80File::load(Core& core, const std::string& filename) {
+bool Z80Format::load(Core& core, const std::string& filename) {
     std::ifstream file(filename, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         std::cerr << "Error: Could not open file " << filename << std::endl;
@@ -207,6 +208,6 @@ bool Z80File::load(Core& core, const std::string& filename) {
     return true;
 }
 
-std::vector<std::string> Z80File::get_extensions() const {
+std::vector<std::string> Z80Format::get_extensions() const {
     return { ".z80" };
 }

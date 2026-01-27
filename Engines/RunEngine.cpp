@@ -12,9 +12,9 @@ int RunEngine::run() {
     auto& m_memory = m_core.get_memory();
     auto& m_analyzer = m_core.get_analyzer();
 
-    long long runSteps = m_options.runSteps;
-    if (!m_options.entryPointStr.empty()) {
-        std::string ep = m_options.entryPointStr;
+    long long runSteps = m_options.run.steps;
+    if (!m_options.run.entryPointStr.empty()) {
+        std::string ep = m_options.run.entryPointStr;
         size_t colon = ep.find(':');
         if (colon != std::string::npos) {
             try {
@@ -38,7 +38,7 @@ int RunEngine::run() {
     auto start_time = std::chrono::steady_clock::now();
     uint64_t start_ticks = m_cpu.get_ticks();
 
-    if (m_options.runUntilReturn) {
+    if (m_options.run.runUntilReturn) {
         uint16_t initial_sp = m_cpu.get_SP();
         long long steps = 0;
         while (true) {
@@ -52,8 +52,8 @@ int RunEngine::run() {
                 break;
 
             if (runSteps > 0 && steps >= runSteps) break;
-            if (m_options.timeout > 0 && (steps % 10000 == 0)) {
-                if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_time).count() >= m_options.timeout)
+            if (m_options.run.timeout > 0 && (steps % 10000 == 0)) {
+                if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_time).count() >= m_options.run.timeout)
                     break;
             }
             if (m_cpu.is_halted()) break;
@@ -61,15 +61,15 @@ int RunEngine::run() {
     } else if (runSteps > 0) {
         for (long long i = 0; i < runSteps; ++i) {
             m_cpu.step();
-            if (m_options.timeout > 0 && (i % 10000 == 0)) {
-                if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_time).count() >= m_options.timeout)
+            if (m_options.run.timeout > 0 && (i % 10000 == 0)) {
+                if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_time).count() >= m_options.run.timeout)
                     break;
             }
         }
-    } else if (m_options.runTicks > 0)
-        m_cpu.run(m_options.runTicks);
-    else if (m_options.timeout > 0) {
-        while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_time).count() < m_options.timeout)
+    } else if (m_options.run.ticks > 0)
+        m_cpu.run(m_options.run.ticks);
+    else if (m_options.run.timeout > 0) {
+        while (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_time).count() < m_options.run.timeout)
             m_cpu.run(m_cpu.get_ticks() + 100000);
     }
 
@@ -77,7 +77,7 @@ int RunEngine::run() {
     auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
     uint64_t total_ticks = m_cpu.get_ticks() - start_ticks;
 
-    bool has_output = m_options.dumpRegs || !m_options.dumpCodeStr.empty() || !m_options.dumpMemStr.empty();
+    bool has_output = m_options.run.dumpRegs || !m_options.run.dumpCodeStr.empty() || !m_options.run.dumpMemStr.empty();
     if (m_options.verbose || !has_output) {
         std::cout << "Execution Statistics:\n";
         std::cout << "  Duration: " << duration_ms << " ms\n";
@@ -89,7 +89,7 @@ int RunEngine::run() {
         std::cout << "------------------------------------------------------------\n";
     }
 
-    if (m_options.dumpRegs) {
+    if (m_options.run.dumpRegs) {
         std::cout << "PC: " << Strings::hex(m_cpu.get_PC()) << " SP: " << Strings::hex(m_cpu.get_SP()) << "\n";
         std::cout << "AF: " << Strings::hex(m_cpu.get_AF()) << " BC: " << Strings::hex(m_cpu.get_BC()) << "\n";
         std::cout << "DE: " << Strings::hex(m_cpu.get_DE()) << " HL: " << Strings::hex(m_cpu.get_HL()) << "\n";
@@ -100,7 +100,7 @@ int RunEngine::run() {
         std::cout << "Flags: " << ((f & 0x80) ? 'S' : '-') << ((f & 0x40) ? 'Z' : '-') << ((f & 0x20) ? '5' : '-') << ((f & 0x10) ? 'H' : '-')
                   << ((f & 0x08) ? '3' : '-') << ((f & 0x04) ? 'P' : '-') << ((f & 0x02) ? 'N' : '-') << ((f & 0x01) ? 'C' : '-') << "\n";
     }
-    if (!m_options.dumpCodeStr.empty()) {
+    if (!m_options.run.dumpCodeStr.empty()) {
         auto print_line = [](const auto& line){
             std::cout << Strings::hex(line.address) << ": " << line.mnemonic;
             if (!line.operands.empty()) {
@@ -129,9 +129,9 @@ int RunEngine::run() {
             std::cout << "\n";
         };
 
-        if (m_options.dumpCodeStr == "ALL") {
+        if (m_options.run.dumpCodeStr == "ALL") {
             for (const auto& block : m_core.get_blocks()) {
-                uint16_t addr = block.start_address;
+                uint16_t addr = block.start;
                 uint16_t end_addr = addr + block.size;
                 std::cout << "--- Code Dump from " << Strings::hex(addr) << " (" << std::dec << block.size << " bytes) ---\n";
                 while (addr < end_addr) {
@@ -146,15 +146,15 @@ int RunEngine::run() {
         } else {
             uint16_t addr = 0;
             size_t count = 16;
-            size_t colon_pos = m_options.dumpCodeStr.find(':');
+            size_t colon_pos = m_options.run.dumpCodeStr.find(':');
             if (colon_pos != std::string::npos) {
                 int32_t val = 0;
-                Strings::parse_integer(m_options.dumpCodeStr.substr(0, colon_pos), val);
+                Strings::parse_integer(m_options.run.dumpCodeStr.substr(0, colon_pos), val);
                 addr = (uint16_t)val;
-                count = std::stoul(m_options.dumpCodeStr.substr(colon_pos + 1), nullptr, 0);
+                count = std::stoul(m_options.run.dumpCodeStr.substr(colon_pos + 1), nullptr, 0);
             } else {
                 int32_t val = 0;
-                Strings::parse_integer(m_options.dumpCodeStr, val);
+                Strings::parse_integer(m_options.run.dumpCodeStr, val);
                 addr = (uint16_t)val;
             }
             for (size_t i = 0; i < count; ++i) {
@@ -167,11 +167,11 @@ int RunEngine::run() {
         }
     }
 
-    if (!m_options.dumpMemStr.empty()) {
-        if (m_options.dumpMemStr == "ALL") {
+    if (!m_options.run.dumpMemStr.empty()) {
+        if (m_options.run.dumpMemStr == "ALL") {
             std::cout << "File loaded successfully.\n";
             for (const auto& block : m_core.get_blocks()) {
-                uint16_t addr = block.start_address;
+                uint16_t addr = block.start;
                 size_t len = block.size;
                 std::cout << "--- Memory Dump from " << Strings::hex(addr) << " (" << std::dec << len << " bytes) ---\n";
                 for (size_t i = 0; i < len; i += 16) {
@@ -194,18 +194,18 @@ int RunEngine::run() {
             return 0;
         }
 
-        size_t colon_pos = m_options.dumpMemStr.find(':');
+        size_t colon_pos = m_options.run.dumpMemStr.find(':');
         uint16_t addr = 0;
         size_t len = 256;
 
         if (colon_pos != std::string::npos) {
             int32_t val = 0;
-            Strings::parse_integer(m_options.dumpMemStr.substr(0, colon_pos), val);
+            Strings::parse_integer(m_options.run.dumpMemStr.substr(0, colon_pos), val);
             addr = (uint16_t)val;
-            len = std::stoul(m_options.dumpMemStr.substr(colon_pos + 1), nullptr, 0);
+            len = std::stoul(m_options.run.dumpMemStr.substr(colon_pos + 1), nullptr, 0);
         } else {
             int32_t val = 0;
-            Strings::parse_integer(m_options.dumpMemStr, val);
+            Strings::parse_integer(m_options.run.dumpMemStr, val);
             addr = (uint16_t)val;
         }
 

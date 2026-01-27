@@ -76,10 +76,10 @@ void Application::load_input_files() {
     // Project handles parsing "file:addr" strings and loading sidecars
     m_core.load_input_files(options.inputFiles);
 
-    if (options.generateListing) {
+    if (options.asm_.generateListing) {
         const auto& listing = m_core.get_assembler().get_listing();
         if (!listing.empty()) {
-            std::string filename = options.listingFile;
+            std::string filename = options.asm_.listingFile;
             if (filename.empty() && !options.inputFiles.empty()) {
                 std::filesystem::path p(options.inputFiles[0].first);
                 filename = p.replace_extension(".lst").string();

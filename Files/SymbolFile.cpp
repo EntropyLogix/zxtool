@@ -13,7 +13,7 @@ static uint16_t parse_hex_addr(const std::string& s) {
     } catch (...) { return 0; }
 }
 
-void SymbolFile::load_sym(const std::string& filename) {
+void SymbolFormat::load_sym(const std::string& filename) {
     std::ifstream file(filename);
     std::string line;
     while (std::getline(file, line)) {
@@ -49,7 +49,7 @@ void SymbolFile::load_sym(const std::string& filename) {
     }
 }
 
-void SymbolFile::load_map(const std::string& filename) {
+void SymbolFormat::load_map(const std::string& filename) {
     std::ifstream file(filename);
     std::string line, addrStr, label;
     while (std::getline(file, line)) {
@@ -63,7 +63,7 @@ void SymbolFile::load_map(const std::string& filename) {
     }
 }
 
-bool SymbolFile::load(const std::string& filename) {
+bool SymbolFormat::load(const std::string& filename) {
     if (filename.find(".map") != std::string::npos) {
         load_map(filename);
         return true;
@@ -73,6 +73,6 @@ bool SymbolFile::load(const std::string& filename) {
     }
 }
 
-std::vector<std::string> SymbolFile::get_extensions() const {
+std::vector<std::string> SymbolFormat::get_extensions() const {
     return { ".sym", ".map" };
 }

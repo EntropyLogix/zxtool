@@ -18,8 +18,8 @@ int DisassembleEngine::run() {
     
     std::ofstream file_out;
     std::streambuf* buf = std::cout.rdbuf();
-    if (!m_options.outputFile.empty()) {
-        file_out.open(m_options.outputFile);
+    if (!m_options.disasm.outputFile.empty()) {
+        file_out.open(m_options.disasm.outputFile);
         if (file_out) buf = file_out.rdbuf();
     }
     std::ostream out(buf);
@@ -33,8 +33,8 @@ int DisassembleEngine::run() {
     };
     std::vector<DisasmJob> jobs;
 
-    bool has_entry = !m_options.entryPointStr.empty();
-    bool has_steps = m_options.runSteps > 0;
+    bool has_entry = !m_options.disasm.entryPointStr.empty();
+    bool has_steps = m_options.run.steps > 0;
 
     if (!has_entry && !has_steps) {
         const auto& blocks = m_core.get_blocks();
@@ -42,15 +42,15 @@ int DisassembleEngine::run() {
              jobs.push_back({0, 0, false, 20, ""});
         } else {
             for (const auto& b : blocks) {
-                jobs.push_back({b.start_address, static_cast<uint32_t>(b.start_address + b.size), true, 0, 
-                    "--- Disassembly of " + b.description + " (" + Strings::hex(b.start_address) + ") ---"});
+                jobs.push_back({b.start, static_cast<uint32_t>(b.start + b.size), true, 0, 
+                    "--- Disassembly of " + b.description + " (" + Strings::hex(b.start) + ") ---"});
             }
         }
     } else {
         uint16_t pc = 0;
         size_t count = 20;
         if (has_entry) {
-            std::string ep = m_options.entryPointStr;
+            std::string ep = m_options.disasm.entryPointStr;
             size_t colon = ep.find(':');
             if (colon != std::string::npos) {
                 try { count = std::stoul(ep.substr(colon + 1)); } catch (...) {}
@@ -61,7 +61,7 @@ int DisassembleEngine::run() {
                 pc = (uint16_t)val;
             } else { std::cerr << "Invalid entry point: " << ep << "\n"; }
         }
-        if (has_steps) count = m_options.runSteps;
+        if (has_steps) count = m_options.run.steps;
         jobs.push_back({pc, 0, false, count, ""});
     }
 

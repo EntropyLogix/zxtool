@@ -1,6 +1,6 @@
 #include "Core.h"
 #include "../Files/BinFiles.h"
-#include "../Files/AsmFiles.h"
+#include "../Files/AssemblyFormat.h"
 #include "../Files/Z80File.h"
 #include "../Files/SymbolFile.h"
 #include "../Files/LstFile.h"
@@ -27,12 +27,12 @@ Core::Core()
     m_profiler.connect(&m_cpu);
     m_profiler.set_labels(&m_context.getSymbols());
     
-    m_file_manager.register_loader(new BinFiles(m_memory));
-    m_file_manager.register_loader(new AsmFiles(m_assembler));
-    m_file_manager.register_loader(new Z80File(*this));
-    m_file_manager.register_loader(new SymbolFile(m_analyzer));
-    m_file_manager.register_loader(new SkoolFile(*this));
-    m_file_manager.register_loader(new LstFile(*this));
+    m_file_manager.register_loader(new BinaryFormat(m_memory));
+    m_file_manager.register_loader(new AssemblyFormat(*this));
+    m_file_manager.register_loader(new Z80Format(*this));
+    m_file_manager.register_loader(new SymbolFormat(m_analyzer));
+    m_file_manager.register_loader(new SkoolFormat(*this));
+    m_file_manager.register_loader(new ListingFormat(*this));
 }
 
 void Core::load_input_files(const std::vector<std::pair<std::string, uint16_t>>& inputs) {
@@ -43,7 +43,7 @@ void Core::load_input_files(const std::vector<std::pair<std::string, uint16_t>>&
     // Configure analyzer with valid ranges from loaded blocks
     std::vector<std::pair<uint16_t, uint16_t>> ranges;
     for (const auto& block : m_blocks) {
-        ranges.push_back({block.start_address, block.size});
+        ranges.push_back({block.start, block.size});
     }
     m_analyzer.set_valid_ranges(ranges);
     
@@ -78,17 +78,17 @@ void Core::process_file(const std::string& path, uint16_t address) {
     // Load only binary files here
     auto result = m_file_manager.load_binary(path, m_blocks, address);
     uint16_t analysis_start = address;
-    if (!result.success) {
+    if (!result.first) {
         std::string ext = fs::path(path).extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
         // If FileManager failed, it might be because of unknown extension or load error.
-        std::cerr << "Warning: Failed to load binary file or unknown extension '" << ext << "' for file: " << path << std::endl;
+        std::cerr << "Warning: Failed to load binary file (or unknown extension) '" << ext << "' for file: " << path << std::endl;
         return;
     } else {
-        if (result.start_address)
-            analysis_start = *result.start_address;
+        if (result.second)
+            analysis_start = *result.second;
         
-        if (result.start_address) m_cpu.set_PC(*result.start_address);
+        if (result.second) m_cpu.set_PC(*result.second);
     }
     
     load_sidecar_files(path);
@@ -100,65 +100,6 @@ void Core::process_file(const std::string& path, uint16_t address) {
         }
     }*/
 
-    const auto& listing = m_assembler.get_listing();
-    if (!listing.empty()) {
-        // Ensure blocks from assembler are in m_blocks
-        std::cout << "Processing assembler blocks..." << std::endl;
-        for (const auto& asm_block : m_assembler.get_blocks()) {
-            bool exists = false;
-            for (const auto& loaded_block : m_blocks) {
-                if (loaded_block.start_address == asm_block.start_address && loaded_block.size == asm_block.size) {
-                    exists = true;
-                    break;
-                }
-            }
-            if (!exists) {
-                m_blocks.push_back({asm_block.start_address, asm_block.size, "ASM Block"});
-                std::cout << "Added ASM block: " << Strings::hex(asm_block.start_address) << " size: " << asm_block.size << std::endl;
-            }
-        }
-
-        auto& map = get_code_map();
-        auto& comments = m_context.getComments();
-        auto& symbols = m_context.getSymbols();
-
-        // Import symbols from assembler
-        for (const auto& pair : m_assembler.get_symbols()) {
-            const auto& info = pair.second;
-            Symbol::Type type = info.label ? Symbol::Type::Label : Symbol::Type::Constant;
-            symbols.add(Symbol(info.name, (uint16_t)info.value, type));
-        }
-        
-        for (const auto& line : listing) {
-            if (line.bytes.empty()) continue;
-            
-            // 1. Mark Code/Data in CodeMap
-            bool is_code = true;
-            std::string upper_content = Strings::upper(line.source_line.content);
-            // Pad with spaces to ensure we match whole words (e.g. " DB ")
-            std::string padded = " " + upper_content + " ";
-            std::replace(padded.begin(), padded.end(), '\t', ' ');
-
-            if (padded.find(" DB ") != std::string::npos || padded.find(" DEFB ") != std::string::npos ||
-                padded.find(" DW ") != std::string::npos || padded.find(" DEFW ") != std::string::npos ||
-                padded.find(" DS ") != std::string::npos || padded.find(" DEFS ") != std::string::npos ||
-                padded.find(" DM ") != std::string::npos || padded.find(" DEFM ") != std::string::npos) {
-                is_code = false;
-            }
-
-            if (is_code) {
-                map.mark_code(line.address, line.bytes.size(), true);
-            } else {
-                map.mark_data(line.address, line.bytes.size(), false, true);
-            }
-
-            // 2. Add Source as Comment
-            std::string clean_content = Strings::trim(line.source_line.content);
-            if (!clean_content.empty()) {
-                comments.add(Comment(line.address, clean_content, Comment::Type::Inline));
-            }
-        }
-    }
 }
 
 void Core::load_sidecar_files(const std::string& path) {
@@ -175,7 +116,7 @@ void Core::load_sidecar_files(const std::string& path) {
         if (fs::exists(sidecar)) {
             std::cout << "Loading auxiliary file " << sidecar << std::endl;
             // Try to load as auxiliary file
-            if (!m_file_manager.load_aux(sidecar)) {
+            if (!m_file_manager.load_metadata(sidecar)) {
             }
         }
     }

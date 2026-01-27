@@ -11,36 +11,44 @@ FileManager::~FileManager() {
     }
 }
 
-void FileManager::register_loader(IFile* loader) {
+void FileManager::register_loader(FileFormat* loader) {
     m_loaders.push_back(loader);
 }
 
-LoadResult FileManager::load_binary(const std::string& path, std::vector<LoadedBlock>& blocks, uint16_t address) {
+std::pair<bool, std::optional<uint16_t>> FileManager::load_binary(const std::string& path, std::vector<FileFormat::Block>& blocks, uint16_t address) {
     std::string ext = fs::path(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
     // 1. Try exact extension match
     for (const auto& loader : m_loaders) {
-        auto binLoader = dynamic_cast<IBinaryFile*>(loader);
-        if (!binLoader) continue;
-
+        if (!(loader->get_capabilities() & FileFormat::LoadBinary)) continue;
         const auto& extensions = loader->get_extensions();
         for (const auto& supported_ext : extensions) {
             if (supported_ext == ext) {
-                return binLoader->load(path, blocks, address);
+                size_t initial_size = blocks.size();
+                if (loader->load_binary(path, blocks, address)) {
+                    if (blocks.size() > initial_size) {
+                        return {true, blocks[initial_size].start};
+                    }
+                    return {true, std::nullopt};
+                }
             }
         }
     }
 
     // 2. Try wildcard match (fallback)
     for (const auto& loader : m_loaders) {
-        auto binLoader = dynamic_cast<IBinaryFile*>(loader);
-        if (!binLoader) continue;
-
+        if (!(loader->get_capabilities() & FileFormat::LoadBinary)) continue;
         const auto& extensions = loader->get_extensions();
         for (const auto& supported_ext : extensions) {
             if (supported_ext == "*") {
-                return binLoader->load(path, blocks, address);
+                size_t initial_size = blocks.size();
+                if (loader->load_binary(path, blocks, address)) {
+                    if (blocks.size() > initial_size) {
+                        return {true, blocks[initial_size].start};
+                    }
+                    return {true, std::nullopt};
+                }
             }
         }
     }
@@ -48,18 +56,16 @@ LoadResult FileManager::load_binary(const std::string& path, std::vector<LoadedB
     return {false, std::nullopt};
 }
 
-bool FileManager::load_aux(const std::string& path) {
+bool FileManager::load_metadata(const std::string& path) {
     std::string ext = fs::path(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
     for (const auto& loader : m_loaders) {
-        auto auxLoader = dynamic_cast<IAuxiliaryFile*>(loader);
-        if (!auxLoader) continue;
-
+        if (!(loader->get_capabilities() & FileFormat::LoadMetadata)) continue;
         const auto& extensions = loader->get_extensions();
         for (const auto& supported_ext : extensions) {
             if (supported_ext == ext) {
-                return auxLoader->load(path);
+                if (loader->load_metadata(path)) return true;
             }
         }
     }

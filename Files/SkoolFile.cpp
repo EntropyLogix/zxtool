@@ -50,13 +50,13 @@ static std::string clean_skool_tags(const std::string& text, Analyzer& analyzer)
     return result;
 }
 
-SkoolFile::SkoolFile(Core& core) : m_core(core) {}
+SkoolFormat::SkoolFormat(Core& core) : m_core(core) {}
 
-std::vector<std::string> SkoolFile::get_extensions() const {
+std::vector<std::string> SkoolFormat::get_extensions() const {
     return { ".skool", ".ctl" };
 }
 
-LoadResult SkoolFile::load(const std::string& filename, std::vector<LoadedBlock>& blocks, uint16_t address) {
+bool SkoolFormat::load_binary(const std::string& filename, std::vector<FileFormat::Block>& blocks, uint16_t address) {
     std::string asm_content;
     try {
         // Parse skool file, populate context, and generate ASM string
@@ -68,13 +68,13 @@ LoadResult SkoolFile::load(const std::string& filename, std::vector<LoadedBlock>
 
         // Use the existing assembler to compile the generated code
         if (!m_core.get_assembler().compile(virtual_filename, address)) {
-            return {false, std::nullopt};
+            return false;
         }
         
         const auto& asm_blocks = m_core.get_assembler().get_blocks();
 
         if (asm_blocks.empty()) {
-            return {false, std::nullopt};
+            return false;
         }
 
         uint16_t start_addr = asm_blocks.front().start_address;
@@ -82,15 +82,15 @@ LoadResult SkoolFile::load(const std::string& filename, std::vector<LoadedBlock>
             blocks.push_back({b.start_address, b.size, "Assembled from Skool: " + filename});
         }
         
-        return {true, start_addr};
+        return true;
 
     } catch (const std::exception& e) {
         std::cerr << "Skool load error: " << e.what() << std::endl;
-        return {false, std::nullopt};
+        return false;
     }
 }
 
-bool SkoolFile::load(const std::string& filename) {
+bool SkoolFormat::load_metadata(const std::string& filename) {
     std::string ext = filename.substr(filename.find_last_of("."));
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     
@@ -108,7 +108,7 @@ bool SkoolFile::load(const std::string& filename) {
     }
 }
 
-void SkoolFile::parse_and_process(const std::string& filename, bool generate_asm, std::string& out_asm) {
+void SkoolFormat::parse_and_process(const std::string& filename, bool generate_asm, std::string& out_asm) {
     std::ifstream file(filename);
     if (!file.is_open()) throw std::runtime_error("Cannot open file: " + filename);
 
@@ -364,7 +364,7 @@ void SkoolFile::parse_and_process(const std::string& filename, bool generate_asm
     out_asm = asm_ss.str();
 }
 
-bool SkoolFile::parse_control_file(const std::string& filename) {
+bool SkoolFormat::parse_control_file(const std::string& filename) {
     auto& map = m_core.get_code_map();
     
     std::ifstream file(filename);

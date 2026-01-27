@@ -4,11 +4,13 @@
 
 class Core;
 
-class Z80File : public IBinaryFile {
+class Z80Format : public FileFormat {
 public:
-    Z80File(Core& vm);
+    Z80Format(Core& vm);
 
-    LoadResult load(const std::string& filename, std::vector<LoadedBlock>& blocks, uint16_t address) override;
+    bool load_binary(const std::string& filename, std::vector<Block>& blocks, uint16_t address) override;
+    uint32_t get_capabilities() const override { return LoadBinary; }
+
     static bool load(Core& vm, const std::string& filename);
 
     std::vector<std::string> get_extensions() const override;
@@ -16,5 +18,3 @@ public:
 private:
     Core& m_core;
 };
-
-namespace Files { using ::Z80File; }

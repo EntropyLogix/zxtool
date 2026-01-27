@@ -527,7 +527,7 @@ void CodeView::format_operands(const Z80Disassembler<Memory>::CodeLine& line, st
 
 Z80Disassembler<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& conflict, bool& shadow, bool& is_orphan) {
     Z80Disassembler<Memory>::CodeLine line;
-    auto* code_map = &m_core.get_code_map();
+    auto& mem_map = m_core.get_memory().getMap();
     bool is_pc_line = (addr == m_pc);
     conflict = false;
     shadow = false;
@@ -536,9 +536,9 @@ Z80Disassembler<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& co
     if (addr < m_pc) {
         // Lookahead logic: Check for collision with PC ("Kill the Parent")
         bool handled = false;
-        uint8_t flags = (*code_map)[addr];
+        uint8_t flags = mem_map[addr];
         
-        if (flags & CodeMap::FLAG_CODE_START) {
+        if (flags & (uint8_t)Memory::Map::Flags::Opcode) {
             auto p = m_core.get_analyzer().parse_instruction(addr);
             if (addr + p.bytes.size() > m_pc) {
                 // Collision detected! Parent swallows PC. Kill the parent.
@@ -549,7 +549,7 @@ Z80Disassembler<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& co
                 line = p;
                 handled = true;
             }
-        } else if (flags & CodeMap::FLAG_CODE_INTERIOR) {
+        } else if (flags & (uint8_t)Memory::Map::Flags::Operand) {
             // Orphaned byte from previous instruction (which was killed or scrolled out)
             line = m_core.get_analyzer().parse_db(addr, 1);
             shadow = true;
@@ -565,7 +565,7 @@ Z80Disassembler<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& co
             } else {
                     // Use standard parsing respecting map (but avoid skipping)
                     uint16_t next = addr;
-                    auto lines = m_core.get_analyzer().parse_code(next, 1, code_map);
+                    auto lines = m_core.get_analyzer().parse_code(next, 1, nullptr);
                     if (!lines.empty()) {
                         line = lines[0];
                         // Double check collision
@@ -581,16 +581,16 @@ Z80Disassembler<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& co
     } else {
         // At PC or after: CPU is always right
         line = m_core.get_analyzer().parse_instruction(addr);
-        uint8_t flags = (*code_map)[(uint16_t)line.address];
+        uint8_t flags = mem_map[(uint16_t)line.address];
         
         if (is_pc_line) {
-            if (flags & CodeMap::FLAG_CODE_INTERIOR) {
+            if (flags & (uint8_t)Memory::Map::Flags::Operand) {
                 // Logic Layer: PC is inside another instruction. Enforce new instruction.
                 conflict = true;
-                m_core.get_code_map().mark_code(addr, line.bytes.size(), true);
+                // m_core.get_code_map().mark_code(addr, line.bytes.size(), true);
             }
         } else {
-            if (flags & CodeMap::FLAG_CODE_INTERIOR) shadow = true;
+            if (flags & (uint8_t)Memory::Map::Flags::Operand) shadow = true;
         }
     }
     // Safety check: ensure we never return a 0-length line to avoid infinite loops
@@ -976,7 +976,7 @@ int CodeView::get_line_height(uint16_t addr) {
 
 void CodeView::move_cursor(int delta) {
     if (delta < 0) {
-        uint16_t prev = m_core.get_analyzer().parse_instruction_backwards(m_cursor_addr, &m_core.get_code_map());
+        uint16_t prev = m_core.get_analyzer().parse_instruction_backwards(m_cursor_addr, nullptr);
         m_cursor_addr = prev;
         int diff = (int)m_start_addr - (int)m_cursor_addr;
         if (diff > 0 && diff < 100) {
@@ -2251,10 +2251,10 @@ void Dashboard::center_code_view(uint16_t pc) {
     } else {
         int steps = 0;
         while (steps < 100) {
-            uint16_t prev = core.get_analyzer().parse_instruction_backwards(scan_pc, &core.get_code_map());
+            uint16_t prev = core.get_analyzer().parse_instruction_backwards(scan_pc, nullptr);
             if (prev == scan_pc) prev = scan_pc - 1;
 
-            bool is_code = (core.get_code_map()[prev] & CodeMap::FLAG_CODE_START);
+            bool is_code = (core.get_memory().getMap()[prev] & (uint8_t)Memory::Map::Flags::Opcode);
             int lines_added = 0;
             int meta = m_code_view.get_meta_height(prev);
 
@@ -2314,9 +2314,9 @@ void Dashboard::print_columns(const std::vector<std::string>& left, const std::v
 }
 
 int DebugEngine::run() {
-    if (!m_options.entryPointStr.empty()) {
+    if (!m_options.debug.entryPointStr.empty()) {
         try {
-            std::string ep = m_options.entryPointStr;
+            std::string ep = m_options.debug.entryPointStr;
             auto parts = Strings::split(ep, ':');
             if (!parts.empty())
                 ep = parts[0];
