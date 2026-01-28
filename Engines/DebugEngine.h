@@ -12,7 +12,6 @@
 #include <map>
 
 #include "../Core/Core.h"
-#include "../Core/CodeMap.h"
 #include "../Cmd/Options.h"
 #include "../Core/Expression.h"
 #include "../Utils/Terminal.h"
@@ -20,7 +19,7 @@
 #include "../Utils/Commands.h"
 #include "Autocompletion.h"
 #include "Hint.h"
-#include "Debugger.h"
+#include "../Core/Debugger.h"
 
 struct Theme {
     std::string header_focus = Terminal::rgb_fg(109, 222, 111) + Terminal::BOLD;
@@ -120,14 +119,22 @@ public:
     void move_cursor(int delta);
     int get_line_height(uint16_t addr);
     int get_meta_height(uint16_t addr);
+
+    void add_output_line(std::vector<std::string>& lines, int& lines_count, int& lines_to_skip, const std::string& text);
+    void render_history(std::vector<std::string>& lines);
+    void process_address(uint16_t& addr, std::vector<std::string>& lines, int& lines_count, int& lines_to_skip, bool& pc_visible);
+    void render_block_comments(uint16_t addr, std::vector<std::string>& lines, int& lines_count, int& lines_to_skip);
+    void render_labels(const std::string& label, std::vector<std::string>& lines, int& lines_count, int& lines_to_skip);
+    void render_instruction_line(const Z80Decoder<Memory>::CodeLine& line, bool is_pc, bool is_cursor, bool is_smc, bool conflict, bool shadow, bool is_orphan, bool is_traced, std::vector<std::string>& lines, int& lines_count, int& lines_to_skip);
+
 private:
     struct DisasmInfo {
         std::string text;
         int visible_len;
     };
-    Z80Disassembler<Memory>::CodeLine resolve_line(uint16_t addr, bool& conflict, bool& shadow, bool& is_orphan);
-    DisasmInfo format_disasm(const Z80Disassembler<Memory>::CodeLine& line, bool is_pc, bool is_cursor, bool conflict, bool shadow, bool is_orphan, bool is_traced, bool is_smc);
-    void format_operands(const Z80Disassembler<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst, bool bold = false);
+    Z80Decoder<Memory>::CodeLine resolve_line(uint16_t addr, bool& conflict, bool& shadow, bool& is_orphan);
+    DisasmInfo format_disasm(const Z80Decoder<Memory>::CodeLine& line, bool is_pc, bool is_cursor, bool conflict, bool shadow, bool is_orphan, bool is_traced, bool is_smc);
+    void format_operands(const Z80Decoder<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst, bool bold = false);
     uint16_t m_start_addr = 0;
     uint16_t m_pc = 0;
     int m_width = 80;
@@ -372,7 +379,7 @@ private:
     void format_detailed_collection(std::stringstream& ss, const Expression::Value& val);
     void format_variable_header(std::stringstream& ss, const Expression::Value& val, const std::string& expr);
     void print_asm_info(std::stringstream& ss, uint16_t addr);
-    std::string format_disasm(uint16_t addr, const Z80Disassembler<Memory>::CodeLine& line);
+    std::string format_disasm(uint16_t addr, const Z80Decoder<Memory>::CodeLine& line);
     void update_crc32(uint32_t& crc, uint8_t b);
     template <typename T> std::string format_instruction(const T& line);
 

@@ -17,8 +17,7 @@ namespace fs = std::filesystem;
 
 Core::Core() 
     : m_memory()
-    , m_code_map_data(0x10000, 0)
-    , m_profiler(m_code_map_data, &m_memory)
+    , m_profiler(m_memory.getMap(), &m_memory) // Disassembler::CodeMapProfiler
     , m_cpu(&m_profiler, nullptr, &m_profiler)
     , m_assembler(&m_memory, this)
     , m_context()
@@ -66,7 +65,7 @@ void Core::reset() {
     m_context.getSymbols().clear();
     m_context.getComments().clear();
     m_current_path_stack.clear();
-    std::fill(m_code_map_data.begin(), m_code_map_data.end(), 0);
+    m_memory.getMap().reset();
     //m_analyzer.m_map.clear();
 }
 
@@ -85,6 +84,10 @@ void Core::process_file(const std::string& path, uint16_t address) {
         std::cerr << "Warning: Failed to load binary file (or unknown extension) '" << ext << "' for file: " << path << std::endl;
         return;
     } else {
+        std::string mode = get_file_mode(path);
+        if (!mode.empty()) {
+            std::cout << "Loaded '" << path << "' (Mode: " << mode << ")" << std::endl;
+        }
         if (result.second)
             analysis_start = *result.second;
         
@@ -116,7 +119,11 @@ void Core::load_sidecar_files(const std::string& path) {
         if (fs::exists(sidecar)) {
             std::cout << "Loading auxiliary file " << sidecar << std::endl;
             // Try to load as auxiliary file
-            if (!m_file_manager.load_metadata(sidecar)) {
+            if (m_file_manager.load_metadata(sidecar)) {
+                std::string mode = get_file_mode(sidecar);
+                if (!mode.empty()) {
+                    std::cout << "  Mode: " << mode << std::endl;
+                }
             }
         }
     }

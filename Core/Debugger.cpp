@@ -1,5 +1,5 @@
 #include "Debugger.h"
-#include "TraceModule.h"
+#include "../Engines/TraceModule.h"
 #include "../Utils/Strings.h"
 #include <algorithm>
 #include <functional>
@@ -120,7 +120,7 @@ void Debugger::next() {
         m_core.get_cpu().step(); 
     }
     else {
-        using Type = Z80Disassembler<Memory>::CodeLine::Type;
+        using Type = Z80Decoder<Memory>::CodeLine::Type;
         bool is_call = line.has_flag(Type::CALL);
         bool is_block = line.has_flag(Type::BLOCK);
         bool is_djnz = (line.mnemonic == "DJNZ");
@@ -220,7 +220,7 @@ void Debugger::analyze() {
     const auto& ctl_map = m_core.get_analyzer().m_map;
     if (ctl_map.size() == map.size()) {
         for (size_t i = 0; i < map.size(); ++i) {
-            if (ctl_map[i] != Z80Disassembler<Memory>::CodeMap::FLAG_NONE) {
+            if (ctl_map[i] != (uint8_t)Memory::Map::Flags::None) {
                 map[i] = ctl_map[i];
             }
         }

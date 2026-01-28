@@ -296,11 +296,11 @@ void SkoolFormat::parse_and_process(const std::string& filename, bool generate_a
         if (is_data) {
             for (int k = 0; k < length && (info.addr + k < 0x10000); ++k) {
                  m_core.get_analyzer().set_map_type(map, info.addr + k, type); // Helper works on CodeMap
-                 map[info.addr + k] |= CodeMap::FLAG_DATA_READ;
+                 map[info.addr + k] |= (uint8_t)Memory::Map::Flags::Read;
             }
         } else {
             m_core.get_analyzer().set_map_type(map, info.addr, Analyzer::TYPE_CODE); // Helper works on CodeMap
-            map[info.addr] |= CodeMap::FLAG_CODE_START;
+            map[info.addr] |= (uint8_t)Memory::Map::Flags::Opcode;
         }
 
         if (!info.comment.empty()) {
@@ -345,7 +345,7 @@ void SkoolFormat::parse_and_process(const std::string& filename, bool generate_a
             
             // Mark interior bytes
             for (int k = 1; k < estimated_size && (info.addr + k < 0x10000); ++k) {
-                map[info.addr + k] |= CodeMap::FLAG_CODE_INTERIOR;
+                map[info.addr + k] |= (uint8_t)Memory::Map::Flags::Operand;
             }
         }
 
@@ -448,7 +448,7 @@ bool SkoolFormat::parse_control_file(const std::string& filename) {
         switch (type) {
             case 'c': // Code
                 m_core.get_analyzer().set_map_type(map, addr, Analyzer::TYPE_CODE); // Helper works on CodeMap
-                map[addr] |= CodeMap::FLAG_CODE_START;
+                map[addr] |= (uint8_t)Memory::Map::Flags::Opcode;
                 if (!remainder.empty()) m_core.get_context().getComments().add(Comment(addr, clean_skool_tags(remainder, m_core.get_analyzer()), Comment::Type::Inline));
                 break;
             case 'C': // Comment
@@ -464,17 +464,17 @@ bool SkoolFormat::parse_control_file(const std::string& filename) {
             case 's': case 'S': // Space
             case 'g':           // Game state
             {
-                uint8_t flags = CodeMap::FLAG_DATA_READ;
-                if (type == 's' || type == 'S' || type == 'g') flags |= CodeMap::FLAG_DATA_WRITE;
+                uint8_t flags = (uint8_t)Memory::Map::Flags::Read;
+                if (type == 's' || type == 'S' || type == 'g') flags |= (uint8_t)Memory::Map::Flags::Write;
                 set_range(Analyzer::TYPE_BYTE, flags);
                 if (!remainder.empty() && type == 'b') m_core.get_context().getComments().add(Comment(addr, "; " + clean_skool_tags(remainder, m_core.get_analyzer()), Comment::Type::Block));
                 break;
             }
             case 'w': case 'W': // Word
-                set_range(Analyzer::TYPE_WORD, CodeMap::FLAG_DATA_READ);
+                set_range(Analyzer::TYPE_WORD, (uint8_t)Memory::Map::Flags::Read);
                 break;
             case 't': case 'T': case 'Z': // Text
-                set_range(Analyzer::TYPE_TEXT, CodeMap::FLAG_DATA_READ);
+                set_range(Analyzer::TYPE_TEXT, (uint8_t)Memory::Map::Flags::Read);
                 break;
             case 'u': case 'U': // Unused
                 set_range(Analyzer::TYPE_IGNORE, 0);

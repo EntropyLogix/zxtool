@@ -6,7 +6,7 @@
 #include <string>
 #include <cstdint>
 
-#include "../Core/Core.h"
+#include "Core.h"
 #include "../Cmd/Options.h"
 
 class Debugger {

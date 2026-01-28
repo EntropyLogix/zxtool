@@ -3,6 +3,7 @@
 
 #include "Z80Decoder.h"
 #include "Z80.h"
+#include "Memory.h"
 #include <vector>
 #include <map>
 #include <set>
@@ -10,116 +11,19 @@
 #include <functional>
 #include <iomanip>
 #include <sstream>
-
-template <typename TMemory> class Z80Disassembler {
+class Disassembler {
 public:
-    using CodeLine = typename Z80Decoder<TMemory>::CodeLine;
+    Disassembler(Memory* memory, ILabels* labels = nullptr) : m_decoder(memory, labels), m_memory(memory), m_labels(labels) {}
+    virtual ~Disassembler() = default;
 
-    struct CodeMap : public std::vector<uint8_t> {
-        using std::vector<uint8_t>::vector;
-        enum MapFlags : uint8_t {
-            FLAG_NONE = 0,
-            FLAG_CODE_START = 1 << 0,    // Start of instruction
-            FLAG_CODE_INTERIOR = 1 << 1, // Arguments/interior of instruction
-            FLAG_DATA_READ = 1 << 2,     // Data read
-            FLAG_DATA_WRITE = 1 << 3,    // Data write
-            FLAG_EXECUTED = 1 << 4       // Code executed
-        };
-        size_t mark_code(uint16_t address, size_t length, bool set) {
-            if (this->empty())
-                return 0;
-            size_t sz = this->size();
-            if (length == 0) 
-                return 0;
-            size_t changed = 0;
-            for (size_t i = 0; i < length; ++i) {
-                size_t idx = (address + i) % sz;
-                uint8_t old_val = (*this)[idx];
-                uint8_t val = old_val & ~(FLAG_CODE_START | FLAG_CODE_INTERIOR);
-                if (set) {
-                    if (i == 0)
-                        val |= FLAG_CODE_START;
-                    else
-                        val |= FLAG_CODE_INTERIOR;
-                }
-                if (val != old_val) {
-                    (*this)[idx] = val;
-                    changed++;
-                }
-            }
-            changed += cleanup_orphans(address + length);
-            return changed;
-        }
-        size_t mark_data(uint16_t address, size_t length, bool write, bool set) {
-            if (this->empty())
-                return 0;
-            size_t sz = this->size();
-            uint8_t flag = write ? FLAG_DATA_WRITE : FLAG_DATA_READ;
-            size_t changed = 0;
-            for (size_t i = 0; i < length; ++i) {
-                size_t idx = (address + i) % sz;
-                uint8_t old_val = (*this)[idx];
-                uint8_t val = old_val;
-                if (set)
-                    val |= flag;
-                else
-                    val &= ~flag;
-                if (val != old_val) {
-                    (*this)[idx] = val;
-                    changed++;
-                }
-            }
-            return changed;
-        }
-        size_t mark_executed(uint16_t address, bool set) {
-            if (this->empty())
-                return 0;
-            size_t sz = this->size();
-            size_t idx = address % sz;
-            uint8_t old_val = (*this)[idx];
-            uint8_t val = old_val;
-            if (set)
-                val |= FLAG_EXECUTED;
-            else
-                val &= ~FLAG_EXECUTED;
-            if (val != old_val) {
-                (*this)[idx] = val;
-                return 1;
-            }
-            return 0;
-        }
-    private:
-        size_t cleanup_orphans(uint32_t start_index) {
-            if (this->empty()) return 0;
-            size_t sz = this->size();
-            size_t count = 0;
-            size_t changed = 0;
-            while (count < sz) {
-                size_t idx = start_index % sz;
-                uint8_t old_val = (*this)[idx];
-                if ((old_val & FLAG_CODE_INTERIOR) && !(old_val & FLAG_CODE_START)) {
-                    uint8_t val = old_val & ~FLAG_CODE_INTERIOR;
-                    if (val != old_val) {
-                        (*this)[idx] = val;
-                        changed++;
-                    }
-                    start_index++;
-                    count++;
-                } else {
-                    break;
-                }
-            }
-            return changed;
-        }
-    };
+    Z80Decoder<Memory>& get_decoder() { return m_decoder; }
 
-    Z80Disassembler(TMemory* memory, ILabels* labels = nullptr) : m_decoder(memory, labels), m_memory(memory), m_labels(labels) {}
-    virtual ~Z80Disassembler() = default;
-
-    Z80Decoder<TMemory>& get_decoder() { return m_decoder; }
-
-    void set_z80n_mode(bool enable) { m_decoder.set_z80n_mode(enable); }
-    bool is_z80n_mode() const { return m_decoder.is_z80n_mode(); }
+    void set_z80n_mode(bool enable) {
+        auto opts = m_decoder.get_options();
+        opts.z80n = enable;
+        m_decoder.set_options(opts);
+    }
+    bool is_z80n_mode() const { return m_decoder.get_options().z80n; }
 
     void set_validation_mask(std::bitset<65536>* mask) {
         m_valid_mask = mask;
@@ -142,7 +46,7 @@ public:
             OP_PREFIX   = 0xED,
             OP_RETN_I   = 0x45  // Mask 0xC7 inside ED
         };
-        CodeMapProfiler(CodeMap& map, TMemory* mem, std::bitset<65536>* valid_mask = nullptr) 
+        CodeMapProfiler(Memory::Map& map, Memory* mem, std::bitset<65536>* valid_mask = nullptr) 
             : m_code_map(map), m_memory(mem), m_valid_mask(valid_mask), m_cpu(nullptr), m_labels(nullptr) {}
         void connect(Z80<CodeMapProfiler, Z80StandardEvents, CodeMapProfiler>* cpu) {
             m_cpu = cpu;
@@ -158,16 +62,16 @@ public:
                 if (m_valid_mask && !(*m_valid_mask)[address])
                     return m_memory->peek(address);
                 m_instruction_byte_count++;
-                uint8_t flags = (m_instruction_byte_count == 1) ? CodeMap::FLAG_CODE_START : CodeMap::FLAG_CODE_INTERIOR;
-                flags |= CodeMap::FLAG_EXECUTED;
+                uint8_t flags = (m_instruction_byte_count == 1) ? (uint8_t)Memory::Map::Flags::Opcode : (uint8_t)Memory::Map::Flags::Operand;
+                flags |= (uint8_t)Memory::Map::Flags::Execute;
                 m_code_map[address] |= flags;
                 return m_memory->peek(address);
             }
-            m_code_map[address] |= CodeMap::FLAG_DATA_READ;
+            m_code_map[address] |= (uint8_t)Memory::Map::Flags::Read;
             return m_memory->peek(address);
         }
         void write(uint16_t address, uint8_t value) {
-            m_code_map[address] |= CodeMap::FLAG_DATA_WRITE;
+            m_code_map[address] |= (uint8_t)Memory::Map::Flags::Write;
             m_memory->poke(address, value);
         }
         void reset() {
@@ -224,9 +128,10 @@ public:
         uint8_t in(uint16_t port) { return 0xFF; }
         void out(uint16_t port, uint8_t value) {}        
         void before_IRQ() {} void after_IRQ() {} void before_NMI() {} void after_NMI() {}
+        friend class Disassembler;
     private:
-        CodeMap& m_code_map;
-        TMemory* m_memory;
+        Memory::Map& m_code_map;
+        Memory* m_memory;
         std::bitset<65536>* m_valid_mask;
         Z80<CodeMapProfiler, Z80StandardEvents, CodeMapProfiler>* m_cpu;
         ILabels* m_labels;
@@ -236,14 +141,14 @@ public:
         uint8_t m_instruction_byte_count = 0;
     };
 
-    virtual std::vector<CodeLine> parse_code(uint16_t& start_address, size_t instruction_limit, CodeMap* external_code_map = nullptr, bool use_execution = false, bool use_heuristic = false, size_t max_data_group = 16) {
-        CodeMap local_map;
-        CodeMap* pMap = external_code_map; 
+    virtual std::vector<Z80Decoder<Memory>::CodeLine> parse_code(uint16_t& start_address, size_t instruction_limit, Memory::Map* external_code_map = nullptr, bool use_execution = false, bool use_heuristic = false, size_t max_data_group = 16) {
+        Memory::Map local_map;
+        Memory::Map* pMap = external_code_map; 
         if (!pMap) {
             pMap = &local_map;
         }
-        if (pMap->size() < 0x10000)
-            pMap->resize(0x10000, CodeMap::FLAG_NONE);
+        if (pMap->data().size() < 0x10000)
+            pMap->data().resize(0x10000, (uint8_t)Memory::Map::Flags::None);
         bool has_map_info = (external_code_map != nullptr);
         if (use_execution) {
             run_execution_phase(*pMap, start_address);
@@ -256,20 +161,20 @@ public:
         return generate_listing(*pMap, start_address, instruction_limit, has_map_info, max_data_group);
     }
 
-    virtual uint16_t parse_instruction_backwards(uint16_t target_addr, CodeMap* map = nullptr) {
+    virtual uint16_t parse_instruction_backwards(uint16_t target_addr, Memory::Map* map = nullptr) {
         if (map) {
             uint16_t ptr = target_addr - 1;
             int safety = 0;
             const int MAX_SAFETY = 32;
             while (safety < MAX_SAFETY) {
                 uint8_t flags = (*map)[ptr];
-                if (flags & CodeMap::FLAG_CODE_START) {
-                    CodeLine line = m_decoder.parse_instruction(ptr);
+                if (flags & (uint8_t)Memory::Map::Flags::Opcode) {
+                    Z80Decoder<Memory>::CodeLine line = m_decoder.parse_instruction(ptr);
                     if ((uint16_t)(ptr + (uint16_t)line.bytes.size()) == target_addr)
                         return ptr;
                     break;
                 }
-                if (flags & CodeMap::FLAG_CODE_INTERIOR) {
+                if (flags & (uint8_t)Memory::Map::Flags::Operand) {
                     ptr--;
                     safety++;
                     continue;
@@ -290,7 +195,7 @@ public:
                 if (dist < 0)
                     break;
                 prev = pc;
-                CodeLine line = m_decoder.parse_instruction(pc);
+                Z80Decoder<Memory>::CodeLine line = m_decoder.parse_instruction(pc);
                 pc = (uint16_t)(pc + line.bytes.size());
                 steps++;
             }
@@ -312,8 +217,8 @@ public:
         std::vector<uint16_t> smc_locations;
         for (uint32_t i = 0; i < 0x10000; ++i) {
             uint8_t flags = profiler.m_code_map[i];
-            bool is_code = (flags & CodeMap::FLAG_CODE_START) || (flags & CodeMap::FLAG_CODE_INTERIOR);
-            bool is_written = (flags & CodeMap::FLAG_DATA_WRITE);
+            bool is_code = (flags & (uint8_t)Memory::Map::Flags::Opcode) || (flags & (uint8_t)Memory::Map::Flags::Operand);
+            bool is_written = (flags & (uint8_t)Memory::Map::Flags::Write);
             if (is_code && is_written)
                 smc_locations.push_back((uint16_t)i);
         }
@@ -321,15 +226,9 @@ public:
     }
 
 protected:
-    virtual bool is_valid_address(uint16_t address) {
-        if (m_valid_mask)
-            return (*m_valid_mask)[address];
-        return true;
-    }
-
     static constexpr size_t EXECUTION_TRACE_LIMIT = 1000000;
 
-    void group_data_blocks(uint32_t& pc, std::vector<CodeLine>& result, size_t instruction_limit, std::function<bool(uint32_t)> is_data, size_t max_data_group = 16) {
+    void group_data_blocks(uint32_t& pc, std::vector<Z80Decoder<Memory>::CodeLine>& result, size_t instruction_limit, std::function<bool(uint32_t)> is_data, size_t max_data_group = 16) {
         while (pc < 0x10000 && is_data(pc)) {
             if (result.size() >= instruction_limit)
                 break;
@@ -363,7 +262,7 @@ protected:
         }
     }
 
-    void run_execution_phase(CodeMap& map, uint16_t start_addr) {
+    void run_execution_phase(Memory::Map& map, uint16_t start_addr) {
         CodeMapProfiler profiler(map, m_memory, m_valid_mask);
         profiler.set_labels(m_labels);
         Z80<CodeMapProfiler, Z80StandardEvents, CodeMapProfiler> cpu(&profiler, nullptr, &profiler);
@@ -372,7 +271,7 @@ protected:
         std::set<uint16_t> executed_pcs;
         for (size_t i = 0; i < EXECUTION_TRACE_LIMIT; ++i) {
             uint16_t pc = cpu.get_PC();
-            if (!is_valid_address(pc))
+            if (m_valid_mask && !(*m_valid_mask)[pc])
                 break;
             executed_pcs.insert(pc);
             cpu.step();
@@ -380,12 +279,12 @@ protected:
                 break;
         }
     }
-    void run_heuristic_phase(CodeMap& map, uint16_t start_addr) {
+    void run_heuristic_phase(Memory::Map& map, uint16_t start_addr) {
         std::vector<bool> visited(0x10000, false);
         std::vector<uint16_t> work_list;
         bool found_existing_code = false;
-        for(size_t i=0; i<map.size(); ++i) {
-            if (map[i] & CodeMap::FLAG_CODE_START) {
+        for(size_t i=0; i<map.data().size(); ++i) {
+            if (map[i] & (uint8_t)Memory::Map::Flags::Opcode) {
                 work_list.push_back((uint16_t)i);
                 found_existing_code = true;
             }
@@ -398,30 +297,30 @@ protected:
             if (visited[current_addr])
                 continue;
             while (true) {
-                if (!is_valid_address(current_addr))
+                if (m_valid_mask && !(*m_valid_mask)[current_addr])
                     break;
                 if (visited[current_addr])
                     break;
-                CodeLine line = m_decoder.parse_instruction(current_addr);
+                Z80Decoder<Memory>::CodeLine line = m_decoder.parse_instruction(current_addr);
                 uint16_t len = line.bytes.size();
                 visited[current_addr] = true;
-                map[current_addr] |= CodeMap::FLAG_CODE_START;
+                map[current_addr] |= (uint8_t)Memory::Map::Flags::Opcode;
                 for(size_t k=1; k<len; ++k)
                 {
                     uint16_t addr = (uint16_t)(current_addr + k);
                     visited[addr] = true;
-                    map[addr] |= CodeMap::FLAG_CODE_INTERIOR;
+                    map[addr] |= (uint8_t)Memory::Map::Flags::Operand;
                 }
-                if (line.has_flag(CodeLine::Type::JUMP) || line.has_flag(CodeLine::Type::CALL)) {
+                if (line.has_flag(Z80Decoder<Memory>::CodeLine::Type::JUMP) || line.has_flag(Z80Decoder<Memory>::CodeLine::Type::CALL)) {
                     if (!line.operands.empty()) {
                         const auto& last_op = line.operands.back();
-                        if (last_op.type == CodeLine::Operand::Type::IMM16) {
+                        if (last_op.type == Z80Decoder<Memory>::CodeLine::Operand::Type::IMM16) {
                             uint16_t target = (uint16_t)last_op.num_val;
-                            if (is_valid_address(target)) {
+                            if (!m_valid_mask || (*m_valid_mask)[target]) {
                                 work_list.push_back(target);
                                 if (m_labels && m_labels->get_label(target).empty()) {
                                     std::stringstream ss;
-                                    ss << (line.type == CodeLine::Type::CALL ? "SUB_" : "L_");
+                                    ss << (line.type == Z80Decoder<Memory>::CodeLine::Type::CALL ? "SUB_" : "L_");
                                     ss << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << target;
                                     //m_labels->add_label(target, ss.str());
                                 }
@@ -433,7 +332,7 @@ protected:
                 if (line.mnemonic == "RET" || line.mnemonic == "RETI" || line.mnemonic == "RETN" || line.mnemonic == "HALT") 
                     stop = true;
                 else if (line.mnemonic == "JP" || line.mnemonic == "JR") {
-                     bool is_conditional = !line.operands.empty() && line.operands[0].type == CodeLine::Operand::Type::CONDITION;
+                      bool is_conditional = !line.operands.empty() && line.operands[0].type == Z80Decoder<Memory>::CodeLine::Operand::Type::CONDITION;
                      if (!is_conditional)
                         stop = true;
                 }
@@ -443,29 +342,29 @@ protected:
             }
         }
     }
-    virtual std::vector<CodeLine> generate_listing(CodeMap& map, uint16_t& start_address, size_t instruction_limit, bool use_map, size_t max_data_group = 16) {
+    virtual std::vector<Z80Decoder<Memory>::CodeLine> generate_listing(Memory::Map& map, uint16_t& start_address, size_t instruction_limit, bool use_map, size_t max_data_group = 16) {
         if (instruction_limit == 0)
             instruction_limit = (size_t)-1; // Treat 0 as unlimited (SIZE_MAX)
-        std::vector<CodeLine> result;
+        std::vector<Z80Decoder<Memory>::CodeLine> result;
         uint32_t pc = start_address;
         while (pc < 0x10000 && result.size() < instruction_limit) {
             uint16_t current_pc = (uint16_t)pc;
-            if (!is_valid_address(current_pc)) {
+            if (m_valid_mask && !(*m_valid_mask)[current_pc]) {
                 pc++;
                 continue;
             }
             bool is_code = false;
             if (use_map) {
-                if (map[current_pc] & CodeMap::FLAG_CODE_START)
+                if (map[current_pc] & (uint8_t)Memory::Map::Flags::Opcode)
                     is_code = true;
-                else if (map[current_pc] & CodeMap::FLAG_CODE_INTERIOR) {
+                else if (map[current_pc] & (uint8_t)Memory::Map::Flags::Operand) {
                     pc++;
                     continue;
                 }
             } else
                 is_code = true;
             if (is_code) {
-                CodeLine line = m_decoder.parse_instruction(current_pc);
+                Z80Decoder<Memory>::CodeLine line = m_decoder.parse_instruction(current_pc);
                 if (line.bytes.empty()) {
                     result.push_back(m_decoder.parse_db(current_pc, 1));
                     pc++;
@@ -477,7 +376,7 @@ protected:
                 group_data_blocks(pc, result, instruction_limit, [&](uint32_t addr) { 
                      if (addr >= 0x10000)
                         return false;
-                     return !(map[addr] & (CodeMap::FLAG_CODE_START | CodeMap::FLAG_CODE_INTERIOR));
+                     return !(map[addr] & ((uint8_t)Memory::Map::Flags::Opcode | (uint8_t)Memory::Map::Flags::Operand));
                 }, max_data_group);
             }
         }
@@ -485,15 +384,10 @@ protected:
         return result;
     }
 
-    Z80Decoder<TMemory> m_decoder;
-    TMemory* m_memory;
+    Z80Decoder<Memory> m_decoder;
+    Memory* m_memory;
     ILabels* m_labels = nullptr;
     std::bitset<65536>* m_valid_mask = nullptr;
-};
-
-template <typename TMemory> class Z80Analyzer : public Z80Disassembler<TMemory> {
-public:
-    using Z80Disassembler<TMemory>::Z80Disassembler;
 };
 
 #endif // __CORE_Z80DISASSEMBLER_H__

@@ -132,6 +132,12 @@ public:
         return this->m_keywords.is_valid_label_name(name);
     }
 
+    bool is_keyword(const std::string& s) {
+        std::string upper = s;
+        std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+        return this->m_keywords.is_reserved(upper);
+    }
+
     void set_silent(bool silent) {
         m_silent = silent;
     }

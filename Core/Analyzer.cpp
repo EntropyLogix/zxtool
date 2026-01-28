@@ -4,7 +4,9 @@
 #include <sstream>
 #include <iostream>
 
-Analyzer::Analyzer(Memory* memory, Context* ctx) : /*Z80Disassembler<Memory>(memory, &ctx->getSymbols()),*/ context(*ctx), m_map(0x10000, 0), m_memory(memory) {}
+Analyzer::Analyzer(Memory* memory, Context* ctx) : /*Z80Disassembler<Memory>(memory, &ctx->getSymbols()),*/ context(*ctx), m_map(), m_memory(memory), m_decoder(memory) {
+    m_decoder.set_options({true, true});
+}
 
 void Analyzer::set_map_type(CodeMap& map, uint16_t addr, ExtendedFlags type) {
     map[addr] = (map[addr] & ~TYPE_MASK) | (type << TYPE_SHIFT);
@@ -14,27 +16,20 @@ Analyzer::ExtendedFlags Analyzer::get_map_type(const CodeMap& map, uint16_t addr
     return static_cast<ExtendedFlags>((map[addr] & TYPE_MASK) >> TYPE_SHIFT);
 }
 
-bool Analyzer::is_valid_address(uint16_t addr) {
-    if (m_valid_ranges.empty()) return false;
-    for (const auto& range : m_valid_ranges) {
-        if (addr >= range.first && addr < range.first + range.second) return true;
-    }
-    return false;
-}
-
-std::vector<Analyzer::CodeLine> Analyzer::parse_code(uint16_t& start_address, size_t instruction_limit, Z80Disassembler<Memory>::CodeMap* external_code_map, bool use_execution, bool use_heuristic, size_t max_data_group, std::function<bool(uint16_t)> validator) {
-    // Dummy implementation
+std::vector<Analyzer::CodeLine> Analyzer::parse_code(uint16_t& start_address, size_t instruction_limit, Memory::Map* external_code_map, bool use_execution, bool use_heuristic, size_t max_data_group, std::function<bool(uint16_t)> validator) {
     std::vector<CodeLine> lines;
     if (instruction_limit == 0) instruction_limit = 1;
     for (size_t i = 0; i < instruction_limit; ++i) {
-        lines.push_back(parse_db(start_address));
-        start_address++;
+        CodeLine line = m_decoder.parse_instruction(start_address);
+        if (line.bytes.empty()) line = parse_db(start_address);
+        lines.push_back(line);
+        start_address += line.bytes.size();
     }
     return lines;
 }
 
 Analyzer::CodeLine Analyzer::parse_instruction(uint16_t address) {
-    return parse_db(address);
+    return m_decoder.parse_instruction(address);
 }
 
 Analyzer::CodeLine Analyzer::parse_db(uint16_t address, size_t count) {

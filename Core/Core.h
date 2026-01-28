@@ -11,7 +11,6 @@
 #include <iostream>
 
 #include "Memory.h"
-#include "CodeMap.h"
 #include "Analyzer.h"
 #include "Assembler.h"
 #include "Context.h"
@@ -28,7 +27,7 @@ inline std::ostream& operator<<(std::ostream& os, const std::pair<std::string, u
 
 class Core : public IFileProvider {
 public:
-    using CpuType = Z80<Z80Disassembler<Memory>::CodeMapProfiler, Z80StandardEvents, Z80Disassembler<Memory>::CodeMapProfiler>;
+    using CpuType = Z80<Disassembler::CodeMapProfiler, Z80StandardEvents, Disassembler::CodeMapProfiler>;
     
     using Block = FileFormat::Block;
 
@@ -42,8 +41,8 @@ public:
 
     Memory& get_memory() { return m_memory; }
     CpuType& get_cpu() { return m_cpu; }
-    CodeMap& get_code_map() { return m_code_map_data; }
-    Z80Disassembler<Memory>::CodeMapProfiler& get_profiler() { return m_profiler; }
+    Memory::Map& get_code_map() { return m_memory.getMap(); }
+    Disassembler::CodeMapProfiler& get_profiler() { return m_profiler; }
 
     Analyzer& get_analyzer() { return m_analyzer; }
     Context& get_context() { return m_context; }
@@ -59,11 +58,20 @@ public:
 
     // Virtual file support for in-memory assembly generation
     void add_virtual_file(const std::string& name, const std::string& content);
+    
+    void set_file_mode(const std::string& filename, const std::string& mode) {
+        m_file_modes[filename] = mode;
+    }
+
+    const std::string& get_file_mode(const std::string& filename) const {
+        static const std::string empty;
+        auto it = m_file_modes.find(filename);
+        return (it != m_file_modes.end()) ? it->second : empty;
+    }
 
 private:
     Memory m_memory;
-    CodeMap m_code_map_data;
-    Z80Disassembler<Memory>::CodeMapProfiler m_profiler;
+    Disassembler::CodeMapProfiler m_profiler;
     CpuType m_cpu;
     ToolAssembler m_assembler;
     Context m_context;
@@ -72,6 +80,7 @@ private:
     std::vector<std::filesystem::path> m_current_path_stack;
     FileManager m_file_manager;
     std::map<std::string, std::string> m_virtual_files;
+    std::map<std::string, std::string> m_file_modes;
 
     // Helper methods
     void process_file(const std::string& path, uint16_t address);

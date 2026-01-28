@@ -28,6 +28,12 @@ struct TraceMemoryAdapter {
     uint8_t read(uint16_t addr) const { return peek(addr); }
     void poke(uint16_t, uint8_t) {}
     void write(uint16_t, uint8_t) {}
+    struct Map {
+        enum class Flags : uint8_t { None = 0, Opcode = 1, Operand = 2, Data = 4, Read = 8, Write = 16, Execute = 32 };
+        uint8_t operator[](size_t) const { return 0; }
+        uint8_t& operator[](size_t) { static uint8_t dummy; return dummy; }
+        std::vector<uint8_t>& data() { static std::vector<uint8_t> d; return d; }
+    };
 };
 
 static constexpr const char* HISTORY_FILE = ".zxtool_history";
@@ -121,7 +127,7 @@ bool MemoryView::on_key(const Terminal::Input& in) {
         if (in.c >= 32 && in.c <= 126) {
             uint16_t addr = get_address();
             m_core.get_memory().write(addr, (uint8_t)in.c);
-            m_core.get_code_map().invalidate_region(addr, 1);
+            m_core.get_memory().getMap()[addr] &= ~((uint8_t)Memory::Map::Flags::Opcode | (uint8_t)Memory::Map::Flags::Operand);
             scroll(1);
             return true;
         }
@@ -140,7 +146,7 @@ bool MemoryView::on_key(const Terminal::Input& in) {
             uint8_t val = m_core.get_memory().peek(addr);
             val = (val << 4) | nibble;
             m_core.get_memory().write(addr, val);
-            m_core.get_code_map().invalidate_region(addr, 1);
+            m_core.get_memory().getMap()[addr] &= ~((uint8_t)Memory::Map::Flags::Opcode | (uint8_t)Memory::Map::Flags::Operand);
             return true;
         }
     }
@@ -459,9 +465,9 @@ std::vector<std::string> BreakpointView::render() {
     return lines;
 }
 
-void CodeView::format_operands(const Z80Disassembler<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst, bool bold) {
+void CodeView::format_operands(const Z80Decoder<Memory>::CodeLine& line, std::ostream& os, const std::string& color_num, const std::string& color_rst, bool bold) {
     if (line.operands.empty()) return;
-    using Operand = Z80Disassembler<Memory>::CodeLine::Operand;
+    using Operand = Z80Decoder<Memory>::CodeLine::Operand;
     for (size_t i = 0; i < line.operands.size(); ++i) {
         if (i > 0)
             os << ", ";
@@ -525,8 +531,8 @@ void CodeView::format_operands(const Z80Disassembler<Memory>::CodeLine& line, st
     }
 }
 
-Z80Disassembler<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& conflict, bool& shadow, bool& is_orphan) {
-    Z80Disassembler<Memory>::CodeLine line;
+Z80Decoder<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& conflict, bool& shadow, bool& is_orphan) {
+    Z80Decoder<Memory>::CodeLine line;
     auto& mem_map = m_core.get_memory().getMap();
     bool is_pc_line = (addr == m_pc);
     conflict = false;
@@ -564,17 +570,12 @@ Z80Disassembler<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& co
                     is_orphan = true;
             } else {
                     // Use standard parsing respecting map (but avoid skipping)
-                    uint16_t next = addr;
-                    auto lines = m_core.get_analyzer().parse_code(next, 1, nullptr);
-                    if (!lines.empty()) {
-                        line = lines[0];
-                        // Double check collision
-                        if (addr + line.bytes.size() > m_pc) {
-                            line = m_core.get_analyzer().parse_db(addr, 1);
-                            is_orphan = true;
-                        }
-                    } else {
+                    line = m_core.get_analyzer().parse_instruction(addr);
+                    if (line.bytes.empty()) {
                         line = m_core.get_analyzer().parse_db(addr, 1);
+                    } else if (addr + line.bytes.size() > m_pc) {
+                        line = m_core.get_analyzer().parse_db(addr, 1);
+                        is_orphan = true;
                     }
             }
         }
@@ -600,7 +601,7 @@ Z80Disassembler<Memory>::CodeLine CodeView::resolve_line(uint16_t addr, bool& co
     return line;
 }
 
-CodeView::DisasmInfo CodeView::format_disasm(const Z80Disassembler<Memory>::CodeLine& line, bool is_pc, bool is_cursor, bool conflict, bool shadow, bool is_orphan, bool is_traced, bool is_smc) {
+CodeView::DisasmInfo CodeView::format_disasm(const Z80Decoder<Memory>::CodeLine& line, bool is_pc, bool is_cursor, bool conflict, bool shadow, bool is_orphan, bool is_traced, bool is_smc) {
     std::stringstream mn_ss;
     std::string rst = is_cursor ? (Terminal::RESET + m_theme.pc_bg) : Terminal::RESET;
 
@@ -637,18 +638,25 @@ CodeView::DisasmInfo CodeView::format_disasm(const Z80Disassembler<Memory>::Code
     return {mn_str, visible_len};
 }
 
-std::vector<std::string> CodeView::render() {
-    std::vector<std::string> lines_out;
-    lines_out.push_back(""); // Placeholder for header
+void CodeView::add_output_line(std::vector<std::string>& lines, int& lines_count, int& lines_to_skip, const std::string& text) {
+    if (lines_count >= m_rows) return;
+    if (lines_to_skip > 0) {
+        lines_to_skip--;
+    } else {
+        lines.push_back(text);
+        lines_count++;
+    }
+}
+
+void CodeView::render_history(std::vector<std::string>& lines) {
     if (m_has_history && m_start_addr == m_pc && (m_last_pc != m_pc || !m_pc_moved)) {
         uint16_t hist_addr = m_last_pc;
-        uint16_t temp_hist = hist_addr;
-        auto line = m_core.get_analyzer().parse_instruction(temp_hist);
+        auto line = m_core.get_analyzer().parse_instruction(hist_addr);
         if (!line.mnemonic.empty()) {
             bool is_smc = false;
-            auto* code_map = &m_core.get_code_map();
+            auto& mem_map = m_core.get_memory().getMap();
             for (size_t i = 0; i < line.bytes.size(); ++i) {
-                if ((*code_map)[(uint16_t)(line.address + i)] & CodeMap::FLAG_DATA_WRITE) {
+                if (mem_map[(uint16_t)(line.address + i)] & (uint8_t)Memory::Map::Flags::Write) {
                     is_smc = true;
                     break;
                 }
@@ -677,214 +685,192 @@ std::vector<std::string> CodeView::render() {
                 format_operands(line, ss, "", "");
             }
             ss << Terminal::RESET;
-            lines_out.push_back(ss.str());
+            lines.push_back(ss.str());
         }
     }
-    uint16_t temp_pc_iter = m_start_addr;
-    bool first_line = true;
-    int lines_count = 0;
-    int lines_to_skip = m_skip_lines;
-    bool pc_visible = false;
-    while (lines_count < m_rows) {
-        bool conflict = false, shadow = false, is_orphan = false;
-        auto line = resolve_line(temp_pc_iter, conflict, shadow, is_orphan);
-        bool is_pc = (temp_pc_iter == m_pc);
-        bool is_cursor = (temp_pc_iter == m_cursor_addr);
-        if (is_pc) pc_visible = true;
+}
 
-        bool is_smc = false;
-        auto* code_map = &m_core.get_code_map();
-        for (size_t i = 0; i < line.bytes.size(); ++i) {
-            if ((*code_map)[(uint16_t)(line.address + i)] & CodeMap::FLAG_DATA_WRITE) {
-                is_smc = true;
-                break;
-            }
-        }
-
-        auto& ctx = m_core.get_analyzer().context;
-        const Comment* block_cmt = ctx.getComments().find((uint16_t)line.address, Comment::Type::Block);
-        bool has_block_desc = block_cmt && !block_cmt->getText().empty();
-        bool has_label = !line.label.empty();
-        if (block_cmt) {
-             const auto& desc = block_cmt->getText();
-             if (!desc.empty()) {
-                 std::stringstream desc_ss(desc);
-                 std::string segment;
-                 while(lines_count < m_rows && std::getline(desc_ss, segment, '\n')) {
-                     if (m_width > 0 && (int)segment.length() > m_width) {
-                         if (m_wrap_comments) {
-                             size_t pos = 0;
-                             while (pos < segment.length() && lines_count < m_rows) {
-                                 std::string sub = segment.substr(pos, m_width);
-                                 if (lines_to_skip > 0) {
-                                     lines_to_skip--;
-                                 } else {
-                                     lines_out.push_back(m_theme.value_dim + sub + Terminal::RESET);
-                                     lines_count++;
-                                 }
-                                 pos += m_width;
-                             }
-                         } else {
-                             std::string sub = segment.substr(0, m_width > 3 ? m_width - 3 : m_width) + (m_width > 3 ? "..." : "");
-                             if (lines_to_skip > 0) {
-                                 lines_to_skip--;
-                             } else {
-                                 lines_out.push_back(m_theme.value_dim + sub + Terminal::RESET);
-                                 lines_count++;
-                             }
+void CodeView::render_block_comments(uint16_t addr, std::vector<std::string>& lines, int& lines_count, int& lines_to_skip) {
+    auto& ctx = m_core.get_analyzer().context;
+    const Comment* block_cmt = ctx.getComments().find(addr, Comment::Type::Block);
+    if (block_cmt) {
+         const auto& desc = block_cmt->getText();
+         if (!desc.empty()) {
+             std::stringstream desc_ss(desc);
+             std::string segment;
+             while(lines_count < m_rows && std::getline(desc_ss, segment, '\n')) {
+                 if (m_width > 0 && (int)segment.length() > m_width) {
+                     if (m_wrap_comments) {
+                         size_t pos = 0;
+                         while (pos < segment.length() && lines_count < m_rows) {
+                             std::string sub = segment.substr(pos, m_width);
+                             add_output_line(lines, lines_count, lines_to_skip, m_theme.value_dim + sub + Terminal::RESET);
+                             pos += m_width;
                          }
                      } else {
-                         if (lines_to_skip > 0) {
-                             lines_to_skip--;
-                         } else {
-                             lines_out.push_back(m_theme.value_dim + segment + Terminal::RESET);
-                             lines_count++;
-                         }
-                     }
-                 }
-             }
-        }
-        if (!line.label.empty() && lines_count < m_rows) {
-            if (lines_to_skip > 0) {
-                lines_to_skip--;
-            } else {
-                lines_out.push_back(m_theme.label + line.label + ":" + Terminal::RESET);
-                lines_count++;
-            }
-        }
-        std::stringstream ss;
-        bool is_traced = (m_debugger && m_debugger->is_traced((uint16_t)line.address));
-        std::string bg = is_cursor ? m_theme.pc_bg : "";
-        std::string rst = is_cursor ? (Terminal::RESET + bg) : Terminal::RESET;
-        if (is_pc) 
-            ss << bg << m_theme.header_blur << Terminal::BOLD << (is_smc ? ">M " : ">  ") << rst;
-        else if (is_smc) {
-            if (shadow || is_traced) ss << m_theme.value_dim << "M  " << rst;
-            else ss << m_theme.error << "M  " << rst;
-        }
-        else
-            ss << bg << "   " << rst;
-        
-        std::string addr_color = m_theme.address;
-        if (is_pc) addr_color = m_theme.address + Terminal::BOLD;
-        else if (conflict || is_orphan) addr_color = m_theme.error;
-        else if (shadow) addr_color = m_theme.value_dim;
-        else if (is_traced) addr_color = m_theme.value_dim;
-
-        ss << addr_color << Strings::hex((uint16_t)line.address) << rst << ": ";
-
-        std::stringstream hex_ss;
-        if (line.bytes.size() > 3)
-            hex_ss << Strings::hex(line.bytes[0]) << " " << Strings::hex(line.bytes[1]) << " ..";
-        else {
-            for(size_t i=0; i<line.bytes.size(); ++i) {
-                if (i > 0)
-                    hex_ss << " ";
-                hex_ss << Strings::hex(line.bytes[i]);
-            }
-        }
-        std::string hex_str = hex_ss.str();
-        ss << m_theme.value_dim;
-        if (is_pc) ss << Terminal::BOLD;
-        ss << hex_str << rst;
-        int hex_len = (int)hex_str.length();
-        int hex_pad = 9 - hex_len;
-        if (hex_pad > 0)
-            ss << std::string(hex_pad, ' ');
-        ss << "  ";
-        
-        auto disasm_info = format_disasm(line, is_pc, is_cursor, conflict, shadow, is_orphan, is_traced, is_smc);
-        ss << disasm_info.text;
-        int comment_col = 30;
-        int padding = comment_col - disasm_info.visible_len;
-        if (padding < 1) padding = 1;
-        ss << std::string(padding, ' ');
-
-        std::vector<std::string> extra_lines;
-        const Comment* inline_cmt = ctx.getComments().find((uint16_t)line.address, Comment::Type::Inline);
-        if (inline_cmt) {
-             const auto& comment = inline_cmt->getText();
-             if (!comment.empty()) {
-                 std::string cmt_full = "; " + comment;
-                 int max_width = (m_width > 0) ? m_width : 80;
-                 int prefix_len = 20; // Cursor(3) + Addr(6) + Bytes(11)
-                 int current_len = prefix_len + disasm_info.visible_len + padding;
-                 int available = max_width - current_len;
-                 if (available < 10) available = 10;
-
-                 if (m_wrap_comments) {
-                     if ((int)cmt_full.length() > available) {
-                         ss << m_theme.comment;
-                         if (is_pc) ss << Terminal::BOLD;
-                         ss << cmt_full.substr(0, available) << Terminal::RESET;
-                         int next_available = m_width - comment_col;
-                         if (next_available < 10) next_available = 10;
-                         size_t pos = available;
-                         while (pos < cmt_full.length()) {
-                             extra_lines.push_back(cmt_full.substr(pos, next_available));
-                             pos += next_available;
-                         }
-                     } else {
-                         ss << m_theme.comment;
-                         if (is_pc) ss << Terminal::BOLD;
-                         ss << cmt_full << Terminal::RESET;
+                         std::string sub = segment.substr(0, m_width > 3 ? m_width - 3 : m_width) + (m_width > 3 ? "..." : "");
+                         add_output_line(lines, lines_count, lines_to_skip, m_theme.value_dim + sub + Terminal::RESET);
                      }
                  } else {
-                     if ((int)cmt_full.length() > available)
-                         cmt_full = cmt_full.substr(0, available - 3) + "...";
+                     add_output_line(lines, lines_count, lines_to_skip, m_theme.value_dim + segment + Terminal::RESET);
+                 }
+             }
+         }
+    }
+}
+
+void CodeView::render_labels(const std::string& label, std::vector<std::string>& lines, int& lines_count, int& lines_to_skip) {
+    if (!label.empty()) {
+        add_output_line(lines, lines_count, lines_to_skip, m_theme.label + label + ":" + Terminal::RESET);
+    }
+}
+
+void CodeView::render_instruction_line(const Z80Decoder<Memory>::CodeLine& line, bool is_pc, bool is_cursor, bool is_smc, bool conflict, bool shadow, bool is_orphan, bool is_traced, std::vector<std::string>& lines, int& lines_count, int& lines_to_skip) {
+    std::stringstream ss;
+    std::string bg = is_cursor ? m_theme.pc_bg : "";
+    std::string rst = is_cursor ? (Terminal::RESET + bg) : Terminal::RESET;
+    
+    // Status column
+    if (is_pc) 
+        ss << bg << m_theme.header_blur << Terminal::BOLD << (is_smc ? ">M " : ">  ") << rst;
+    else if (is_smc) {
+        if (shadow || is_traced) ss << m_theme.value_dim << "M  " << rst;
+        else ss << m_theme.error << "M  " << rst;
+    }
+    else
+        ss << bg << "   " << rst;
+    
+    // Address column
+    std::string addr_color = m_theme.address;
+    if (is_pc) addr_color = m_theme.address + Terminal::BOLD;
+    else if (conflict || is_orphan) addr_color = m_theme.error;
+    else if (shadow) addr_color = m_theme.value_dim;
+    else if (is_traced) addr_color = m_theme.value_dim;
+
+    ss << addr_color << Strings::hex((uint16_t)line.address) << rst << ": ";
+
+    // Bytes column
+    std::stringstream hex_ss;
+    if (line.bytes.size() > 3)
+        hex_ss << Strings::hex(line.bytes[0]) << " " << Strings::hex(line.bytes[1]) << " ..";
+    else {
+        for(size_t i=0; i<line.bytes.size(); ++i) {
+            if (i > 0) hex_ss << " ";
+            hex_ss << Strings::hex(line.bytes[i]);
+        }
+    }
+    std::string hex_str = hex_ss.str();
+    ss << m_theme.value_dim;
+    if (is_pc) ss << Terminal::BOLD;
+    ss << hex_str << rst;
+    int hex_len = (int)hex_str.length();
+    int hex_pad = 9 - hex_len;
+    if (hex_pad > 0) ss << std::string(hex_pad, ' ');
+    ss << "  ";
+    
+    // Disassembly
+    auto disasm_info = format_disasm(line, is_pc, is_cursor, conflict, shadow, is_orphan, is_traced, is_smc);
+    ss << disasm_info.text;
+    int comment_col = 30;
+    int padding = comment_col - disasm_info.visible_len;
+    if (padding < 1) padding = 1;
+    ss << std::string(padding, ' ');
+
+    // Inline comments
+    std::vector<std::string> extra_lines;
+    auto& ctx = m_core.get_analyzer().context;
+    const Comment* inline_cmt = ctx.getComments().find((uint16_t)line.address, Comment::Type::Inline);
+    if (inline_cmt) {
+         const auto& comment = inline_cmt->getText();
+         if (!comment.empty()) {
+             std::string cmt_full = "; " + comment;
+             int max_width = (m_width > 0) ? m_width : 80;
+             int prefix_len = 20; // Cursor(3) + Addr(6) + Bytes(11)
+             int current_len = prefix_len + disasm_info.visible_len + padding;
+             int available = max_width - current_len;
+             if (available < 10) available = 10;
+
+             if (m_wrap_comments) {
+                 if ((int)cmt_full.length() > available) {
+                     ss << m_theme.comment;
+                     if (is_pc) ss << Terminal::BOLD;
+                     ss << cmt_full.substr(0, available) << Terminal::RESET;
+                     int next_available = m_width - comment_col;
+                     if (next_available < 10) next_available = 10;
+                     size_t pos = available;
+                     while (pos < cmt_full.length()) {
+                         extra_lines.push_back(cmt_full.substr(pos, next_available));
+                         pos += next_available;
+                     }
+                 } else {
                      ss << m_theme.comment;
                      if (is_pc) ss << Terminal::BOLD;
                      ss << cmt_full << Terminal::RESET;
                  }
+             } else {
+                 if ((int)cmt_full.length() > available)
+                     cmt_full = cmt_full.substr(0, available - 3) + "...";
+                 ss << m_theme.comment;
+                 if (is_pc) ss << Terminal::BOLD;
+                 ss << cmt_full << Terminal::RESET;
              }
+         }
+    }
+
+    // Output main line
+    std::string s = ss.str();
+    if (m_width > 0) {
+        if (is_cursor) s += m_theme.pc_bg;
+        s = Strings::padding(s, m_width);
+        s += Terminal::RESET; 
+    }
+    add_output_line(lines, lines_count, lines_to_skip, s);
+
+    // Output extra lines (wrapped comments)
+    for (const auto& el : extra_lines) {
+        std::string es = std::string(comment_col, ' ') + m_theme.comment + el + Terminal::RESET;
+        if (m_width > 0) es = Strings::padding(es, m_width);
+        add_output_line(lines, lines_count, lines_to_skip, es);
+    }
+}
+
+void CodeView::process_address(uint16_t& addr, std::vector<std::string>& lines, int& lines_count, int& lines_to_skip, bool& pc_visible) {
+    bool conflict = false, shadow = false, is_orphan = false;
+    auto line = resolve_line(addr, conflict, shadow, is_orphan);
+    bool is_pc = (addr == m_pc);
+    bool is_cursor = (addr == m_cursor_addr);
+    if (is_pc) pc_visible = true;
+
+    bool is_smc = false;
+    auto& mem_map = m_core.get_memory().getMap();
+    for (size_t i = 0; i < line.bytes.size(); ++i) {
+        if (mem_map[(uint16_t)(line.address + i)] & (uint8_t)Memory::Map::Flags::Write) {
+            is_smc = true;
+            break;
         }
-        if (m_width > 0) {
-            std::string s = ss.str();
-            if (is_cursor)
-                s += m_theme.pc_bg;
-            s = Strings::padding(s, m_width);
-            s += Terminal::RESET; 
-            if (lines_count < m_rows) {
-                if (lines_to_skip > 0) {
-                    lines_to_skip--;
-                } else {
-                    lines_out.push_back(s);
-                    lines_count++;
-                }
-            }
-            for (const auto& el : extra_lines) {
-                if (lines_count < m_rows) {
-                    if (lines_to_skip > 0) {
-                        lines_to_skip--;
-                    } else {
-                        std::string s = std::string(comment_col, ' ') + m_theme.comment + el + Terminal::RESET;
-                        lines_out.push_back(Strings::padding(s, m_width));
-                        lines_count++;
-                    }
-                }
-            }
-        } else {
-            if (lines_count < m_rows) {
-                if (lines_to_skip > 0) {
-                    lines_to_skip--;
-                } else {
-                    lines_out.push_back(ss.str());
-                    lines_count++;
-                }
-            }
-            for (const auto& el : extra_lines) {
-                if (lines_count < m_rows) {
-                    if (lines_to_skip > 0) {
-                        lines_to_skip--;
-                    } else {
-                        lines_out.push_back(std::string(comment_col, ' ') + m_theme.comment + el + Terminal::RESET);
-                        lines_count++;
-                    }
-                }
-            }
-        }
-        first_line = false;
-        temp_pc_iter += line.bytes.size();
+    }
+    bool is_traced = (m_debugger && m_debugger->is_traced((uint16_t)line.address));
+
+    render_block_comments(line.address, lines, lines_count, lines_to_skip);
+    render_labels(line.label, lines, lines_count, lines_to_skip);
+    render_instruction_line(line, is_pc, is_cursor, is_smc, conflict, shadow, is_orphan, is_traced, lines, lines_count, lines_to_skip);
+
+    addr += line.bytes.size();
+}
+
+std::vector<std::string> CodeView::render() {
+    std::vector<std::string> lines_out;
+    lines_out.push_back(""); // Placeholder for header
+    
+    render_history(lines_out);
+
+    uint16_t temp_pc_iter = m_start_addr;
+    int lines_count = 0;
+    int lines_to_skip = m_skip_lines;
+    bool pc_visible = false;
+
+    while (lines_count < m_rows) {
+        process_address(temp_pc_iter, lines_out, lines_count, lines_to_skip, pc_visible);
     }
 
     long long delta = (long long)m_tstates - m_prev_tstates;
@@ -1803,8 +1789,8 @@ void Dashboard::cmd_trace(const std::string& args) {
             
             // Disassemble from trace entry bytes
             TraceMemoryAdapter mem_adapter{entry.pc, entry.opcodes, entry.len};
-            Z80Disassembler<TraceMemoryAdapter> analyzer(&mem_adapter);
-            auto line = analyzer.get_decoder().parse_instruction(entry.pc);
+            Z80Decoder<TraceMemoryAdapter> decoder(&mem_adapter);
+            auto line = decoder.parse_instruction(entry.pc);
             
             ss << format_instruction(line);
             
@@ -1822,6 +1808,7 @@ void Dashboard::cmd_codemap(const std::string& args) {
     std::string item;
     while (ss >> item) tokens.push_back(item);
     auto& core = m_debugger.get_core();
+    auto& map = core.get_memory().getMap();
 
     if (tokens.empty()) {
         m_output_buffer << "MEMORY MAP (Satellite View, 64KB)\n";
@@ -1831,19 +1818,27 @@ void Dashboard::cmd_codemap(const std::string& args) {
             std::string line_str = Strings::hex(base) + ": ";
             for (int col = 0; col < 32; ++col) {
                 if (col > 0 && col % 8 == 0) line_str += " ";
-                int code_w = 0;
+                int code_count = 0;
+                int data_count = 0;
                 uint16_t chunk_start = base + col * 256;
-                for (int i = 0; i < 256; i += 16) {
-                    auto l = core.get_analyzer().parse_instruction(chunk_start + i);
-                    if (!l.mnemonic.empty()) code_w++;
+                for (int i = 0; i < 256; ++i) {
+                    uint8_t flags = map[chunk_start + i];
+                    if (flags & (uint8_t)Memory::Map::Flags::Opcode)
+                        code_count++;
+                    else if (flags & ((uint8_t)Memory::Map::Flags::Data | (uint8_t)Memory::Map::Flags::Read | (uint8_t)Memory::Map::Flags::Write))
+                        data_count++;
+                    
+                    if (code_count > 0 && data_count > 0) break; // Mixed
                 }
-                if (code_w > 12) line_str += 'C';
-                else if (code_w > 4) line_str += 'x';
+                
+                if (code_count > 0 && data_count > 0) line_str += 'x';
+                else if (code_count > 0) line_str += 'C';
+                else if (data_count > 0) line_str += 'D';
                 else line_str += '.';
             }
             m_output_buffer << line_str << "\n";
         }
-        m_output_buffer << "\nCoverage: Estimated based on static analysis.\n";
+        m_output_buffer << "\nCoverage: Based on memory map flags.\n";
         return;
     }
 
@@ -1886,24 +1881,40 @@ void Dashboard::cmd_codemap(const std::string& args) {
     m_output_buffer << "------------------------------------------\n";
     uint16_t pc = start;
     while (pc <= end) {
-        auto line = core.get_analyzer().parse_instruction(pc);
-        bool is_code = !line.mnemonic.empty();
+        bool is_code = (map[pc] & (uint8_t)Memory::Map::Flags::Opcode);
         std::string type = is_code ? "CODE" : "DATA";
         uint16_t block_start = pc;
         uint16_t block_end = pc;
+        
+        // Determine block length based on type consistency
         while (block_end < end) {
-            uint16_t next_pc = block_end + (uint16_t)(is_code ? line.bytes.size() : 1);
-            if (next_pc > end || next_pc < block_end) break;
-            auto next_line = core.get_analyzer().parse_instruction(next_pc);
-            if ((!next_line.mnemonic.empty()) != is_code) break;
+            uint16_t next_pc = block_end + 1;
+            if (next_pc > end) break;
+            
+            bool next_is_code = (map[next_pc] & (uint8_t)Memory::Map::Flags::Opcode);
+            
+            // If we are tracking code, we continue as long as we see Opcode OR Operand
+            // If we are tracking data, we continue as long as we DON'T see Opcode
+            if (is_code) {
+                if (!(map[next_pc] & ((uint8_t)Memory::Map::Flags::Opcode | (uint8_t)Memory::Map::Flags::Operand)))
+                    break;
+            } else {
+                if (next_is_code)
+                    break;
+            }
             block_end = next_pc;
-            line = next_line;
-            if (block_end == end) break;
         }
-        uint16_t last_byte = block_end + (uint16_t)(is_code ? line.bytes.size() : 1) - 1;
+        
+        uint16_t last_byte = block_end;
         std::string range = Strings::hex(block_start) + " - " + Strings::hex(last_byte);
         while (range.length() < 15) range += " ";
-        m_output_buffer << range << type << "           " << (is_code ? "[Exec]" : "[Read]") << "\n";
+        
+        std::string flags_str;
+        if (map[block_start] & (uint8_t)Memory::Map::Flags::Execute) flags_str += "[Exec]";
+        if (map[block_start] & (uint8_t)Memory::Map::Flags::Read) flags_str += "[Read]";
+        if (map[block_start] & (uint8_t)Memory::Map::Flags::Write) flags_str += "[Write]";
+        
+        m_output_buffer << range << type << "           " << flags_str << "\n";
         pc = last_byte + 1;
         if (pc <= block_end) break;
     }
@@ -1940,41 +1951,8 @@ void Dashboard::cmd_label(const std::string& args) {
 }
 
 void Dashboard::cmd_mark(const std::string& args) {
-    std::string clean_args = Strings::trim(args);
-    auto parts = Strings::split_once(clean_args, " \t");
-    if (parts.first.empty() || parts.second.empty()) {
-        m_output_buffer << "Usage: mark <address> <type>\nTypes: code, data (byte), word, text, ignore\n";
-        return;
-    }
-
-    try {
-        Expression eval(m_debugger.get_core());
-        uint16_t addr = (uint16_t)eval.evaluate(parts.first).get_scalar(m_debugger.get_core());
-        std::string type_str = Strings::lower(Strings::trim(parts.second));
-        
-        Analyzer::ExtendedFlags type = Analyzer::TYPE_UNKNOWN;
-        uint8_t flags = 0;
-
-        if (type_str == "code" || type_str == "c") { type = Analyzer::TYPE_CODE; flags = CodeMap::FLAG_CODE_START; }
-        else if (type_str == "data" || type_str == "byte" || type_str == "b") { type = Analyzer::TYPE_BYTE; flags = CodeMap::FLAG_DATA_READ; }
-        else if (type_str == "word" || type_str == "w") { type = Analyzer::TYPE_WORD; flags = CodeMap::FLAG_DATA_READ; }
-        else if (type_str == "text" || type_str == "txt" || type_str == "t") { type = Analyzer::TYPE_TEXT; flags = CodeMap::FLAG_DATA_READ; }
-        else if (type_str == "ignore" || type_str == "i") { type = Analyzer::TYPE_IGNORE; }
-        else {
-            m_output_buffer << "Unknown type: " << type_str << ". Use code, data, word, text, ignore.\n";
-            return;
-        }
-
-        auto& map = m_debugger.get_core().get_code_map();
-        m_debugger.get_core().get_analyzer().set_map_type(map, addr, type);
-        map.invalidate_region(addr, 1); // Clear conflicting code flags
-        map[addr] |= flags;
-        
-        m_output_buffer << "Address $" << Strings::hex(addr) << " marked as " << type_str << ".\n";
-        update_code_view();
-    } catch (const std::exception& e) {
-        m_output_buffer << "Error: " << e.what() << "\n";
-    }
+    // Temporarily disabled
+    m_output_buffer << "Command 'mark' is temporarily disabled.\n";
 }
 
 void Dashboard::cmd_over(const std::string&) {
@@ -2184,7 +2162,7 @@ void Dashboard::print_dashboard() {
     bool is_smc = false;
     auto line = core.get_analyzer().parse_instruction(pc);
     for (size_t i = 0; i < line.bytes.size(); ++i) {
-        if (core.get_code_map()[(uint16_t)(pc + i)] & CodeMap::FLAG_DATA_WRITE) {
+        if (core.get_memory().getMap()[(uint16_t)(pc + i)] & (uint8_t)Memory::Map::Flags::Write) {
             is_smc = true;
             break;
         }
@@ -2444,7 +2422,7 @@ void Dashboard::print_asm_info(std::stringstream& ss, uint16_t addr) {
         ss << " / Asm: " << line.mnemonic;
         if (!line.operands.empty()) {
             ss << " ";
-            using Operand = Z80Disassembler<Memory>::CodeLine::Operand;
+            using Operand = Z80Decoder<Memory>::CodeLine::Operand;
             for (size_t i = 0; i < line.operands.size(); ++i) {
                 if (i > 0) ss << ", ";
                 const auto& op = line.operands[i];
@@ -2465,7 +2443,7 @@ void Dashboard::print_asm_info(std::stringstream& ss, uint16_t addr) {
     }
 }
 
-std::string Dashboard::format_disasm(uint16_t addr, const Z80Disassembler<Memory>::CodeLine& line) {
+std::string Dashboard::format_disasm(uint16_t addr, const Z80Decoder<Memory>::CodeLine& line) {
     std::stringstream lss;
     lss << "$" << Strings::hex(addr) << ": ";
     std::stringstream bytes_ss;

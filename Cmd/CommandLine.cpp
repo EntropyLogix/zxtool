@@ -42,7 +42,7 @@ bool CommandLine::parse(int argc, char* argv[]) {
         options.mode = Options::ToolMode::Assemble;
         options.asm_.generateListing = true;
     }
-    else if (mode_str == "disasm")
+    else if (mode_str == "dasm")
         options.mode = Options::ToolMode::Disassemble;
     else if (mode_str == "run")
         options.mode = Options::ToolMode::Run;
@@ -51,7 +51,7 @@ bool CommandLine::parse(int argc, char* argv[]) {
     else if (mode_str == "profile")
         options.mode = Options::ToolMode::Profile;
     else
-        throw std::runtime_error("Unknown command: '" + mode_str + "'. Use 'asm', 'disasm', 'run', or 'debug'.");
+        throw std::runtime_error("Unknown command: '" + mode_str + "'. Use 'asm', 'dasm', 'run', or 'debug'.");
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg[0] == '-') {
@@ -91,7 +91,7 @@ bool CommandLine::parse(int argc, char* argv[]) {
                     else if (disasm_mode_str == "execute") options.disasm.mode = Options::Disassemble::Mode::Execute;
                     else throw std::runtime_error("Invalid disassembly mode: '" + disasm_mode_str + "'. Use 'raw', 'heuristic', or 'execute'.");
                 } else {
-                    throw std::runtime_error("Unknown argument '" + arg + "' for 'disasm' mode.");
+                    throw std::runtime_error("Unknown argument '" + arg + "' for 'dasm' mode.");
                 }
             } else if (options.mode == Options::ToolMode::Run || options.mode == Options::ToolMode::Profile) {
                 Options::Run* runOpts = (options.mode == Options::ToolMode::Run) ? &options.run : &options.profile;
@@ -209,7 +209,7 @@ void CommandLine::print_usage() const {
               << "Sidecar files (.map, .sym, .ctl) are automatically loaded if present.\n\n"
               << "Commands:\n"
               << "  asm                Build a Z80 source file.\n"
-              << "  disasm             Statically analyze a binary file.\n"
+              << "  dasm               Statically analyze a binary file.\n"
               << "  run                Run code in headless mode.\n"
               << "  debug              Start an interactive debugging session.\n\n"
               << "  profile            Run code and analyze performance.\n\n"
@@ -220,7 +220,7 @@ void CommandLine::print_usage() const {
               << "  -f, --format <fmt>   Output format: bin, sna, tap, hex.\n"
               << "  -m, --map            Generate a symbol map file.\n"
               << "  -l, --listing        Generate a source listing file.\n\n"
-              << "Static Analysis Options (disasm command):\n"
+              << "Static Analysis Options (dasm command):\n"
               << "  -e, --entry [a:n]    Entry point 'a' for code flow tracing (optional limit 'n').\n"
               << "  -m, --mode <m>       Disassembly mode: raw, heuristic, execute.\n\n"
               << "Execution/Profile Options (run/profile command):\n"
