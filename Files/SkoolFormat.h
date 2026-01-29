@@ -1,7 +1,7 @@
-#ifndef __SKOOLFILE_H__
-#define __SKOOLFILE_H__
+#ifndef __SKOOLFORMAT_H__
+#define __SKOOLFORMAT_H__
 
-#include "File.h"
+#include "FileFormat.h"
 #include "../Core/Core.h"
 #include <string>
 #include <vector>
@@ -27,4 +27,4 @@ private:
     bool parse_control_file(const std::string& filename);
 };
 
-#endif // __SKOOLFILE_H__
+#endif //__SKOOLFORMAT_H__

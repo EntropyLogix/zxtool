@@ -1,10 +1,10 @@
 #include "Core.h"
-#include "../Files/BinFiles.h"
+#include "../Files/BinaryFormat.h"
 #include "../Files/AssemblyFormat.h"
-#include "../Files/Z80File.h"
-#include "../Files/SymbolFile.h"
-#include "../Files/LstFile.h"
-#include "../Files/SkoolFile.h"
+#include "../Files/Z80Format.h"
+#include "../Files/SymbolFormat.h"
+#include "../Files/ListingFormat.h"
+#include "../Files/SkoolFormat.h"
 #include "../Utils/Strings.h"
 #include <filesystem>
 #include <iostream>

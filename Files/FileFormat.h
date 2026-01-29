@@ -1,5 +1,5 @@
-#ifndef __IFILE_H__
-#define __IFILE_H__
+#ifndef __FILEFORMAT_H__
+#define __FILEFORMAT_H__
 
 #include <string>
 #include <vector>
@@ -34,6 +34,4 @@ public:
     virtual bool save_metadata(const std::string& filename) { return false; }
 };
 
-using LoadedBlock = FileFormat::Block;
-
-#endif // __IFILE_H__
+#endif // __FILEFORMAT_H__

@@ -1,7 +1,7 @@
 #ifndef __FILEMANAGER_H__
 #define __FILEMANAGER_H__
 
-#include "File.h"
+#include "FileFormat.h"
 #include <vector>
 #include <string>
 

@@ -1,0 +1,44 @@
+project(zxtool_tests)
+
+add_executable(run_tests
+    run_tests.cpp
+    AssemblyFormatTests.cpp
+    ListingFormatTests.cpp
+    BinaryFormatTests.cpp
+    Z80FormatTests.cpp
+    SymbolFormatTests.cpp
+    SkoolFormatTests.cpp
+    ../Cmd/CommandLine.cpp
+    ../Core/Context.cpp
+    ../Core/Analyzer.cpp
+    ../Core/Core.cpp
+    ../Core/Expression.cpp
+    ../Core/Symbols.cpp
+    ../Core/Comments.cpp
+    ../Core/Variables.cpp
+    ../Core/Application.cpp
+    ../Engines/AssembleEngine.cpp
+    ../Engines/RunEngine.cpp
+    ../Engines/DisassembleEngine.cpp
+    ../Engines/DebugEngine.cpp
+    ../Core/Debugger.cpp
+    ../Engines/ProfileEngine.cpp
+    ../Engines/Autocompletion.cpp
+    ../Engines/Hint.cpp
+    ../Files/AssemblyFormat.cpp
+    ../Files/BinaryFormat.cpp
+    ../Files/Z80Format.cpp
+    ../Files/SymbolFormat.cpp
+    ../Files/ListingFormat.cpp
+    ../Files/SkoolFormat.cpp
+    ../Files/FileManager.cpp
+    ../Utils/Checksum.cpp
+    ../Utils/Strings.cpp
+    ../Utils/Commands.cpp
+    ../Utils/Terminal.cpp
+)
+
+target_include_directories(run_tests PRIVATE 
+    ${z80_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}
+)

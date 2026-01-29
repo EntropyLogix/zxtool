@@ -1,4 +1,4 @@
-#include "SymbolFile.h"
+#include "SymbolFormat.h"
 #include "../Core/Core.h"
 #include "../Core/Symbol.h"
 #include <fstream>

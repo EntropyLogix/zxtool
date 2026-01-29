@@ -1,10 +1,8 @@
-#include "Z80File.h"
+#include "Z80Format.h"
 #include "../Core/Core.h"
 #include <fstream>
 #include <vector>
-#include <iostream>
 #include <cstdint>
-#include <iomanip>
 
 #pragma pack(push, 1)
 struct Z80Header {
@@ -33,7 +31,6 @@ bool Z80Format::load_binary(const std::string& filename, std::vector<FileFormat:
 bool Z80Format::load(Core& core, const std::string& filename) {
     std::ifstream file(filename, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
-        std::cerr << "Error: Could not open file " << filename << std::endl;
         return false;
     }
 
@@ -42,12 +39,10 @@ bool Z80Format::load(Core& core, const std::string& filename) {
 
     std::vector<uint8_t> data(size);
     if (!file.read(reinterpret_cast<char*>(data.data()), size)) {
-        std::cerr << "Error: Could not read file data." << std::endl;
         return false;
     }
 
     if (data.size() < sizeof(Z80Header)) {
-        std::cerr << "Error: File size too small for Z80 header." << std::endl;
         return false;
     }
 
@@ -83,14 +78,12 @@ bool Z80Format::load(Core& core, const std::string& filename) {
     if (header->PC == 0) {
         // Wersja 2 lub 3 formatu Z80
         if (offset + 2 > data.size()) {
-            std::cerr << "Error: Invalid Z80 v2/v3 header structure." << std::endl;
             return false;
         }
         uint16_t header_len = data[offset] | (data[offset+1] << 8);
         offset += 2;
         
         if (offset + header_len > data.size()) {
-            std::cerr << "Error: Invalid Z80 v2/v3 extended header length." << std::endl;
             return false;
         }
         
@@ -199,10 +192,6 @@ bool Z80Format::load(Core& core, const std::string& filename) {
                 mem.write(addr++, data[offset++]);
             }
         }
-    }
-
-    if (cpu.get_PC() < 16384) {
-        std::cerr << "Warning: PC points to ROM address (0x" << std::hex << std::setw(4) << std::setfill('0') << cpu.get_PC() << "). Ensure ROM is loaded." << std::dec << std::endl;
     }
 
     return true;

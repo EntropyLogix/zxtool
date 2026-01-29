@@ -1,6 +1,6 @@
 #pragma once
 #include <string>
-#include "File.h"
+#include "FileFormat.h"
 
 class Core;
 

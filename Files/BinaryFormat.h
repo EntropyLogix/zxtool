@@ -1,11 +1,11 @@
-#ifndef __BINFILES_H__
-#define __BINFILES_H__
+#ifndef __BINARYFORMAT_H__
+#define __BINARYFORMAT_H__
 
 #include <string>
 #include <vector>
 #include <fstream>
 #include <cstdint>
-#include "File.h"
+#include "FileFormat.h"
 
 class Memory;
 class BinaryFormat : public FileFormat {
@@ -23,4 +23,4 @@ private:
     Memory& m_bus;
 };
 
-#endif//__BINFILES_H__
+#endif//__BINARYFORMAT_H__

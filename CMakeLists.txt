@@ -29,16 +29,16 @@ add_executable(zxtool
                 Engines/RunEngine.cpp
                 Engines/DisassembleEngine.cpp
                 Engines/DebugEngine.cpp
-                Engines/Debugger.cpp
+                Core/Debugger.cpp
                 Engines/ProfileEngine.cpp
                 Engines/Autocompletion.cpp
                 Engines/Hint.cpp
                 Files/AssemblyFormat.cpp
-                Files/BinFiles.cpp
-                Files/Z80File.cpp
-                Files/SymbolFile.cpp
-                Files/LstFile.cpp
-                Files/SkoolFile.cpp
+                Files/BinaryFormat.cpp
+                Files/Z80Format.cpp
+                Files/SymbolFormat.cpp
+                Files/ListingFormat.cpp
+                Files/SkoolFormat.cpp
                 Files/FileManager.cpp
                 Utils/Checksum.cpp
                 Utils/Strings.cpp
@@ -49,3 +49,5 @@ add_executable(zxtool
   target_include_directories(zxtool PRIVATE 
     ${z80_SOURCE_DIR}
   )
+
+add_subdirectory(Tests)

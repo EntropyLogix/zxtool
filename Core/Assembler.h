@@ -22,6 +22,14 @@ CHECK_FLAG(Operand);
 CHECK_FLAG(Data);
 #undef CHECK_FLAG
 
+struct ListingLayout {
+    static constexpr int LineWidth = 7;
+    static constexpr int AddrWidth = 7;
+    static constexpr int HexWidth = 24;
+    static constexpr int SourceStart = LineWidth + AddrWidth + HexWidth;
+    static constexpr int BytesPerLine = 8;
+};
+
 class LineAssemblerMemory {
 public:
     std::vector<uint8_t>* m_output = nullptr;
@@ -121,7 +129,12 @@ public:
             std::cerr.rdbuf(old_cerr);
             return result;
         }
-        return Z80Assembler<Memory>::compile(main_file_path, start_addr, options, optimizations, &m_map);
+        try {
+            return Z80Assembler<Memory>::compile(main_file_path, start_addr, options, optimizations, &m_map);
+        } catch (const std::exception& e) {
+            std::cerr << e.what() << std::endl;
+            return false;
+        }
     }
 
     bool is_reserved(const std::string& name) {

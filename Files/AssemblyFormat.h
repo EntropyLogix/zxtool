@@ -1,8 +1,8 @@
-#ifndef __ASSEMBLY_FORMAT__
-#define __ASSEMBLY_FORMAT__
+#ifndef __ASSEMBLYFORMAT__
+#define __ASSEMBLYFORMAT__
 
 #include <string>
-#include "File.h"
+#include "FileFormat.h"
 
 class Core;
 
@@ -11,11 +11,13 @@ public:
     AssemblyFormat(Core& core);
 
     bool load_binary(const std::string& filename, std::vector<Block>& blocks, uint16_t address) override;    
-    uint32_t get_capabilities() const override { return LoadBinary; }
+    bool load_metadata(const std::string& filename) override;
+    uint32_t get_capabilities() const override { return LoadBinary | LoadMetadata; }
     std::vector<std::string> get_extensions() const override { return { ".asm" }; } 
 
 private:
+    void extract_comment(const std::string& source, std::string& comment);
     Core& m_core;
 };
 
-#endif//__ASSEMBLY_FORMAT__
+#endif//__ASSEMBLYFORMAT__

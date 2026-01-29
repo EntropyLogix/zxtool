@@ -1,4 +1,4 @@
-#include "BinFiles.h"
+#include "BinaryFormat.h"
 #include "../Core/Memory.h"
 #include <fstream>
 #include <stdexcept>
@@ -14,8 +14,10 @@ bool BinaryFormat::load_binary(const std::string& filename, std::vector<FileForm
     if (!file)
         return false;
     std::streamsize size = file.tellg();
-    if (size <= 0)
+    if (size < 0)
         return false;
+    if (size == 0)
+        return true;
     file.seekg(0, std::ios::beg);
     std::vector<uint8_t> data(size);
     if (!file.read((char*)(data.data()), size))

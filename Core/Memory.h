@@ -170,7 +170,8 @@ public:
     }
     void poke(size_t address, const std::vector<uint8_t>& data) {
         size_t size = data.size();
-        if (size == 0) return;
+        if (size == 0)
+            return;
         size_t current_addr = address & 0xFFFF;
         size_t offset = 0;
         while (size > 0) {

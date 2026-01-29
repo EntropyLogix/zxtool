@@ -1,4 +1,4 @@
-#include "SkoolFile.h"
+#include "SkoolFormat.h"
 #include <fstream>
 #include <sstream>
 #include <regex>
@@ -10,13 +10,21 @@
 #include "../Core/Assembler.h"
 
 static uint16_t parse_addr_from_string(const std::string& s) {
+    size_t pos = 0;
+    unsigned long val = 0;
     try {
         size_t dollar = s.find('$');
         if (dollar != std::string::npos) {
-            return static_cast<uint16_t>(std::stoul(s.substr(dollar + 1), nullptr, 16));
+            val = std::stoul(s.substr(dollar + 1), &pos, 16);
+            if (pos != s.substr(dollar + 1).length()) throw std::runtime_error("Invalid hex");
+        } else {
+            val = std::stoul(s, &pos, 10);
+            if (pos != s.length()) throw std::runtime_error("Invalid decimal");
         }
-        return static_cast<uint16_t>(std::stoul(s, nullptr, 10));
-    } catch (...) { return 0; }
+    } catch (...) { throw std::runtime_error("Invalid address format: " + s); }
+    
+    if (val > 0xFFFF) throw std::runtime_error("Address out of range: " + s);
+    return static_cast<uint16_t>(val);
 }
 
 static int parse_int_len(const std::string& s) {
@@ -25,7 +33,7 @@ static int parse_int_len(const std::string& s) {
         if (dollar != std::string::npos)
             return std::stoi(s.substr(dollar + 1), nullptr, 16);
         return std::stoi(s);
-    } catch (...) { return 1; }
+    } catch (...) { throw std::runtime_error("Invalid length format: " + s); }
 }
 
 static std::string clean_skool_tags(const std::string& text, Analyzer& analyzer) {
@@ -85,7 +93,6 @@ bool SkoolFormat::load_binary(const std::string& filename, std::vector<FileForma
         return true;
 
     } catch (const std::exception& e) {
-        std::cerr << "Skool load error: " << e.what() << std::endl;
         return false;
     }
 }
@@ -95,7 +102,11 @@ bool SkoolFormat::load_metadata(const std::string& filename) {
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     
     if (ext == ".ctl") {
-        return parse_control_file(filename);
+        try {
+            return parse_control_file(filename);
+        } catch (...) {
+            return false;
+        }
     }
 
     std::string dummy;

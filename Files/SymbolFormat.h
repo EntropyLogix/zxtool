@@ -1,9 +1,9 @@
-#ifndef __SYMBOLFILE_H__
-#define __SYMBOLFILE_H__
+#ifndef __SYMBOLFORMAT_H__
+#define __SYMBOLFORMAT_H__
 
 #include <string>
 #include "../Core/Analyzer.h"
-#include "File.h"
+#include "FileFormat.h"
 
 class SymbolFormat : public FileFormat {
 public:
@@ -27,4 +27,4 @@ private:
     Analyzer& m_analyzer;
 };
 
-#endif // __SYMBOLFILE_H__
+#endif //__SYMBOLFORMAT_H__
