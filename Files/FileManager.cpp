@@ -16,6 +16,7 @@ void FileManager::register_loader(FileFormat* loader) {
 }
 
 std::pair<bool, std::optional<uint16_t>> FileManager::load_binary(const std::string& path, std::vector<FileFormat::Block>& blocks, uint16_t address) {
+    m_last_messages.clear();
     std::string ext = fs::path(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
@@ -25,12 +26,17 @@ std::pair<bool, std::optional<uint16_t>> FileManager::load_binary(const std::str
         const auto& extensions = loader->get_extensions();
         for (const auto& supported_ext : extensions) {
             if (supported_ext == ext) {
+                loader->clear_messages();
                 size_t initial_size = blocks.size();
                 if (loader->load_binary(path, blocks, address)) {
+                    m_last_messages = loader->get_messages();
                     if (blocks.size() > initial_size) {
                         return {true, blocks[initial_size].start};
                     }
                     return {true, std::nullopt};
+                } else {
+                    const auto& msgs = loader->get_messages();
+                    m_last_messages.insert(m_last_messages.end(), msgs.begin(), msgs.end());
                 }
             }
         }
@@ -42,12 +48,17 @@ std::pair<bool, std::optional<uint16_t>> FileManager::load_binary(const std::str
         const auto& extensions = loader->get_extensions();
         for (const auto& supported_ext : extensions) {
             if (supported_ext == "*") {
+                loader->clear_messages();
                 size_t initial_size = blocks.size();
                 if (loader->load_binary(path, blocks, address)) {
+                    m_last_messages = loader->get_messages();
                     if (blocks.size() > initial_size) {
                         return {true, blocks[initial_size].start};
                     }
                     return {true, std::nullopt};
+                } else {
+                    const auto& msgs = loader->get_messages();
+                    m_last_messages.insert(m_last_messages.end(), msgs.begin(), msgs.end());
                 }
             }
         }
@@ -57,6 +68,7 @@ std::pair<bool, std::optional<uint16_t>> FileManager::load_binary(const std::str
 }
 
 bool FileManager::load_metadata(const std::string& path) {
+    m_last_messages.clear();
     std::string ext = fs::path(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
@@ -65,7 +77,14 @@ bool FileManager::load_metadata(const std::string& path) {
         const auto& extensions = loader->get_extensions();
         for (const auto& supported_ext : extensions) {
             if (supported_ext == ext) {
-                if (loader->load_metadata(path)) return true;
+                loader->clear_messages();
+                if (loader->load_metadata(path)) {
+                    m_last_messages = loader->get_messages();
+                    return true;
+                } else {
+                    const auto& msgs = loader->get_messages();
+                    m_last_messages.insert(m_last_messages.end(), msgs.begin(), msgs.end());
+                }
             }
         }
     }

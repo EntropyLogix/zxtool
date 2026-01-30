@@ -25,6 +25,10 @@ private:
 
     void parse_and_process(const std::string& filename, bool generate_asm, std::string& out_asm);
     bool parse_control_file(const std::string& filename);
+
+    uint16_t parse_addr_from_string(const std::string& s);
+    int parse_int_len(const std::string& s);
+    std::string clean_skool_tags(const std::string& text);
 };
 
 #endif //__SKOOLFORMAT_H__

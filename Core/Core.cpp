@@ -76,6 +76,13 @@ void Core::process_file(const std::string& path, uint16_t address) {
 
     // Load only binary files here
     auto result = m_file_manager.load_binary(path, m_blocks, address);
+    
+    for (const auto& msg : m_file_manager.get_last_messages()) {
+        if (msg.type == FileFormat::Message::Type::Error) std::cerr << "Error: " << msg.text << std::endl;
+        else if (msg.type == FileFormat::Message::Type::Warning) std::cerr << "Warning: " << msg.text << std::endl;
+        else std::cout << "Info: " << msg.text << std::endl;
+    }
+
     uint16_t analysis_start = address;
     if (!result.first) {
         std::string ext = fs::path(path).extension().string();
@@ -120,6 +127,12 @@ void Core::load_sidecar_files(const std::string& path) {
             std::cout << "Loading auxiliary file " << sidecar << std::endl;
             // Try to load as auxiliary file
             if (m_file_manager.load_metadata(sidecar)) {
+                for (const auto& msg : m_file_manager.get_last_messages()) {
+                    if (msg.type == FileFormat::Message::Type::Error) std::cerr << "Error: " << msg.text << std::endl;
+                    else if (msg.type == FileFormat::Message::Type::Warning) std::cerr << "Warning: " << msg.text << std::endl;
+                    else std::cout << "Info: " << msg.text << std::endl;
+                }
+
                 std::string mode = get_file_mode(sidecar);
                 if (!mode.empty()) {
                     std::cout << "  Mode: " << mode << std::endl;

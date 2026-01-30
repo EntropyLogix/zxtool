@@ -9,44 +9,49 @@
 #include <set>
 #include "../Core/Assembler.h"
 
-static uint16_t parse_addr_from_string(const std::string& s) {
+uint16_t SkoolFormat::parse_addr_from_string(const std::string& s) {
     size_t pos = 0;
     unsigned long val = 0;
     try {
         size_t dollar = s.find('$');
         if (dollar != std::string::npos) {
             val = std::stoul(s.substr(dollar + 1), &pos, 16);
-            if (pos != s.substr(dollar + 1).length()) throw std::runtime_error("Invalid hex");
+            if (pos != s.substr(dollar + 1).length())
+                throw std::runtime_error("Invalid hex");
         } else {
             val = std::stoul(s, &pos, 10);
-            if (pos != s.length()) throw std::runtime_error("Invalid decimal");
+            if (pos != s.length())
+                throw std::runtime_error("Invalid decimal");
         }
-    } catch (...) { throw std::runtime_error("Invalid address format: " + s); }
-    
-    if (val > 0xFFFF) throw std::runtime_error("Address out of range: " + s);
+    } catch (...) {
+        throw std::runtime_error("Invalid address format: " + s);
+    }
+    if (val > 0xFFFF)
+        throw std::runtime_error("Address out of range: " + s);
     return static_cast<uint16_t>(val);
 }
 
-static int parse_int_len(const std::string& s) {
+int SkoolFormat::parse_int_len(const std::string& s) {
     size_t dollar = s.find('$');
     try {
         if (dollar != std::string::npos)
             return std::stoi(s.substr(dollar + 1), nullptr, 16);
         return std::stoi(s);
-    } catch (...) { throw std::runtime_error("Invalid length format: " + s); }
+    } catch (...) {
+        throw std::runtime_error("Invalid length format: " + s);
+    }
 }
 
-static std::string clean_skool_tags(const std::string& text, Analyzer& analyzer) {
+std::string SkoolFormat::clean_skool_tags(const std::string& text) {
     std::string result;
     static const std::regex r_tag("#R\\$([0-9A-Fa-f]+)");
-    
     std::smatch match;
     std::string::const_iterator searchStart(text.cbegin());
     while (std::regex_search(searchStart, text.cend(), match, r_tag)) {
         result.append(searchStart, match[0].first);
         std::string addrStr = match[1].str();
         uint16_t addr = parse_addr_from_string("$" + addrStr);
-        std::string label = analyzer.context.getSymbols().get_label(addr);
+        std::string label = m_core.get_analyzer().context.getSymbols().get_label(addr);
         if (!label.empty())
             result += label + " ($" + addrStr + ")";
         else
@@ -54,7 +59,6 @@ static std::string clean_skool_tags(const std::string& text, Analyzer& analyzer)
         searchStart = match[0].second;
     }
     result.append(searchStart, text.cend());
-
     return result;
 }
 
@@ -93,6 +97,7 @@ bool SkoolFormat::load_binary(const std::string& filename, std::vector<FileForma
         return true;
 
     } catch (const std::exception& e) {
+        log_error(std::string("Skool load error: ") + e.what());
         return false;
     }
 }
@@ -315,7 +320,7 @@ void SkoolFormat::parse_and_process(const std::string& filename, bool generate_a
         }
 
         if (!info.comment.empty()) {
-            m_core.get_context().getComments().add(Comment(info.addr, clean_skool_tags(info.comment, m_core.get_analyzer()), Comment::Type::Inline));
+            m_core.get_context().getComments().add(Comment(info.addr, clean_skool_tags(info.comment), Comment::Type::Inline));
         }
 
         int estimated_size = 1;
@@ -460,14 +465,14 @@ bool SkoolFormat::parse_control_file(const std::string& filename) {
             case 'c': // Code
                 m_core.get_analyzer().set_map_type(map, addr, Analyzer::TYPE_CODE); // Helper works on CodeMap
                 map[addr] |= (uint8_t)Memory::Map::Flags::Opcode;
-                if (!remainder.empty()) m_core.get_context().getComments().add(Comment(addr, clean_skool_tags(remainder, m_core.get_analyzer()), Comment::Type::Inline));
+                if (!remainder.empty()) m_core.get_context().getComments().add(Comment(addr, clean_skool_tags(remainder), Comment::Type::Inline));
                 break;
             case 'C': // Comment
                 if (!remainder.empty()) {
                     size_t first = remainder.find_first_not_of(" \t\r");
                     if (first != std::string::npos) {
                         size_t last = remainder.find_last_not_of(" \t\r");
-                        m_core.get_context().getComments().add(Comment(addr, clean_skool_tags(remainder.substr(first, (last - first + 1)), m_core.get_analyzer()), Comment::Type::Inline));
+                        m_core.get_context().getComments().add(Comment(addr, clean_skool_tags(remainder.substr(first, (last - first + 1))), Comment::Type::Inline));
                     }
                 }
                 break;
@@ -478,7 +483,7 @@ bool SkoolFormat::parse_control_file(const std::string& filename) {
                 uint8_t flags = (uint8_t)Memory::Map::Flags::Read;
                 if (type == 's' || type == 'S' || type == 'g') flags |= (uint8_t)Memory::Map::Flags::Write;
                 set_range(Analyzer::TYPE_BYTE, flags);
-                if (!remainder.empty() && type == 'b') m_core.get_context().getComments().add(Comment(addr, "; " + clean_skool_tags(remainder, m_core.get_analyzer()), Comment::Type::Block));
+                if (!remainder.empty() && type == 'b') m_core.get_context().getComments().add(Comment(addr, "; " + clean_skool_tags(remainder), Comment::Type::Block));
                 break;
             }
             case 'w': case 'W': // Word
@@ -489,20 +494,20 @@ bool SkoolFormat::parse_control_file(const std::string& filename) {
                 break;
             case 'u': case 'U': // Unused
                 set_range(Analyzer::TYPE_IGNORE, 0);
-                if (!remainder.empty()) m_core.get_context().getComments().add(Comment(addr, "; Unused: " + clean_skool_tags(remainder, m_core.get_analyzer()), Comment::Type::Block));
+                if (!remainder.empty()) m_core.get_context().getComments().add(Comment(addr, "; Unused: " + clean_skool_tags(remainder), Comment::Type::Block));
                 break;
             case 'M': // Memory map
                 // Format: M base,length,description
-                if (!remainder.empty()) m_core.get_context().getComments().add(Comment(addr, "; Block: " + clean_skool_tags(remainder, m_core.get_analyzer()), Comment::Type::Block));
+                if (!remainder.empty()) m_core.get_context().getComments().add(Comment(addr, "; Block: " + clean_skool_tags(remainder), Comment::Type::Block));
                 break;
             case 'i': // Ignore
                 set_range(Analyzer::TYPE_IGNORE, 0);
                 break;
             case 'D': case 'N': // Description
-                m_core.get_context().getComments().add(Comment(addr, "; " + clean_skool_tags(remainder, m_core.get_analyzer()), Comment::Type::Block));
+                m_core.get_context().getComments().add(Comment(addr, "; " + clean_skool_tags(remainder), Comment::Type::Block));
                 break;
             case 'R': // Register info
-                m_core.get_context().getComments().add(Comment(addr, "; [Regs: " + clean_skool_tags(remainder, m_core.get_analyzer()) + "]", Comment::Type::Block));
+                m_core.get_context().getComments().add(Comment(addr, "; [Regs: " + clean_skool_tags(remainder) + "]", Comment::Type::Block));
                 break;
         }
     }

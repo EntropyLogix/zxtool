@@ -11,7 +11,7 @@ public:
     bool load_binary(const std::string& filename, std::vector<Block>& blocks, uint16_t address) override;
     uint32_t get_capabilities() const override { return LoadBinary; }
 
-    static bool load(Core& vm, const std::string& filename);
+    bool load(Core& vm, const std::string& filename);
 
     std::vector<std::string> get_extensions() const override;
 

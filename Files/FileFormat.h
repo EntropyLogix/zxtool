@@ -16,6 +16,16 @@ public:
         SaveMetadata = 1 << 3
     };
 
+    struct Message {
+        enum class Type {
+            Info,
+            Warning,
+            Error
+        };
+        Type type;
+        std::string text;
+    };
+
     struct Block {
         uint16_t start;
         uint16_t size;
@@ -32,6 +42,17 @@ public:
     
     virtual bool load_metadata(const std::string& filename) { return false; }
     virtual bool save_metadata(const std::string& filename) { return false; }
+
+    const std::vector<Message>& get_messages() const { return m_messages; }
+    void clear_messages() { m_messages.clear(); }
+
+protected:
+    void log_info(const std::string& text) { m_messages.push_back({Message::Type::Info, text}); }
+    void log_warning(const std::string& text) { m_messages.push_back({Message::Type::Warning, text}); }
+    void log_error(const std::string& text) { m_messages.push_back({Message::Type::Error, text}); }
+
+private:
+    std::vector<Message> m_messages;
 };
 
 #endif // __FILEFORMAT_H__

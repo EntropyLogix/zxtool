@@ -40,6 +40,7 @@ void AssemblyFormat::extract_comment(const std::string& source, std::string& com
 bool AssemblyFormat::load_binary(const std::string& filename, std::vector<FileFormat::Block>& blocks, uint16_t address) {
     auto& assembler = m_core.get_assembler();
     if (!assembler.compile(filename, address)) {
+        log_error("Assembly failed for file: " + filename);
         return false;
     }
     auto& context = m_core.get_context();

@@ -117,8 +117,10 @@ bool ListingFormat::load_binary(const std::string& path, std::vector<FileFormat:
         asm_src << "\n";
     }
 
-    if (!found_any_lines)
+    if (!found_any_lines) {
+        log_error("No valid listing lines found.");
         return false;
+    }
 
     std::string source_code = asm_src.str();
     std::string virtual_filename = path + ".reconstructed.asm";
@@ -210,6 +212,7 @@ bool ListingFormat::load_binary(const std::string& path, std::vector<FileFormat:
         return true;
     }
 
+    log_error("Assembly of reconstructed listing failed.");
     return false;
 }
 

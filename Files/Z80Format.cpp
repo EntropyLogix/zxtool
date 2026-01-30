@@ -31,6 +31,7 @@ bool Z80Format::load_binary(const std::string& filename, std::vector<FileFormat:
 bool Z80Format::load(Core& core, const std::string& filename) {
     std::ifstream file(filename, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
+        log_error("Could not open file " + filename);
         return false;
     }
 
@@ -39,10 +40,12 @@ bool Z80Format::load(Core& core, const std::string& filename) {
 
     std::vector<uint8_t> data(size);
     if (!file.read(reinterpret_cast<char*>(data.data()), size)) {
+        log_error("Could not read file data.");
         return false;
     }
 
     if (data.size() < sizeof(Z80Header)) {
+        log_error("File size too small for Z80 header.");
         return false;
     }
 
@@ -78,12 +81,14 @@ bool Z80Format::load(Core& core, const std::string& filename) {
     if (header->PC == 0) {
         // Wersja 2 lub 3 formatu Z80
         if (offset + 2 > data.size()) {
+            log_error("Invalid Z80 v2/v3 header structure.");
             return false;
         }
         uint16_t header_len = data[offset] | (data[offset+1] << 8);
         offset += 2;
         
         if (offset + header_len > data.size()) {
+            log_error("Invalid Z80 v2/v3 extended header length.");
             return false;
         }
         
@@ -192,6 +197,10 @@ bool Z80Format::load(Core& core, const std::string& filename) {
                 mem.write(addr++, data[offset++]);
             }
         }
+    }
+
+    if (cpu.get_PC() < 16384) {
+        log_warning("PC points to ROM address. Ensure ROM is loaded.");
     }
 
     return true;
