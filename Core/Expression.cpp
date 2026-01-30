@@ -639,6 +639,12 @@ Expression::Value Expression::function_lower(const std::vector<Value>& args) {
     return Value(s);
 }
 
+Expression::Value Expression::function_s8(const std::vector<Value>& args) {
+    int val = (int)args[0].get_scalar(m_core);
+    if (val > 127) val -= 256;
+    return Value((double)val);
+}
+
 Expression::Value Expression::function_abs(const std::vector<Value>& args) {
     return Value(std::abs(args[0].get_scalar(m_core)));
 }
@@ -1091,6 +1097,9 @@ const std::map<std::string, Expression::FunctionInfo>& Expression::get_functions
         {"HI",   {1, &Expression::function_high, {
             {T::Number}, {T::Register}, {T::Symbol}
         }, "value"}},
+        {"S8",   {1, &Expression::function_s8, {
+            {T::Number}, {T::Register}, {T::Symbol}
+        }, "value"}},
         {"CHECKSUM", {-1, &Expression::function_checksum, {
         }, "..."}},
         {"CRC", {-1, &Expression::function_crc, {
@@ -1243,6 +1252,21 @@ bool Expression::parse_operator(const std::string& expr, size_t& i, std::vector<
             }
         }
     }
+
+    // Fix for binary literals starting with % (e.g. %1010)
+    // If % is found in a unary context, treat it as part of a number, not an operator.
+    if (!matched_op.empty() && matched_op == "%") {
+        bool is_unary_context = tokens.empty();
+        if (!is_unary_context) {
+            TokenType t = tokens.back().type;
+            is_unary_context = (t == TokenType::OPERATOR || t == TokenType::LPAREN || t == TokenType::COMMA ||
+                                t == TokenType::LBRACKET || t == TokenType::LBRACE || t == TokenType::LBRACE_W);
+        }
+        if (is_unary_context) {
+            return false;
+        }
+    }
+
     if (!matched_op.empty()) {
         tokens.push_back({TokenType::OPERATOR, Value(0.0), matched_op, op_info});
         i += consume_len;
@@ -1584,7 +1608,7 @@ std::vector<Expression::Token> Expression::shunting_yard(const std::vector<Token
                 if (last_type == TokenType::NUMBER || last_type == TokenType::REGISTER ||
                     last_type == TokenType::BYTES || last_type == TokenType::WORDS ||
                     last_type == TokenType::ADDRESS || last_type == TokenType::STRING || last_type == TokenType::SYMBOL ||
-                    last_type == TokenType::RPAREN || last_type == TokenType::RBRACKET) {
+                    last_type == TokenType::RPAREN || last_type == TokenType::RBRACKET || last_type == TokenType::RBRACE) {
                     using T = Expression::Value::Type;
                     static const OperatorInfo index_op = {110, true, false, &Expression::operator_index, {
                         {T::Register, T::Address}, {T::Symbol, T::Address},
@@ -1880,7 +1904,7 @@ void Expression::assign(const std::string& lhs, const Value& rhs) {
             }
             if (depth != 0)
                 syntax_error(ErrorCode::SYNTAX_MISMATCHED_PARENTHESES, "]");
-            std::string idx_str = lhs.substr(start, i - start - 1);
+            std::string idx_str = lhs.substr(start, i - start);
             Value idx_val = evaluate(idx_str);
             int idx = (int)idx_val.get_scalar(m_core);
             Value current = var->getValue();

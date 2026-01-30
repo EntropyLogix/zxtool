@@ -83,7 +83,7 @@ private:
     std::map<std::string, std::string> m_file_modes;
 
     // Helper methods
-    void process_file(const std::string& path, uint16_t address);
+    bool load_binary_file(const std::string& path, uint16_t address);
     void load_sidecar_files(const std::string& path);
 };
 

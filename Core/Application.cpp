@@ -28,7 +28,7 @@ int Application::run(CommandLine& commands) {
         std::unique_ptr<Engine> engine;
 
         switch (options.mode) {
-            case Options::ToolMode::Assemble:
+            case Options::ToolMode::Build:
                 engine = std::make_unique<AssembleEngine>(m_core, options);
                 break;
 
@@ -76,10 +76,10 @@ void Application::load_input_files() {
     // Project handles parsing "file:addr" strings and loading sidecars
     m_core.load_input_files(options.inputFiles);
 
-    if (options.asm_.generateListing) {
+    if (options.build.generateListing) {
         const auto& listing = m_core.get_assembler().get_listing();
         if (!listing.empty()) {
-            std::string filename = options.asm_.listingFile;
+            std::string filename = options.build.listingFile;
             if (filename.empty() && !options.inputFiles.empty()) {
                 std::filesystem::path p(options.inputFiles[0].first);
                 filename = p.replace_extension(".lst").string();

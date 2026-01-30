@@ -7,7 +7,7 @@
 #include <cstdint>
 
 struct Options {
-    enum class ToolMode { Assemble, Disassemble, Run, Debug, Profile, Unknown };
+    enum class ToolMode { Build, Disassemble, Run, Debug, Profile, Unknown };
     ToolMode mode = ToolMode::Unknown;
 
     // Common
@@ -18,14 +18,14 @@ struct Options {
     std::string orgStr = "0x0000";
     std::vector<std::string> mapFiles, ctlFiles;
 
-    struct Assemble {
+    struct Build {
         std::string outputFile;
         std::string outputFormat;
         std::string mapFile;
         std::string listingFile;
         bool generateMap = false;
         bool generateListing = false;
-    } asm_;
+    } build;
 
     struct Disassemble {
         enum class Mode { Heuristic, Raw, Execute };

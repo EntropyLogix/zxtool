@@ -35,8 +35,30 @@ Core::Core()
 }
 
 void Core::load_input_files(const std::vector<std::pair<std::string, uint16_t>>& inputs) {
+    std::vector<std::string> loaded_binaries;
+
+    // 1. Load binary files
     for (const auto& input : inputs) {
-        process_file(input.first, input.second);
+        if (load_binary_file(input.first, input.second)) {
+            loaded_binaries.push_back(input.first);
+        } else {
+            // If binary load failed, try loading as explicit metadata file
+            if (m_file_manager.load_metadata(input.first)) {
+                std::cout << "Loaded metadata file '" << input.first << "'" << std::endl;
+                for (const auto& msg : m_file_manager.get_last_messages()) {
+                    if (msg.type == FileFormat::Message::Type::Error) std::cerr << "Error: " << msg.text << std::endl;
+                    else if (msg.type == FileFormat::Message::Type::Warning) std::cerr << "Warning: " << msg.text << std::endl;
+                    else std::cout << "Info: " << msg.text << std::endl;
+                }
+            } else {
+                std::cerr << "Warning: Failed to load file '" << input.first << "' (unknown format or load error)." << std::endl;
+            }
+        }
+    }
+
+    // 2. Load metadata (sidecar) files for loaded binaries
+    for (const auto& path : loaded_binaries) {
+        load_sidecar_files(path);
     }
 
     // Configure analyzer with valid ranges from loaded blocks
@@ -69,7 +91,7 @@ void Core::reset() {
     //m_analyzer.m_map.clear();
 }
 
-void Core::process_file(const std::string& path, uint16_t address) {
+bool Core::load_binary_file(const std::string& path, uint16_t address) {
     if (!fs::exists(path)) {
         throw std::runtime_error("File not found: " + path);
     }
@@ -83,33 +105,17 @@ void Core::process_file(const std::string& path, uint16_t address) {
         else std::cout << "Info: " << msg.text << std::endl;
     }
 
-    uint16_t analysis_start = address;
     if (!result.first) {
-        std::string ext = fs::path(path).extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-        // If FileManager failed, it might be because of unknown extension or load error.
-        std::cerr << "Warning: Failed to load binary file (or unknown extension) '" << ext << "' for file: " << path << std::endl;
-        return;
+        return false;
     } else {
         std::string mode = get_file_mode(path);
         if (!mode.empty()) {
             std::cout << "Loaded '" << path << "' (Mode: " << mode << ")" << std::endl;
         }
-        if (result.second)
-            analysis_start = *result.second;
         
         if (result.second) m_cpu.set_PC(*result.second);
+        return true;
     }
-    
-    load_sidecar_files(path);
-
-    // Merge ControlFile map (if any) into the main code map
-    /*if (m_analyzer.m_map.size() == 0x10000) {
-        for (size_t i = 0; i < 0x10000; ++i) {
-            m_code_map_data[i] |= m_analyzer.m_map[i];
-        }
-    }*/
-
 }
 
 void Core::load_sidecar_files(const std::string& path) {

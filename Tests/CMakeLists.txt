@@ -8,6 +8,9 @@ add_executable(run_tests
     Z80FormatTests.cpp
     SymbolFormatTests.cpp
     SkoolFormatTests.cpp
+    CoreTests.cpp
+    CommandLineTests.cpp
+    ExpressionTests.cpp
     ../Cmd/CommandLine.cpp
     ../Core/Context.cpp
     ../Core/Analyzer.cpp

@@ -39,8 +39,11 @@ bool CommandLine::parse(int argc, char* argv[]) {
     }
     std::string mode_str = argv[1];
     if (mode_str == "asm") {
-        options.mode = Options::ToolMode::Assemble;
-        options.asm_.generateListing = true;
+        options.mode = Options::ToolMode::Build;
+        options.build.generateListing = true;
+    }
+    else if (mode_str == "build") {
+        options.mode = Options::ToolMode::Build;
     }
     else if (mode_str == "dasm")
         options.mode = Options::ToolMode::Disassemble;
@@ -62,17 +65,17 @@ bool CommandLine::parse(int argc, char* argv[]) {
             }
 
             // Mode-specific options
-            if (options.mode == Options::ToolMode::Assemble) {
+            if (options.mode == Options::ToolMode::Build) {
                 if (arg == "-o" || arg == "--output") {
                     if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
-                    options.asm_.outputFile = argv[++i];
+                    options.build.outputFile = argv[++i];
                 } else if (arg == "-f" || arg == "--format") {
                     if (i + 1 >= argc) throw std::runtime_error("Missing argument for " + arg);
-                    options.asm_.outputFormat = argv[++i];
+                    options.build.outputFormat = argv[++i];
                 } else if (arg == "-m" || arg == "--map") {
-                    options.asm_.generateMap = true;
+                    options.build.generateMap = true;
                 } else if (arg == "-l" || arg == "--listing") {
-                    options.asm_.generateListing = true;
+                    options.build.generateListing = true;
                 } else {
                     throw std::runtime_error("Unknown argument '" + arg + "' for 'asm' mode.");
                 }
@@ -116,11 +119,7 @@ bool CommandLine::parse(int argc, char* argv[]) {
                     if (i + 1 < argc) {
                         std::string next_arg = argv[i + 1];
                         if (next_arg[0] != '-' && is_valid_address(next_arg)) {
-                            if (next_arg.find(':') != std::string::npos) {
-                                runOpts->dumpCodeStr = argv[++i];
-                            } else {
-                                throw std::runtime_error("Missing length for " + arg + ". Format: address:length");
-                            }
+                            runOpts->dumpCodeStr = argv[++i];
                         } else {
                             if (std::isdigit(next_arg[0]) && next_arg.find(':') != std::string::npos) {
                                 throw std::runtime_error("Invalid value for " + arg + ": " + next_arg);
@@ -134,11 +133,7 @@ bool CommandLine::parse(int argc, char* argv[]) {
                     if (i + 1 < argc) {
                         std::string next_arg = argv[i + 1];
                         if (next_arg[0] != '-' && is_valid_address(next_arg)) {
-                            if (next_arg.find(':') != std::string::npos) {
-                                runOpts->dumpMemStr = argv[++i];
-                            } else {
-                                throw std::runtime_error("Missing length for " + arg + ". Format: address:length");
-                            }
+                            runOpts->dumpMemStr = argv[++i];
                         } else {
                             if (std::isdigit(next_arg[0]) && next_arg.find(':') != std::string::npos) {
                                 throw std::runtime_error("Invalid value for " + arg + ": " + next_arg);
@@ -188,9 +183,9 @@ bool CommandLine::parse(int argc, char* argv[]) {
     }
 
     // Post-parsing validation
-    if (options.mode == Options::ToolMode::Assemble) {
-        if (options.asm_.outputFile.empty()) {
-            options.asm_.outputFile = "out.bin";
+    if (options.mode == Options::ToolMode::Build) {
+        if (options.build.outputFile.empty()) {
+            options.build.outputFile = "out.bin";
         }
     }
 
@@ -208,14 +203,14 @@ void CommandLine::print_usage() const {
               << "Input files can be specified with an optional load address, e.g., 'file.bin:0x8000'.\n"
               << "Sidecar files (.map, .sym, .ctl) are automatically loaded if present.\n\n"
               << "Commands:\n"
-              << "  asm                Build a Z80 source file.\n"
+              << "  build (asm)        Build output from input files (assemble/convert).\n"
               << "  dasm               Statically analyze a binary file.\n"
               << "  run                Run code in headless mode.\n"
               << "  debug              Start an interactive debugging session.\n\n"
               << "  profile            Run code and analyze performance.\n\n"
               << "Options:\n"
               << "  -v, --verbose        Show detailed assembly process.\n\n"
-              << "Build Options (asm command):\n"
+              << "Build Options (build/asm command):\n"
               << "  -o, --output <file>  Output file (default: out.bin).\n"
               << "  -f, --format <fmt>   Output format: bin, sna, tap, hex.\n"
               << "  -m, --map            Generate a symbol map file.\n"

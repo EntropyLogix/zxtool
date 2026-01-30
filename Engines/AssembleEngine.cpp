@@ -12,20 +12,24 @@ AssembleEngine::AssembleEngine(Core& core, const Options& options)
     : m_core(core), m_options(options) {}
 
 int AssembleEngine::run() {
-    if (!m_options.asm_.outputFile.empty()) {
-        save_output_file(m_options.asm_.outputFile, m_options.asm_.outputFormat, m_core.get_blocks());
+    if (!m_options.build.outputFile.empty()) {
+        save_output_file(m_options.build.outputFile, m_options.build.outputFormat, m_core.get_blocks());
         
-        std::filesystem::path outPath(m_options.asm_.outputFile);
+        std::filesystem::path outPath(m_options.build.outputFile);
         std::string mapPath = outPath.replace_extension(".map").string();
         std::string lstPath = outPath.replace_extension(".lst").string();
         
         auto& assembler = m_core.get_assembler();
         
-        write_map_file(mapPath, assembler.get_symbols());
-        std::cout << "Symbols written to " << mapPath << std::endl;
+        if (m_options.build.generateMap) {
+            write_map_file(mapPath, assembler.get_symbols());
+            std::cout << "Symbols written to " << mapPath << std::endl;
+        }
         
-        write_lst_file(lstPath, assembler.get_listing());
-        std::cout << "Listing written to " << lstPath << std::endl;
+        if (m_options.build.generateListing) {
+            write_lst_file(lstPath, assembler.get_listing());
+            std::cout << "Listing written to " << lstPath << std::endl;
+        }
     }
     return 0;
 }
